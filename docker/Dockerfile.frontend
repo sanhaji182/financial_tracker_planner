@@ -1,0 +1,24 @@
+FROM node:20-alpine
+
+# Set proxy for build environment dynamically
+ARG http_proxy
+ARG https_proxy
+ENV http_proxy=$http_proxy
+ENV https_proxy=$https_proxy
+
+WORKDIR /app
+
+# Copy dependency files
+COPY frontend/package.json frontend/package-lock.json* ./
+
+# Install dependencies
+RUN npm install
+
+# Copy source code
+COPY frontend/ ./
+
+# Expose port (Vite dev server)
+EXPOSE 5173
+
+# Start dev server with host option to allow Docker networking mapping
+CMD ["npm", "run", "dev", "--", "--host"]

@@ -1,0 +1,29 @@
+FROM python:3.11-slim
+
+# Set proxy for build environment dynamically
+ARG http_proxy
+ARG https_proxy
+ENV http_proxy=$http_proxy
+ENV https_proxy=$https_proxy
+
+# Install system dependencies (Tesseract OCR)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    tesseract-ocr \
+    libtesseract-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Copy dependency files
+COPY worker/requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy source code
+COPY worker/ ./
+
+# Expose port
+EXPOSE 8081
+
+# Start worker application
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8081"]

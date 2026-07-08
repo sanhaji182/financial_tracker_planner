@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  backend:
+    volumes:
+      - ../backend:/app
+      # Exclude local .env or go modules cache if needed
+    command: go run cmd/server/main.go
+
+  worker:
+    volumes:
+      - ../worker:/app
+    command: uvicorn main:app --host 0.0.0.0 --port 8081 --reload
+
+  frontend:
+    volumes:
+      - ../frontend:/app
+      - /app/node_modules
+    command: npm run dev -- --host

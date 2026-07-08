@@ -1,0 +1,35 @@
+# Build stage
+FROM golang:1.26-alpine AS builder
+
+# Set proxy for build environment dynamically
+ARG http_proxy
+ARG https_proxy
+ENV http_proxy=$http_proxy
+ENV https_proxy=$https_proxy
+
+WORKDIR /app
+
+# Copy dependency files
+COPY backend/go.mod backend/go.sum* ./
+RUN go mod download
+
+# Copy source code
+COPY backend/ ./
+
+# Build the application binary
+RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/server/main.go
+
+# Run stage
+FROM alpine:3.19
+
+WORKDIR /app
+
+# Copy the binary from build stage
+COPY --from=builder /app/main .
+COPY --from=builder /app/migrations ./migrations
+
+# Expose port
+EXPOSE 8080
+
+# Run the binary
+CMD ["./main"]

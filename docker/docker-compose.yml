@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fos-postgres
+    ports:
+      - "5433:5432"
+    environment:
+      POSTGRES_DB: financial_os
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres_secret
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d financial_os"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: fos-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+      args:
+        - http_proxy
+        - https_proxy
+    container_name: fos-backend
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=development
+      - APP_PORT=8080
+      - APP_SECRET=change-this-to-a-secure-secret-key-32-chars
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=financial_os
+      - DB_USER=postgres
+      - DB_PASSWORD=postgres_secret
+      - DB_SSL_MODE=disable
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_PASSWORD=
+      - JWT_ACCESS_SECRET=access-secret-key-change-this-in-production
+      - JWT_REFRESH_SECRET=refresh-secret-key-change-this-in-production
+      - JWT_ACCESS_EXPIRY=15m
+      - JWT_REFRESH_EXPIRY=168h
+      - WORKER_URL=http://worker:8081
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+      args:
+        - http_proxy
+        - https_proxy
+    container_name: fos-worker
+    ports:
+      - "8081:8081"
+    environment:
+      - APP_ENV=development
+      - WORKER_PORT=8081
+    depends_on:
+      - redis
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend
+      args:
+        - http_proxy
+        - https_proxy
+    container_name: fos-frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8080/api/v1
+    depends_on:
+      - backend
+
+volumes:
+  postgres-data:
+  redis-data:
