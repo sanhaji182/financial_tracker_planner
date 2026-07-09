@@ -85,6 +85,9 @@ func main() {
 	transferService := service.NewTransferService(dbPool)
 	reconciliationService := service.NewReconciliationService(dbPool)
 	closingService := service.NewClosingService(dbPool)
+	telegramService := service.NewTelegramService()
+	alertService := service.NewAlertService(dbPool)
+	alertGeneratorService := service.NewAlertGeneratorService(dbPool, telegramService)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -104,6 +107,7 @@ func main() {
 	transferHandler := handler.NewTransferHandler(transferService)
 	reconciliationHandler := handler.NewReconciliationHandler(reconciliationService)
 	closingHandler := handler.NewClosingHandler(closingService)
+	alertHandler := handler.NewAlertHandler(alertService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -190,6 +194,9 @@ func main() {
 		reconciliationHandler.RegisterRoutes(v1)
 		closingHandler.RegisterRoutes(v1)
 
+		// Register Alert handler
+		alertHandler.RegisterRoutes(v1)
+
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
@@ -211,6 +218,27 @@ func main() {
 			select {
 			case <-ticker.C:
 				// continue loop
+			}
+		}
+	}()
+
+	// Start background cron job for alert generation (every 6 hours)
+	go func() {
+		// Run immediately on startup
+		log.Info().Msg("Running initial alert generation...")
+		if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
+			log.Error().Err(err).Msg("Initial alert generation failed")
+		}
+
+		ticker := time.NewTicker(6 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Info().Msg("Running 6h alert generation cron...")
+				if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
+					log.Error().Err(err).Msg("Failed to run alert generation")
+				}
 			}
 		}
 	}()
