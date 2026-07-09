@@ -2,7 +2,7 @@ import React from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
-import { Dashboard } from './pages/Dashboard';
+import { DashboardPage } from './pages/DashboardPage';
 import { TransactionsPage } from './pages/TransactionsPage';
 import { CategoriesPage } from './pages/CategoriesPage';
 import { NotFound } from './pages/NotFound';
@@ -11,6 +11,10 @@ import { RegisterPage } from './pages/RegisterPage';
 import { RegisterSpousePage } from './pages/RegisterSpousePage';
 import { InviteSpousePage } from './pages/InviteSpousePage';
 import { AccountsPage } from './pages/AccountsPage';
+import { AssetsPage } from './pages/AssetsPage';
+import { DebtsPage } from './pages/DebtsPage';
+import { DebtDetailPage } from './pages/DebtDetailPage';
+import { DebtAvalanchePage } from './pages/DebtAvalanchePage';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 
 const queryClient = new QueryClient({
@@ -41,7 +45,7 @@ const App: React.FC = () => {
               </ProtectedRoute>
             }
           >
-            <Route index element={<Dashboard />} />
+            <Route index element={<DashboardPage />} />
             <Route path="transactions" element={<TransactionsPage />} />
             <Route 
               path="accounts" 
@@ -64,8 +68,10 @@ const App: React.FC = () => {
             />
 
             {/* Fallback endpoints for dashboard subitems under scaffolding */}
-            <Route path="debts" element={<NotFound />} />
-            <Route path="assets" element={<NotFound />} />
+            <Route path="debts" element={<DebtsPage />} />
+            <Route path="debts/:id" element={<DebtDetailPage />} />
+            <Route path="debts/avalanche" element={<DebtAvalanchePage />} />
+            <Route path="assets" element={<AssetsPage />} />
             <Route path="bills" element={<NotFound />} />
             <Route path="forecast" element={<NotFound />} />
             <Route path="budgets" element={<NotFound />} />
