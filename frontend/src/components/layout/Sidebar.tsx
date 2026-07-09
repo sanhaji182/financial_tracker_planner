@@ -41,26 +41,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const menuItems = [
-    { name: 'Dashboard', path: '/', icon: LayoutDashboard },
-    { name: 'Transaksi', path: '/transactions', icon: Receipt },
-    { name: 'Rekening', path: '/accounts', icon: Landmark },
-    { name: 'Kategori', path: '/settings/categories', icon: Tag },
-    { name: 'Utang & Cicilan', path: '/debts', icon: CreditCard },
-    { name: 'Aset', path: '/assets', icon: Coins },
-    { name: 'Kalender Tagihan', path: '/bills', icon: CalendarDays },
-    { name: 'Forecast Cashflow', path: '/forecast', icon: TrendingUp },
-    { name: 'Budget Kategori', path: '/budgets', icon: PieChart },
-    { name: 'Goal Tracking', path: '/goals', icon: Target },
-    { name: 'Insight Bulanan', path: '/insights', icon: Lightbulb },
-    { name: 'Alert Center', path: '/alerts', icon: Bell },
-    { name: 'Document Center', path: '/documents', icon: FileText },
-    
-    // Conditional Invite Spouse route (Owner only)
-    ...(user?.role === 'owner' ? [{ name: 'Undang Pasangan', path: '/invite-spouse', icon: UserPlus }] : []),
-    
-    { name: 'Settings', path: '/settings', icon: SettingsIcon },
-  ];
+  const menuItems = user?.role === 'spouse_viewer' 
+    ? [
+        { name: 'Dashboard', path: '/spouse', icon: LayoutDashboard },
+        { name: 'Aset Bersama', path: '/spouse?tab=assets', icon: Coins },
+        { name: 'Utang Bersama', path: '/spouse?tab=debts', icon: CreditCard },
+        { name: 'Tagihan', path: '/spouse?tab=bills', icon: CalendarDays },
+        { name: 'Laporan', path: '/spouse?tab=reports', icon: FileText },
+      ]
+    : [
+        { name: 'Dashboard', path: '/', icon: LayoutDashboard },
+        { name: 'Transaksi', path: '/transactions', icon: Receipt },
+        { name: 'Rekening', path: '/accounts', icon: Landmark },
+        { name: 'Kategori', path: '/settings/categories', icon: Tag },
+        { name: 'Utang & Cicilan', path: '/debts', icon: CreditCard },
+        { name: 'Aset', path: '/assets', icon: Coins },
+        { name: 'Kalender Tagihan', path: '/bills', icon: CalendarDays },
+        { name: 'Forecast Cashflow', path: '/forecast', icon: TrendingUp },
+        { name: 'Budget Kategori', path: '/budgets', icon: PieChart },
+        { name: 'Goal Tracking', path: '/goals', icon: Target },
+        { name: 'Insight Bulanan', path: '/insights', icon: Lightbulb },
+        { name: 'Alert Center', path: '/alerts', icon: Bell },
+        { name: 'Document Center', path: '/documents', icon: FileText },
+        
+        // Conditional Invite Spouse route (Owner only)
+        ...(user?.role === 'owner' ? [{ name: 'Undang Pasangan', path: '/invite-spouse', icon: UserPlus }] : []),
+        
+        { name: 'Settings', path: '/settings', icon: SettingsIcon },
+      ];
 
   const activeStyle = "flex items-center gap-3 px-4 py-3 text-sm font-medium text-indigo-600 bg-indigo-50/50 dark:text-indigo-400 dark:bg-indigo-950/20 rounded-lg";
   const inactiveStyle = "flex items-center gap-3 px-4 py-3 text-sm font-medium text-text-secondary hover:bg-slate-50 dark:hover:bg-slate-800/50 rounded-lg transition-colors";

@@ -15,6 +15,7 @@ import { AssetsPage } from './pages/AssetsPage';
 import { DebtsPage } from './pages/DebtsPage';
 import { DebtDetailPage } from './pages/DebtDetailPage';
 import { DebtAvalanchePage } from './pages/DebtAvalanchePage';
+import { SpouseDashboard } from './pages/SpouseDashboard';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 
 const queryClient = new QueryClient({
@@ -46,7 +47,22 @@ const App: React.FC = () => {
             }
           >
             <Route index element={<DashboardPage />} />
-            <Route path="transactions" element={<TransactionsPage />} />
+            <Route 
+              path="spouse" 
+              element={
+                <ProtectedRoute allowedRoles={['spouse_viewer', 'owner']}>
+                  <SpouseDashboard />
+                </ProtectedRoute>
+              } 
+            />
+            <Route 
+              path="transactions" 
+              element={
+                <ProtectedRoute allowedRoles={['owner']}>
+                  <TransactionsPage />
+                </ProtectedRoute>
+              } 
+            />
             <Route 
               path="accounts" 
               element={
