@@ -21,6 +21,7 @@ import { ForecastPage } from './pages/ForecastPage';
 import { EmergencyFundPage } from './pages/EmergencyFundPage';
 import { AllocationPage } from './pages/AllocationPage';
 import { BudgetsPage } from './pages/BudgetsPage';
+import { MonthlyClosingPage } from './pages/MonthlyClosingPage';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 
 const queryClient = new QueryClient({
@@ -98,6 +99,7 @@ const App: React.FC = () => {
             <Route path="emergency-fund" element={<EmergencyFundPage />} />
             <Route path="allocation" element={<AllocationPage />} />
             <Route path="budgets" element={<BudgetsPage />} />
+            <Route path="closing" element={<MonthlyClosingPage />} />
             <Route path="goals" element={<NotFound />} />
             <Route path="insights" element={<NotFound />} />
             <Route path="alerts" element={<NotFound />} />
