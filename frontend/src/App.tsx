@@ -16,6 +16,10 @@ import { DebtsPage } from './pages/DebtsPage';
 import { DebtDetailPage } from './pages/DebtDetailPage';
 import { DebtAvalanchePage } from './pages/DebtAvalanchePage';
 import { SpouseDashboard } from './pages/SpouseDashboard';
+import { BillsPage } from './pages/BillsPage';
+import { ForecastPage } from './pages/ForecastPage';
+import { EmergencyFundPage } from './pages/EmergencyFundPage';
+import { AllocationPage } from './pages/AllocationPage';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 
 const queryClient = new QueryClient({
@@ -88,8 +92,10 @@ const App: React.FC = () => {
             <Route path="debts/:id" element={<DebtDetailPage />} />
             <Route path="debts/avalanche" element={<DebtAvalanchePage />} />
             <Route path="assets" element={<AssetsPage />} />
-            <Route path="bills" element={<NotFound />} />
-            <Route path="forecast" element={<NotFound />} />
+            <Route path="bills" element={<BillsPage />} />
+            <Route path="forecast" element={<ForecastPage />} />
+            <Route path="emergency-fund" element={<EmergencyFundPage />} />
+            <Route path="allocation" element={<AllocationPage />} />
             <Route path="budgets" element={<NotFound />} />
             <Route path="goals" element={<NotFound />} />
             <Route path="insights" element={<NotFound />} />

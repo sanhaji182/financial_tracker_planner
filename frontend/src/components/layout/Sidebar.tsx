@@ -16,7 +16,8 @@ import {
   UserPlus,
   LogOut,
   Landmark,
-  Tag
+  Tag,
+  Shield
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { authService } from '../../services/auth';
@@ -58,6 +59,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Aset', path: '/assets', icon: Coins },
         { name: 'Kalender Tagihan', path: '/bills', icon: CalendarDays },
         { name: 'Forecast Cashflow', path: '/forecast', icon: TrendingUp },
+        { name: 'Dana Darurat', path: '/emergency-fund', icon: Shield },
+        { name: 'Saran Alokasi', path: '/allocation', icon: Lightbulb },
         { name: 'Budget Kategori', path: '/budgets', icon: PieChart },
         { name: 'Goal Tracking', path: '/goals', icon: Target },
         { name: 'Insight Bulanan', path: '/insights', icon: Lightbulb },
