@@ -65,6 +65,7 @@ func main() {
 	txRepo := repository.NewTransactionRepository(dbPool)
 	assetRepo := repository.NewAssetRepository(dbPool)
 	debtRepo := repository.NewDebtRepository(dbPool)
+	billRepo := repository.NewBillRepository(dbPool)
 
 	// Initialize Services
 	authService := service.NewAuthService(userRepo, rdb)
@@ -75,6 +76,11 @@ func main() {
 	debtService := service.NewDebtService(debtRepo, accountRepo, categoryRepo)
 	dashboardService := service.NewDashboardService(dbPool, rdb)
 	sharedViewService := service.NewSharedViewService(dbPool)
+	billService := service.NewBillService(dbPool, billRepo, accountRepo, categoryRepo)
+	forecastService := service.NewForecastService(dbPool, rdb)
+	efService := service.NewEFService(dbPool)
+	investmentService := service.NewInvestmentService(dbPool)
+	allocationService := service.NewAllocationService(dbPool, forecastService, efService)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -85,6 +91,11 @@ func main() {
 	debtHandler := handler.NewDebtHandler(debtService)
 	dashboardHandler := handler.NewDashboardHandler(dashboardService)
 	sharedViewHandler := handler.NewSharedViewHandler(sharedViewService)
+	billHandler := handler.NewBillHandler(billService)
+	forecastHandler := handler.NewForecastHandler(forecastService)
+	efHandler := handler.NewEFHandler(efService)
+	investmentHandler := handler.NewInvestmentHandler(investmentService)
+	allocationHandler := handler.NewAllocationHandler(allocationService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -148,6 +159,19 @@ func main() {
 		// Register SharedView handler
 		sharedViewHandler.RegisterRoutes(v1)
 
+		// Register Bills handler
+		billHandler.RegisterRoutes(v1)
+
+		// Register Forecast handler
+		forecastHandler.RegisterRoutes(v1)
+
+		// Register EF & Investment handler
+		efHandler.RegisterRoutes(v1)
+		investmentHandler.RegisterRoutes(v1)
+
+		// Register Allocation handler
+		allocationHandler.RegisterRoutes(v1)
+
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
@@ -155,6 +179,23 @@ func main() {
 			})
 		})
 	}
+
+	// Start background cron job for auto-updating bills status to overdue
+	go func() {
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			log.Info().Msg("Running daily background auto status update for bills...")
+			if err := billService.AutoUpdateStatus(context.Background()); err != nil {
+				log.Error().Err(err).Msg("Failed to run auto status update for bills")
+			}
+			
+			select {
+			case <-ticker.C:
+				// continue loop
+			}
+		}
+	}()
 
 	// Start server
 	serverAddr := fmt.Sprintf(":%s", cfg.AppPort)
