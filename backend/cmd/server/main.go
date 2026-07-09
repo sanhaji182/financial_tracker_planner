@@ -63,18 +63,26 @@ func main() {
 	accountRepo := repository.NewAccountRepository(dbPool)
 	categoryRepo := repository.NewCategoryRepository(dbPool)
 	txRepo := repository.NewTransactionRepository(dbPool)
+	assetRepo := repository.NewAssetRepository(dbPool)
+	debtRepo := repository.NewDebtRepository(dbPool)
 
 	// Initialize Services
 	authService := service.NewAuthService(userRepo, rdb)
 	accountService := service.NewAccountService(accountRepo)
 	categoryService := service.NewCategoryService(categoryRepo)
 	txService := service.NewTransactionService(txRepo, accountRepo, categoryRepo)
+	assetService := service.NewAssetService(assetRepo, accountRepo)
+	debtService := service.NewDebtService(debtRepo, accountRepo, categoryRepo)
+	dashboardService := service.NewDashboardService(dbPool, rdb)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
 	accountHandler := handler.NewAccountHandler(accountService)
 	categoryHandler := handler.NewCategoryHandler(categoryService)
 	txHandler := handler.NewTransactionHandler(txService)
+	assetHandler := handler.NewAssetHandler(assetService)
+	debtHandler := handler.NewDebtHandler(debtService)
+	dashboardHandler := handler.NewDashboardHandler(dashboardService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -108,6 +116,7 @@ func main() {
 
 	// API Router Group v1
 	v1 := r.Group("/api/v1")
+	v1.Use(middleware.DashboardCacheInvalidator(rdb))
 	{
 		// Register health check handler
 		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck)
@@ -124,6 +133,15 @@ func main() {
 
 		// Register Transactions handler
 		txHandler.RegisterRoutes(v1)
+
+		// Register Assets handler
+		assetHandler.RegisterRoutes(v1)
+
+		// Register Debts handler
+		debtHandler.RegisterRoutes(v1)
+
+		// Register Dashboard handler
+		dashboardHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
