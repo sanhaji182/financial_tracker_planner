@@ -88,6 +88,8 @@ func main() {
 	telegramService := service.NewTelegramService()
 	alertService := service.NewAlertService(dbPool)
 	alertGeneratorService := service.NewAlertGeneratorService(dbPool, telegramService)
+	auditService := service.NewAuditService(txRepo)
+	docService := service.NewDocumentService(dbPool)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -108,6 +110,8 @@ func main() {
 	reconciliationHandler := handler.NewReconciliationHandler(reconciliationService)
 	closingHandler := handler.NewClosingHandler(closingService)
 	alertHandler := handler.NewAlertHandler(alertService)
+	auditHandler := handler.NewAuditHandler(auditService)
+	docHandler := handler.NewDocumentHandler(docService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -196,6 +200,12 @@ func main() {
 
 		// Register Alert handler
 		alertHandler.RegisterRoutes(v1)
+
+		// Register Audit handler
+		auditHandler.RegisterRoutes(v1)
+
+		// Register Document handler
+		docHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
