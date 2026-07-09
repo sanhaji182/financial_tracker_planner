@@ -2,6 +2,10 @@ version: '3.8'
 
 services:
   backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend
+      target: builder
     volumes:
       - ../backend:/app
       # Exclude local .env or go modules cache if needed
