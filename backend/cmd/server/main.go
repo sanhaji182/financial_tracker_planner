@@ -74,6 +74,7 @@ func main() {
 	assetService := service.NewAssetService(assetRepo, accountRepo)
 	debtService := service.NewDebtService(debtRepo, accountRepo, categoryRepo)
 	dashboardService := service.NewDashboardService(dbPool, rdb)
+	sharedViewService := service.NewSharedViewService(dbPool)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -83,6 +84,7 @@ func main() {
 	assetHandler := handler.NewAssetHandler(assetService)
 	debtHandler := handler.NewDebtHandler(debtService)
 	dashboardHandler := handler.NewDashboardHandler(dashboardService)
+	sharedViewHandler := handler.NewSharedViewHandler(sharedViewService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -142,6 +144,9 @@ func main() {
 
 		// Register Dashboard handler
 		dashboardHandler.RegisterRoutes(v1)
+
+		// Register SharedView handler
+		sharedViewHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
