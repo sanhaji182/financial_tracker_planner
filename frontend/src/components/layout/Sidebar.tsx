@@ -18,7 +18,8 @@ import {
   Landmark,
   Tag,
   Shield,
-  Lock
+  Lock,
+  History
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { authService } from '../../services/auth';
@@ -68,6 +69,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Insight Bulanan', path: '/insights', icon: Lightbulb },
         { name: 'Alert Center', path: '/alerts', icon: Bell },
         { name: 'Document Center', path: '/documents', icon: FileText },
+        { name: 'Audit Trail', path: '/admin/audit-log', icon: History },
         
         // Conditional Invite Spouse route (Owner only)
         ...(user?.role === 'owner' ? [{ name: 'Undang Pasangan', path: '/invite-spouse', icon: UserPlus }] : []),

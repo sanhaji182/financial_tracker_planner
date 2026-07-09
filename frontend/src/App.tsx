@@ -23,6 +23,8 @@ import { AllocationPage } from './pages/AllocationPage';
 import { BudgetsPage } from './pages/BudgetsPage';
 import { MonthlyClosingPage } from './pages/MonthlyClosingPage';
 import AlertCenterPage from './pages/AlertCenterPage';
+import { AuditLogPage } from './pages/AuditLogPage';
+import { DocumentCenterPage } from './pages/DocumentCenterPage';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 
 const queryClient = new QueryClient({
@@ -104,7 +106,8 @@ const App: React.FC = () => {
             <Route path="goals" element={<NotFound />} />
             <Route path="insights" element={<NotFound />} />
             <Route path="alerts" element={<AlertCenterPage />} />
-            <Route path="documents" element={<NotFound />} />
+            <Route path="documents" element={<DocumentCenterPage />} />
+            <Route path="admin/audit-log" element={<AuditLogPage />} />
             <Route path="settings" element={<NotFound />} />
             <Route path="404" element={<NotFound />} />
             <Route path="*" element={<Navigate to="/404" replace />} />
