@@ -83,6 +83,8 @@ func main() {
 	allocationService := service.NewAllocationService(dbPool, forecastService, efService)
 	budgetService := service.NewBudgetService(dbPool)
 	transferService := service.NewTransferService(dbPool)
+	reconciliationService := service.NewReconciliationService(dbPool)
+	closingService := service.NewClosingService(dbPool)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -100,6 +102,8 @@ func main() {
 	allocationHandler := handler.NewAllocationHandler(allocationService)
 	budgetHandler := handler.NewBudgetHandler(budgetService)
 	transferHandler := handler.NewTransferHandler(transferService)
+	reconciliationHandler := handler.NewReconciliationHandler(reconciliationService)
+	closingHandler := handler.NewClosingHandler(closingService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -181,6 +185,10 @@ func main() {
 
 		// Register Transfer handler
 		transferHandler.RegisterRoutes(v1)
+
+		// Register Reconciliation & Monthly Closing handler
+		reconciliationHandler.RegisterRoutes(v1)
+		closingHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
