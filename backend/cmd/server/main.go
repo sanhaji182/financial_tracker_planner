@@ -60,12 +60,21 @@ func main() {
 
 	// Initialize Repositories
 	userRepo := repository.NewUserRepository(dbPool)
+	accountRepo := repository.NewAccountRepository(dbPool)
+	categoryRepo := repository.NewCategoryRepository(dbPool)
+	txRepo := repository.NewTransactionRepository(dbPool)
 
 	// Initialize Services
 	authService := service.NewAuthService(userRepo, rdb)
+	accountService := service.NewAccountService(accountRepo)
+	categoryService := service.NewCategoryService(categoryRepo)
+	txService := service.NewTransactionService(txRepo, accountRepo, categoryRepo)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
+	accountHandler := handler.NewAccountHandler(accountService)
+	categoryHandler := handler.NewCategoryHandler(categoryService)
+	txHandler := handler.NewTransactionHandler(txService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -74,6 +83,13 @@ func main() {
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
 	r.Use(gin.Recovery())
+
+	// Create uploads directory if it doesn't exist and serve static files
+	uploadsDir := "/app/uploads"
+	if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
+		_ = os.MkdirAll(uploadsDir, os.ModePerm)
+	}
+	r.Static("/uploads", uploadsDir)
 
 	// Health check functions
 	dbCheck := func() bool {
@@ -99,6 +115,15 @@ func main() {
 
 		// Register Auth handler
 		authHandler.RegisterRoutes(v1)
+
+		// Register Accounts handler
+		accountHandler.RegisterRoutes(v1)
+
+		// Register Categories handler
+		categoryHandler.RegisterRoutes(v1)
+
+		// Register Transactions handler
+		txHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
