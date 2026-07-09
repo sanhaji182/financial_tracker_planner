@@ -14,7 +14,9 @@ import {
   FileText, 
   Settings as SettingsIcon,
   UserPlus,
-  LogOut
+  LogOut,
+  Landmark,
+  Tag
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { authService } from '../../services/auth';
@@ -42,6 +44,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const menuItems = [
     { name: 'Dashboard', path: '/', icon: LayoutDashboard },
     { name: 'Transaksi', path: '/transactions', icon: Receipt },
+    { name: 'Rekening', path: '/accounts', icon: Landmark },
+    { name: 'Kategori', path: '/settings/categories', icon: Tag },
     { name: 'Utang & Cicilan', path: '/debts', icon: CreditCard },
     { name: 'Aset', path: '/assets', icon: Coins },
     { name: 'Kalender Tagihan', path: '/bills', icon: CalendarDays },
