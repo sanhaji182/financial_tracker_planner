@@ -48,7 +48,7 @@ export interface AutomationRuleResponse {
 const automationRulesService = {
   getRules: async (): Promise<AutomationRuleResponse[]> => {
     const res = await api.get<AutomationRuleResponse[]>('/automation-rules');
-    return res.data;
+    return res.data || [];
   },
 
   createRule: async (req: CreateAutomationRuleRequest): Promise<AutomationRuleResponse> => {

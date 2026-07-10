@@ -69,7 +69,7 @@ export interface GoalContributionPayload {
 const goalsService = {
 	getGoals: async (): Promise<Goal[]> => {
 		const res = await api.get<Goal[]>('/goals');
-		return res.data;
+		return res.data || [];
 	},
 
 	getGoalByID: async (id: string): Promise<Goal> => {

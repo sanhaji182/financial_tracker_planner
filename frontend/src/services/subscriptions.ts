@@ -67,33 +67,33 @@ export interface UpdateSubscriptionPayload {
 
 const subscriptionsService = {
 	getSubscriptions: async (): Promise<Subscription[]> => {
-		const res = await api.get<Subscription[]>('/subscriptions');
-		return res.data;
+		const res = await api.get<any>('/subscriptions');
+		return res.data.data || [];
 	},
 
 	getSubscriptionByID: async (id: string): Promise<Subscription> => {
-		const res = await api.get<Subscription>(`/subscriptions/${id}`);
-		return res.data;
+		const res = await api.get<any>(`/subscriptions/${id}`);
+		return res.data.data;
 	},
 
 	createSubscription: async (payload: CreateSubscriptionPayload): Promise<Subscription> => {
-		const res = await api.post<Subscription>('/subscriptions', payload);
-		return res.data;
+		const res = await api.post<any>('/subscriptions', payload);
+		return res.data.data;
 	},
 
 	updateSubscription: async (id: string, payload: UpdateSubscriptionPayload): Promise<{ message: string }> => {
-		const res = await api.put<{ message: string }>(`/subscriptions/${id}`, payload);
-		return res.data;
+		const res = await api.put<any>(`/subscriptions/${id}`, payload);
+		return res.data.data;
 	},
 
 	deleteSubscription: async (id: string): Promise<{ message: string }> => {
-		const res = await api.delete<{ message: string }>(`/subscriptions/${id}`);
-		return res.data;
+		const res = await api.delete<any>(`/subscriptions/${id}`);
+		return res.data.data;
 	},
 
 	getSummary: async (): Promise<SubscriptionSummary> => {
-		const res = await api.get<SubscriptionSummary>('/subscriptions/summary');
-		return res.data;
+		const res = await api.get<any>('/subscriptions/summary');
+		return res.data.data;
 	}
 };
 

@@ -40,7 +40,7 @@ const tasksService = {
 
 		const query = params.toString();
 		const res = await api.get<TaskChecklist[]>(`/tasks${query ? '?' + query : ''}`);
-		return res.data;
+		return res.data || [];
 	},
 
 	getTaskByID: async (id: string): Promise<TaskChecklist> => {

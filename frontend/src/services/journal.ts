@@ -35,7 +35,7 @@ const journalService = {
 
 		const query = params.toString();
 		const res = await api.get<HouseholdNote[]>(`/journal${query ? '?' + query : ''}`);
-		return res.data;
+		return res.data || [];
 	},
 
 	getNoteByID: async (id: string): Promise<HouseholdNote> => {

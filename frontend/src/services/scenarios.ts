@@ -41,7 +41,7 @@ export interface ScenarioResponse {
 const scenariosService = {
   getScenarios: async (): Promise<ScenarioResponse[]> => {
     const res = await api.get<ScenarioResponse[]>('/scenarios');
-    return res.data;
+    return res.data || [];
   },
 
   simulateScenario: async (changes: ScenarioChange[]): Promise<ScenarioResult> => {

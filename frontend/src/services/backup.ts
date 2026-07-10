@@ -9,7 +9,7 @@ export interface BackupResponse {
 const backupService = {
 	getBackups: async (): Promise<BackupResponse[]> => {
 		const res = await api.get<BackupResponse[]>('/backup/list');
-		return res.data;
+		return res.data || [];
 	},
 
 	createBackup: async (): Promise<BackupResponse> => {

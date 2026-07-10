@@ -11,7 +11,7 @@ export interface CurrencyResponse {
 const currenciesService = {
   getCurrencies: async (): Promise<CurrencyResponse[]> => {
     const res = await api.get<CurrencyResponse[]>('/currencies');
-    return res.data;
+    return res.data || [];
   },
 
   updateExchangeRate: async (code: string, rate: number): Promise<void> => {
