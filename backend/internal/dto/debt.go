@@ -2,6 +2,8 @@ package dto
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"github.com/user/financial-os/internal/model"
@@ -53,8 +55,8 @@ type RecordDebtPaymentRequest struct {
 func (r *RecordDebtPaymentRequest) UnmarshalJSON(data []byte) error {
 	type Alias RecordDebtPaymentRequest
 	aux := &struct {
-		PaymentDate *time.Time `json:"payment_date"`
-		Date        *time.Time `json:"date"`
+		PaymentDate interface{} `json:"payment_date"`
+		Date        interface{} `json:"date"`
 		*Alias
 	}{
 		Alias: (*Alias)(r),
@@ -62,11 +64,46 @@ func (r *RecordDebtPaymentRequest) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &aux); err != nil {
 		return err
 	}
-	if aux.PaymentDate != nil {
-		r.PaymentDate = *aux.PaymentDate
-	} else if aux.Date != nil {
-		r.PaymentDate = *aux.Date
+
+	parseTime := func(val interface{}) (time.Time, error) {
+		if val == nil {
+			return time.Time{}, errors.New("nil value")
+		}
+		str, ok := val.(string)
+		if !ok {
+			return time.Time{}, errors.New("not a string")
+		}
+		if str == "" {
+			return time.Time{}, errors.New("empty string")
+		}
+		// Try RFC3339 first
+		if t, err := time.Parse(time.RFC3339, str); err == nil {
+			return t, nil
+		}
+		// Try ISO Date Only
+		if t, err := time.Parse("2006-01-02", str); err == nil {
+			return t, nil
+		}
+		return time.Time{}, fmt.Errorf("invalid time format: %s", str)
 	}
+
+	if aux.PaymentDate != nil {
+		t, err := parseTime(aux.PaymentDate)
+		if err == nil {
+			r.PaymentDate = t
+		} else if aux.Date != nil {
+			t2, err2 := parseTime(aux.Date)
+			if err2 == nil {
+				r.PaymentDate = t2
+			}
+		}
+	} else if aux.Date != nil {
+		t, err := parseTime(aux.Date)
+		if err == nil {
+			r.PaymentDate = t
+		}
+	}
+
 	return nil
 }
 
