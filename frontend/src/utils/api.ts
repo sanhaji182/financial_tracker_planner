@@ -42,14 +42,35 @@ const processQueue = (error: any, token: string | null = null) => {
   failedQueue = [];
 };
 
+// Auth endpoints that should never trigger token refresh
+const isAuthEndpoint = (url?: string) => {
+  if (!url) return false;
+  return [
+    '/auth/login',
+    '/auth/register',
+    '/auth/refresh',
+    '/auth/register-spouse',
+  ].some((path) => url.includes(path));
+};
+
 // Response interceptor for error handling / token refresh
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const originalRequest = error.config;
-    
-    // Check if error is 401 Unauthorized and not already retried
-    if (error.response?.status === 401 && !originalRequest._retry) {
+
+    // Jangan coba refresh token untuk endpoint auth (login/register gagal, dsb.)
+    if (
+      error.response?.status === 401 &&
+      !originalRequest._retry &&
+      !isAuthEndpoint(originalRequest?.url)
+    ) {
+      // Kalau user memang belum login, jangan spam refresh
+      const hasAccessToken = !!useAuthStore.getState().accessToken;
+      if (!hasAccessToken) {
+        return Promise.reject(error);
+      }
+
       if (isRefreshing) {
         return new Promise<string>((resolve, reject) => {
           failedQueue.push({ resolve, reject });
@@ -67,24 +88,41 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
+        // refresh_token dikirim lewat cookie httpOnly (withCredentials)
+        // dan juga lewat body jika disimpan di localStorage sebagai fallback
+        const storedRefreshToken =
+          typeof window !== 'undefined'
+            ? localStorage.getItem('financial-os-refresh-token')
+            : null;
+
         const response = await axios.post(
           `${api.defaults.baseURL}/auth/refresh`,
-          {},
+          storedRefreshToken ? { refresh_token: storedRefreshToken } : {},
           { withCredentials: true }
         );
-        
-        const { access_token, user } = response.data.data;
-        
+
+        const { access_token, refresh_token, user } = response.data.data;
+
         useAuthStore.getState().setAuth(user, access_token);
+        if (refresh_token && typeof window !== 'undefined') {
+          localStorage.setItem('financial-os-refresh-token', refresh_token);
+        }
         processQueue(null, access_token);
-        
+
         originalRequest.headers.Authorization = `Bearer ${access_token}`;
         return api(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
         useAuthStore.getState().clearAuth();
-        
-        if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('financial-os-refresh-token');
+        }
+
+        if (
+          typeof window !== 'undefined' &&
+          !window.location.pathname.startsWith('/login') &&
+          !window.location.pathname.startsWith('/register')
+        ) {
           window.location.href = `/login?redirect=${encodeURIComponent(window.location.pathname)}`;
         }
         return Promise.reject(refreshError);
@@ -92,9 +130,18 @@ api.interceptors.response.use(
         isRefreshing = false;
       }
     }
-    
+
     return Promise.reject(error);
   }
 );
+
+export const setRefreshToken = (token: string | null) => {
+  if (typeof window === 'undefined') return;
+  if (token) {
+    localStorage.setItem('financial-os-refresh-token', token);
+  } else {
+    localStorage.removeItem('financial-os-refresh-token');
+  }
+};
 
 export default api;

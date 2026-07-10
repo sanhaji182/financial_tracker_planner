@@ -39,13 +39,17 @@ export const useAuthStore = create<AuthState>()(
           isAuthenticated: true,
           isLoading: false,
         }),
-      clearAuth: () =>
+      clearAuth: () => {
+        if (typeof window !== 'undefined') {
+          localStorage.removeItem('financial-os-refresh-token');
+        }
         set({
           user: null,
           accessToken: null,
           isAuthenticated: false,
           isLoading: false,
-        }),
+        });
+      },
       updateUser: (updatedFields) =>
         set((state) => ({
           user: state.user ? { ...state.user, ...updatedFields } : null,

@@ -1,4 +1,4 @@
-import api from '../utils/api';
+import api, { setRefreshToken } from '../utils/api';
 import type { User } from '../stores/authStore';
 
 export interface AuthResponse {
@@ -39,16 +39,32 @@ export interface ChangePasswordRequest {
 export const authService = {
   async register(req: any): Promise<AuthResponse> {
     const res = await api.post('/auth/register', req);
-    return res.data.data;
+    const data = res.data.data as AuthResponse;
+    if (data.refresh_token) {
+      setRefreshToken(data.refresh_token);
+    }
+    return data;
   },
 
   async login(req: any): Promise<AuthResponse> {
     const res = await api.post('/auth/login', req);
-    return res.data.data;
+    const data = res.data.data as AuthResponse;
+    if (data.refresh_token) {
+      setRefreshToken(data.refresh_token);
+    }
+    return data;
   },
 
   async logout(): Promise<void> {
-    await api.post('/auth/logout', {});
+    try {
+      const refreshToken =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('financial-os-refresh-token')
+          : null;
+      await api.post('/auth/logout', refreshToken ? { refresh_token: refreshToken } : {});
+    } finally {
+      setRefreshToken(null);
+    }
   },
 
   async inviteSpouse(email: string): Promise<InviteResponse> {
@@ -58,7 +74,11 @@ export const authService = {
 
   async registerSpouse(req: any): Promise<AuthResponse> {
     const res = await api.post('/auth/register-spouse', req);
-    return res.data.data;
+    const data = res.data.data as AuthResponse;
+    if (data.refresh_token) {
+      setRefreshToken(data.refresh_token);
+    }
+    return data;
   },
 
   async changePassword(req: any): Promise<void> {
