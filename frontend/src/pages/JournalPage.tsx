@@ -211,15 +211,15 @@ export const JournalPage: React.FC = () => {
 					onAction={isOwner ? handleOpenCreateModal : undefined}
 				/>
 			) : (
-				<div className="relative border-l border-slate-200 dark:border-slate-800 ml-4 pl-6 space-y-8">
+				<div className="relative border-l border-slate-200 dark:border-slate-800 ml-2 pl-4 sm:ml-4 sm:pl-6 space-y-8">
 					{notes.map(note => (
 						<div key={note.id} className="relative">
 							{/* Timeline Indicator Dot */}
-							<span className="absolute -left-[31px] top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 ring-4 ring-white dark:ring-slate-950">
+							<span className="absolute -left-[25px] sm:-left-[31px] top-1.5 flex h-4 w-4 items-center justify-center rounded-full bg-indigo-500 ring-4 ring-white dark:ring-slate-950">
 								<span className="h-1.5 w-1.5 rounded-full bg-white" />
 							</span>
 
-							<Card className="p-5 hover:shadow-md transition-shadow">
+							<Card className="p-4 sm:p-5 hover:shadow-md transition-shadow">
 								<div className="flex justify-between items-start gap-4">
 									<div>
 										<span className="text-xs font-semibold text-slate-400 dark:text-slate-500 flex items-center gap-1">

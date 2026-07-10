@@ -537,7 +537,7 @@ export const AutomationPage: React.FC = () => {
                   return (
                     <div
                       key={rule.id}
-                      className={`p-4 rounded-xl border transition-all duration-200 ${rule.is_active ? 'bg-white border-gray-100 shadow-sm' : 'bg-slate-50/50 border-gray-200/50 opacity-60'}`}
+                      className={`p-4 rounded-xl border transition-all duration-200 ${rule.is_active ? 'bg-white dark:bg-slate-900 border-slate-100 dark:border-slate-800 shadow-sm' : 'bg-slate-50/70 dark:bg-slate-950/20 border-slate-200/60 dark:border-slate-900/60 text-slate-400 dark:text-slate-500'}`}
                     >
                       <div className="flex justify-between items-start gap-4">
                         <div className="space-y-1 flex-1">

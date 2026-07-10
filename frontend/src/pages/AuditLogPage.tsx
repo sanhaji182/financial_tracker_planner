@@ -99,7 +99,7 @@ export const AuditLogPage: React.FC = () => {
 
     if (log.action === 'split' && log.new_value && log.new_value.splits) {
       return (
-        <div className="mt-1 text-[11px] text-indigo-400 font-semibold flex items-center gap-1">
+        <div className="mt-1 text-[11px] text-indigo-600 dark:text-indigo-400 font-semibold flex items-center gap-1">
           <CornerDownRight className="h-3 w-3" />
           Bagi transaksi menjadi {log.new_value.splits.length} kategori.
         </div>
@@ -108,7 +108,7 @@ export const AuditLogPage: React.FC = () => {
 
     if (log.action === 'close' && log.new_value) {
       return (
-        <div className="mt-1 text-[11px] text-violet-400 font-semibold flex items-center gap-1">
+        <div className="mt-1 text-[11px] text-violet-600 dark:text-violet-400 font-semibold flex items-center gap-1">
           <CornerDownRight className="h-3 w-3" />
           Snapshot bulanan tersimpan. Net Worth: Rp {log.new_value.net_worth?.value?.toLocaleString() || '0'}
         </div>
@@ -127,14 +127,14 @@ export const AuditLogPage: React.FC = () => {
             <History className="h-5 w-5 text-white" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-white">Audit Trail</h1>
-            <p className="text-sm text-slate-400">Jejak audit aktivitas dan riwayat perubahan data finansial keluarga</p>
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Audit Trail</h1>
+            <p className="text-sm text-slate-500 dark:text-slate-400">Jejak audit aktivitas dan riwayat perubahan data finansial keluarga</p>
           </div>
         </div>
       </div>
 
       {/* Filters */}
-      <Card className="p-4 bg-slate-900 border-white/5 flex flex-wrap items-end gap-4">
+      <Card className="p-4 bg-bg-base border-slate-250 dark:border-slate-850 flex flex-wrap items-end gap-4">
         {/* Entity Type Filter */}
         <div className="flex-1 min-w-[200px] space-y-1">
           <label className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
@@ -143,7 +143,7 @@ export const AuditLogPage: React.FC = () => {
           <select
             value={entityType}
             onChange={(e) => setEntityType(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-200"
+            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-700 dark:text-slate-200"
           >
             <option value="">Semua Entitas</option>
             <option value="transaction">Transaksi</option>
@@ -165,7 +165,7 @@ export const AuditLogPage: React.FC = () => {
             type="date"
             value={dateFrom}
             onChange={(e) => setDateFrom(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-200"
+            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-700 dark:text-slate-200"
           />
         </div>
 
@@ -178,7 +178,7 @@ export const AuditLogPage: React.FC = () => {
             type="date"
             value={dateTo}
             onChange={(e) => setDateTo(e.target.value)}
-            className="w-full rounded-lg border border-white/10 bg-slate-800 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-200"
+            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-700 dark:text-slate-200"
           />
         </div>
 
@@ -194,7 +194,7 @@ export const AuditLogPage: React.FC = () => {
 
 
       {/* Main Table */}
-      <Card className="overflow-hidden border border-white/5 bg-slate-900/40">
+      <Card className="overflow-hidden border-slate-200 dark:border-slate-800 bg-bg-base">
         {isLoading ? (
           <TableSkeleton cols={5} rows={8} />
         ) : error ? (
@@ -203,15 +203,15 @@ export const AuditLogPage: React.FC = () => {
           </div>
         ) : logs.length === 0 ? (
           <div className="py-20 text-center">
-            <History className="h-12 w-12 text-slate-700 mx-auto mb-3" />
-            <h4 className="text-sm font-bold text-slate-500">Tidak ada data log</h4>
-            <p className="text-xs text-slate-600 mt-1">Coba sesuaikan filter pencarian Anda</p>
+            <History className="h-12 w-12 text-slate-400 mx-auto mb-3" />
+            <h4 className="text-sm font-bold text-text-secondary">Tidak ada data log</h4>
+            <p className="text-xs text-slate-400 mt-1">Coba sesuaikan filter pencarian Anda</p>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left border-collapse">
               <thead>
-                <tr className="border-b border-white/5 bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                <tr className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-white/2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   <th className="px-6 py-3">Waktu</th>
                   <th className="px-6 py-3">User</th>
                   <th className="px-6 py-3">Entitas</th>
@@ -219,20 +219,20 @@ export const AuditLogPage: React.FC = () => {
                   <th className="px-6 py-3">Detail Perubahan</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-white/5">
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {logs.map((log) => {
-                  const act = actionLabels[log.action] || { label: log.action, color: 'bg-white/5 text-slate-300' };
+                  const act = actionLabels[log.action] || { label: log.action, color: 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-slate-300' };
                   return (
-                    <tr key={log.id} className="hover:bg-white/2 transition-colors text-xs text-slate-300 font-medium">
-                      <td className="px-6 py-4 whitespace-nowrap text-slate-500 font-semibold">
+                    <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-white/2 transition-colors text-xs text-text-secondary dark:text-slate-300 font-medium">
+                      <td className="px-6 py-4 whitespace-nowrap text-slate-400 font-semibold">
                         {log.formatted_created_at}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
-                          <User className="h-3.5 w-3.5 text-slate-500" />
+                          <User className="h-3.5 w-3.5 text-slate-400" />
                           <div>
-                            <p className="font-bold text-slate-200">{log.user_name}</p>
-                            <p className="text-[10px] text-slate-500 capitalize">{log.user_role === 'owner' ? 'Owner' : 'Pasangan'}</p>
+                            <p className="font-bold text-text-primary dark:text-slate-200">{log.user_name}</p>
+                            <p className="text-[10px] text-slate-400 capitalize">{log.user_role === 'owner' ? 'Owner' : 'Pasangan'}</p>
                           </div>
                         </div>
                       </td>
@@ -245,7 +245,7 @@ export const AuditLogPage: React.FC = () => {
                         </span>
                       </td>
                       <td className="px-6 py-4 max-w-[300px]">
-                        <p className="text-slate-300 leading-normal font-semibold">
+                        <p className="text-text-primary dark:text-slate-200 leading-normal font-semibold">
                           {log.action === 'create' && `Membuat ${entityLabels[log.entity_type] || log.entity_type}`}
                           {log.action === 'delete' && `Menghapus ${entityLabels[log.entity_type] || log.entity_type}`}
                           {log.action === 'update' && `Memperbarui data`}

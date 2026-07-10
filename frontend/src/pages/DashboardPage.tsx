@@ -139,10 +139,11 @@ export const DashboardPage: React.FC = () => {
         <div className="h-10 w-48 bg-slate-200 dark:bg-slate-800 rounded" />
         
         {/* Top Summary Bar Skeleton */}
-        <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
-          {[1, 2, 3, 4, 5].map((i) => (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
+          {[1, 2, 3, 4].map((i) => (
             <div key={i} className="h-28 bg-slate-100 dark:bg-slate-900 rounded-xl" />
           ))}
+          <div className="h-28 bg-slate-100 dark:bg-slate-900 rounded-xl col-span-2 sm:col-span-1" />
         </div>
 
         {/* Action Row Skeleton */}
@@ -173,7 +174,7 @@ export const DashboardPage: React.FC = () => {
       </div>
 
       {/* Row 1 — Top Summary Bar */}
-      <div className="grid grid-cols-1 sm:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Net Worth */}
         <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-primary-500 shadow-sm relative overflow-hidden group">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Kekayaan Bersih (Net Worth)</span>
@@ -227,7 +228,7 @@ export const DashboardPage: React.FC = () => {
         </Card>
 
         {/* Health Score */}
-        <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-emerald-500 shadow-sm">
+        <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-emerald-500 shadow-sm col-span-2 sm:col-span-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Financial Health Score</span>
           <div className="mt-2.5 flex items-center justify-between">
             <div>

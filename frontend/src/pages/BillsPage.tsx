@@ -267,32 +267,32 @@ export const BillsPage: React.FC = () => {
       {/* Monthly Commitment Summary Bar */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card className="p-4 flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Komitmen Bulan Ini</span>
-          <span className="text-xl font-black mt-1 font-mono text-slate-950 dark:text-white">
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Komitmen Bulan Ini</span>
+          <span className="block text-xl font-black mt-1 font-mono text-slate-950 dark:text-white">
             {commitment?.formatted_total || 'Rp 0'}
           </span>
         </Card>
         <Card className="p-4 flex flex-col justify-between border-l-4 border-l-emerald-500">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-            <Check className="h-3 w-3 text-emerald-500" /> Sudah Bayar
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+            <Check className="h-3 w-3 text-emerald-500 inline mr-1" /> Sudah Bayar
           </span>
-          <span className="text-xl font-black mt-1 font-mono text-slate-950 dark:text-white">
+          <span className="block text-xl font-black mt-1 font-mono text-slate-950 dark:text-white">
             {commitment?.formatted_paid || 'Rp 0'}
           </span>
         </Card>
         <Card className="p-4 flex flex-col justify-between border-l-4 border-l-amber-500">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-            <Clock className="h-3 w-3 text-amber-500" /> Belum Dibayar
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+            <Clock className="h-3 w-3 text-amber-500 inline mr-1" /> Belum Dibayar
           </span>
-          <span className="text-xl font-black mt-1 font-mono text-slate-950 dark:text-white">
+          <span className="block text-xl font-black mt-1 font-mono text-slate-950 dark:text-white">
             {commitment?.formatted_unpaid || 'Rp 0'}
           </span>
         </Card>
         <Card className="p-4 flex flex-col justify-between border-l-4 border-l-rose-500">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-            <AlertCircle className="h-3 w-3 text-rose-500" /> Overdue
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+            <AlertCircle className="h-3 w-3 text-rose-500 inline mr-1" /> Overdue
           </span>
-          <span className="text-xl font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
+          <span className="block text-xl font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
             {commitment?.formatted_overdue || 'Rp 0'}
           </span>
         </Card>

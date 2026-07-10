@@ -112,41 +112,41 @@ export const DebtsPage: React.FC = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
         {/* Total Outstanding */}
-        <Card className="p-5 bg-rose-50/50 dark:bg-rose-950/10 border-rose-100 dark:border-rose-950 flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">Total Sisa Utang (Outstanding)</span>
+        <Card className="p-4 bg-rose-50/50 dark:bg-rose-950/10 border-rose-100 dark:border-rose-950 flex flex-col justify-between">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-rose-600 dark:text-rose-400">Total Sisa Utang (Outstanding)</span>
           {isPageLoading ? (
             <div className="h-8 w-24 bg-rose-100 dark:bg-rose-900/50 animate-pulse rounded mt-2" />
           ) : (
             <MoneyDisplay 
               value={summary?.total_outstanding || 0} 
-              className="text-2xl font-black mt-2 text-rose-700 dark:text-rose-400 font-mono" 
+              className="text-xl sm:text-2xl font-black mt-2 text-rose-700 dark:text-rose-400 font-mono block" 
             />
           )}
         </Card>
 
         {/* Minimum Payment */}
-        <Card className="p-5 flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Cicilan Minimum / Bln</span>
+        <Card className="p-4 flex flex-col justify-between">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Cicilan Minimum / Bln</span>
           {isPageLoading ? (
             <div className="h-8 w-24 bg-slate-100 dark:bg-slate-900 animate-pulse rounded mt-2" />
           ) : (
             <MoneyDisplay 
               value={summary?.total_minimum_payment || 0} 
-              className="text-2xl font-bold mt-2 text-slate-900 dark:text-white font-mono" 
+              className="text-xl sm:text-2xl font-bold mt-2 text-slate-900 dark:text-white font-mono block" 
             />
           )}
         </Card>
 
         {/* Active Debts Count */}
-        <Card className="p-5 flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Jumlah Utang Aktif</span>
+        <Card className="p-4 flex flex-col justify-between col-span-2 sm:col-span-1">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Jumlah Utang Aktif</span>
           {isPageLoading ? (
             <div className="h-8 w-12 bg-slate-100 dark:bg-slate-900 animate-pulse rounded mt-2" />
           ) : (
-            <span className="text-3xl font-black mt-2 text-slate-900 dark:text-white">
-              {summary?.active_count || 0} <span className="text-sm font-semibold text-slate-400">kontrak</span>
+            <span className="text-2xl sm:text-3xl font-black mt-2 text-slate-900 dark:text-white block">
+              {summary?.active_count || 0} <span className="text-xs sm:text-sm font-semibold text-slate-400">kontrak</span>
             </span>
           )}
         </Card>

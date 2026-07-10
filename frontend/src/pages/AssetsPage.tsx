@@ -146,16 +146,16 @@ export const AssetsPage: React.FC = () => {
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
         {/* Total Assets */}
-        <Card className="p-4.5 bg-slate-900 dark:bg-slate-950 text-white flex flex-col justify-between">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Nilai Aset</span>
+        <Card className="p-4.5 bg-slate-900 dark:bg-slate-950 text-white flex flex-col justify-between col-span-2 sm:col-span-1">
+          <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Nilai Aset</span>
           {isPageLoading ? (
             <div className="h-8 w-24 bg-slate-800 animate-pulse rounded mt-2" />
           ) : (
             <MoneyDisplay 
               value={summary?.total_assets || 0} 
-              className="text-xl font-black mt-2 font-mono" 
+              className="text-xl font-black mt-2 font-mono block" 
             />
           )}
         </Card>
@@ -163,7 +163,7 @@ export const AssetsPage: React.FC = () => {
         {/* Liquid */}
         <Card className="p-4.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Likuid (Dana Siaga)</span>
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Likuid (Dana Siaga)</span>
             <Droplets className="h-4 w-4 text-sky-500" />
           </div>
           {isPageLoading ? (
@@ -171,7 +171,7 @@ export const AssetsPage: React.FC = () => {
           ) : (
             <MoneyDisplay 
               value={summary?.total_liquid || 0} 
-              className="text-xl font-bold mt-2 text-sky-600 dark:text-sky-400 font-mono" 
+              className="text-xl font-bold mt-2 text-sky-600 dark:text-sky-400 font-mono block" 
             />
           )}
         </Card>
@@ -179,7 +179,7 @@ export const AssetsPage: React.FC = () => {
         {/* Investasi */}
         <Card className="p-4.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Investasi</span>
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Investasi</span>
             <TrendingUp className="h-4 w-4 text-emerald-500" />
           </div>
           {isPageLoading ? (
@@ -187,7 +187,7 @@ export const AssetsPage: React.FC = () => {
           ) : (
             <MoneyDisplay 
               value={getBreakdownVal('investment')} 
-              className="text-xl font-bold mt-2 text-emerald-600 dark:text-emerald-400 font-mono" 
+              className="text-xl font-bold mt-2 text-emerald-600 dark:text-emerald-400 font-mono block" 
             />
           )}
         </Card>
@@ -195,7 +195,7 @@ export const AssetsPage: React.FC = () => {
         {/* Properti */}
         <Card className="p-4.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Properti</span>
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Properti</span>
             <Home className="h-4 w-4 text-amber-500" />
           </div>
           {isPageLoading ? (
@@ -203,7 +203,7 @@ export const AssetsPage: React.FC = () => {
           ) : (
             <MoneyDisplay 
               value={getBreakdownVal('property')} 
-              className="text-xl font-bold mt-2 text-amber-600 dark:text-amber-400 font-mono" 
+              className="text-xl font-bold mt-2 text-amber-600 dark:text-amber-400 font-mono block" 
             />
           )}
         </Card>
@@ -211,7 +211,7 @@ export const AssetsPage: React.FC = () => {
         {/* Kendaraan */}
         <Card className="p-4.5 flex flex-col justify-between">
           <div className="flex items-center justify-between">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Kendaraan</span>
+            <span className="block text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Kendaraan</span>
             <Car className="h-4 w-4 text-blue-500" />
           </div>
           {isPageLoading ? (

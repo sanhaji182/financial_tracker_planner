@@ -169,9 +169,9 @@ export const MonthlyClosingPage: React.FC = () => {
             <h3 className="text-xs font-black text-slate-400 uppercase tracking-wider">
               Histori Bulan Laporan
             </h3>
-            <div className="space-y-1">
+            <div className="flex gap-2 overflow-x-auto pb-2 -mx-4 px-4 w-[calc(100%+2rem)] sm:w-auto sm:mx-0 sm:px-0 lg:flex-col lg:space-y-1 lg:overflow-x-visible lg:pb-0 lg:w-full snap-x scrollbar-none">
               {!closings || closings.length === 0 ? (
-                <p className="text-xs text-slate-400 font-semibold italic p-3 text-center">
+                <p className="text-xs text-slate-400 font-semibold italic p-3 text-center w-full">
                   Belum ada bulan laporan yang ditutup.
                 </p>
               ) : (
@@ -179,17 +179,17 @@ export const MonthlyClosingPage: React.FC = () => {
                   <button
                     key={c.id}
                     onClick={() => setSelectedMonth(c.month)}
-                    className={`w-full text-left px-3 py-2.5 rounded-lg text-xs font-black transition-colors flex items-center justify-between ${
+                    className={`shrink-0 snap-start lg:w-full text-left px-3 py-2.5 rounded-lg text-xs font-black transition-colors flex items-center justify-between gap-3 ${
                       selectedMonth === c.month
                         ? 'bg-indigo-500 text-white'
                         : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-850 border border-slate-200 dark:border-slate-700'
                     }`}
                   >
-                    <span className="flex items-center gap-2">
+                    <span className="flex items-center gap-2 whitespace-nowrap">
                       <Calendar className="h-4.5 w-4.5" />
                       {new Date(c.month + '-02').toLocaleDateString('id-ID', { year: 'numeric', month: 'long' })}
                     </span>
-                    <Badge variant="success" className="text-[9px] uppercase tracking-wider">
+                    <Badge variant="success" className="text-[9px] uppercase tracking-wider shrink-0">
                       Immutable
                     </Badge>
                   </button>
@@ -260,7 +260,7 @@ export const MonthlyClosingPage: React.FC = () => {
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 <div className="p-4 bg-slate-55 dark:bg-slate-900/30 rounded-xl space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Kekayaan Bersih</span>
-                  <span className="text-base font-black font-mono text-indigo-600 dark:text-indigo-400">
+                  <span className="block text-base font-black font-mono text-indigo-600 dark:text-indigo-400">
                     {closingDetail.net_worth.formatted_value}
                   </span>
                   {closingDetail.comparison && (
@@ -270,7 +270,7 @@ export const MonthlyClosingPage: React.FC = () => {
 
                 <div className="p-4 bg-slate-55 dark:bg-slate-900/30 rounded-xl space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Aset</span>
-                  <span className="text-base font-black font-mono text-slate-850 dark:text-slate-150">
+                  <span className="block text-base font-black font-mono text-slate-850 dark:text-slate-150">
                     {closingDetail.total_assets.formatted_value}
                   </span>
                   {closingDetail.comparison && (
@@ -280,7 +280,7 @@ export const MonthlyClosingPage: React.FC = () => {
 
                 <div className="p-4 bg-slate-55 dark:bg-slate-900/30 rounded-xl space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Utang</span>
-                  <span className="text-base font-black font-mono text-rose-500">
+                  <span className="block text-base font-black font-mono text-rose-500">
                     {closingDetail.total_debts.formatted_value}
                   </span>
                   {closingDetail.comparison && (
@@ -290,7 +290,7 @@ export const MonthlyClosingPage: React.FC = () => {
 
                 <div className="p-4 bg-slate-55 dark:bg-slate-900/30 rounded-xl space-y-1">
                   <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Kas & Bank</span>
-                  <span className="text-base font-black font-mono text-emerald-500">
+                  <span className="block text-base font-black font-mono text-emerald-500">
                     {closingDetail.total_cash.formatted_value}
                   </span>
                   {closingDetail.comparison && (

@@ -239,31 +239,31 @@ export const BudgetsPage: React.FC = () => {
 
       {/* Summary Cards */}
       {summary && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
           <Card className="p-4 flex flex-col justify-between bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/10">
-            <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Total Anggaran</span>
-            <span className="text-lg font-black mt-1 font-mono text-indigo-600 dark:text-indigo-400">
+            <span className="block text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Total Anggaran</span>
+            <span className="block text-lg font-black mt-1 font-mono text-indigo-600 dark:text-indigo-400">
               {summary.total_budget.formatted_value}
             </span>
           </Card>
 
           <Card className="p-4 flex flex-col justify-between border-l-4 border-l-amber-500">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Realisasi Pengeluaran</span>
-            <span className="text-lg font-black mt-1 font-mono text-slate-850 dark:text-slate-100">
+            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Realisasi Pengeluaran</span>
+            <span className="block text-lg font-black mt-1 font-mono text-slate-850 dark:text-slate-100">
               {summary.total_spent.formatted_value}
             </span>
           </Card>
 
           <Card className="p-4 flex flex-col justify-between">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sisa Anggaran</span>
-            <span className="text-lg font-black mt-1 font-mono text-emerald-500">
+            <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Sisa Anggaran</span>
+            <span className="block text-lg font-black mt-1 font-mono text-emerald-500">
               {summary.remaining.formatted_value}
             </span>
           </Card>
 
           <Card className="p-4 flex flex-col justify-between bg-rose-500/10 border-l-4 border-l-rose-500">
-            <span className="text-[10px] font-bold text-rose-500 uppercase tracking-wider">Kategori Over-Limit</span>
-            <span className="text-lg font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
+            <span className="block text-[10px] font-bold text-rose-500 uppercase tracking-wider">Kategori Over-Limit</span>
+            <span className="block text-lg font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
               {summary.categories_over} Kategori
             </span>
           </Card>

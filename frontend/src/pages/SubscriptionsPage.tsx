@@ -374,7 +374,7 @@ export const SubscriptionsPage: React.FC = () => {
 												<tr 
 													key={sub.id} 
 													className={`hover:bg-slate-50/30 dark:hover:bg-slate-900/10 ${
-														!sub.is_active ? 'opacity-60 bg-slate-50/20' : ''
+														!sub.is_active ? 'text-slate-400 dark:text-slate-500 bg-slate-50/50 dark:bg-slate-950/20' : ''
 													}`}
 												>
 													<td className="py-3.5 px-4">

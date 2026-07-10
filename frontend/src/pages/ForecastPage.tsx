@@ -159,36 +159,36 @@ export const ForecastPage: React.FC = () => {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
         <Card className="p-4 flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estimasi Income</span>
-          <span className="text-lg font-black mt-1 font-mono text-slate-900 dark:text-white">
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estimasi Income</span>
+          <span className="block text-lg font-black mt-1 font-mono text-slate-900 dark:text-white">
             {fc.estimated_income.formatted_value}
           </span>
         </Card>
 
         <Card className="p-4 flex flex-col justify-between border-l-4 border-l-amber-500">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fixed Expenses</span>
-          <span className="text-lg font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fixed Expenses</span>
+          <span className="block text-lg font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
             {fc.estimated_fixed_expenses.formatted_value}
           </span>
         </Card>
 
         <Card className="p-4 flex flex-col justify-between">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">Variable Expenses (Est.)</span>
-          <span className="text-lg font-black mt-1 font-mono text-slate-800 dark:text-slate-200">
+          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Variable Expenses (Est.)</span>
+          <span className="block text-lg font-black mt-1 font-mono text-slate-880 dark:text-slate-200">
             {fc.estimated_variable_expenses.formatted_value}
           </span>
         </Card>
 
         <Card className="p-4 flex flex-col justify-between bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/10">
-          <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Forecast Akhir Bulan</span>
-          <span className="text-lg font-black mt-1 font-mono text-indigo-600 dark:text-indigo-400">
+          <span className="block text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Forecast Akhir Bulan</span>
+          <span className="block text-lg font-black mt-1 font-mono text-indigo-600 dark:text-indigo-400">
             {fc.projected_end_balance.formatted_value}
           </span>
         </Card>
 
         <Card className="p-4 flex flex-col justify-between bg-emerald-500/10 border-l-4 border-l-emerald-500 col-span-2 md:col-span-1">
-          <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Safe to Spend ✅</span>
-          <span className="text-lg font-black mt-1 font-mono text-emerald-700 dark:text-emerald-400">
+          <span className="block text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Safe to Spend ✅</span>
+          <span className="block text-lg font-black mt-1 font-mono text-emerald-700 dark:text-emerald-400">
             {fc.safe_to_spend.formatted_value}
           </span>
         </Card>

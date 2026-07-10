@@ -158,12 +158,12 @@ export const TransactionsPage: React.FC = () => {
           </p>
         </div>
         {isOwner && (
-          <div className="flex items-center gap-3 shrink-0 self-start sm:self-center">
+          <div className="flex items-center gap-2 overflow-x-auto pb-2 -mx-4 px-4 w-[calc(100%+2rem)] sm:w-auto sm:max-w-none sm:mx-0 sm:px-0 sm:pb-0 shrink-0 self-start sm:self-center snap-x scrollbar-none">
             <Button
               variant="secondary"
               onClick={handleExport}
               disabled={isExporting}
-              className="flex items-center gap-1.5"
+              className="flex items-center gap-1.5 shrink-0 snap-start whitespace-nowrap"
             >
               {isExporting ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -175,7 +175,7 @@ export const TransactionsPage: React.FC = () => {
             <Button 
               variant="secondary"
               onClick={() => navigate('/transactions/upload')}
-              className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900/30"
+              className="flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 dark:bg-amber-950/20 dark:hover:bg-amber-950/40 dark:text-amber-400 dark:border-amber-900/30 shrink-0 snap-start whitespace-nowrap"
             >
               <Upload className="h-4 w-4" />
               Unggah Bukti / Mutasi
@@ -183,12 +183,12 @@ export const TransactionsPage: React.FC = () => {
             <Button 
               variant="secondary"
               onClick={() => setTransferOpen(true)}
-              className="flex items-center gap-1.5"
+              className="flex items-center gap-1.5 shrink-0 snap-start whitespace-nowrap"
             >
               <ArrowLeftRight className="h-4 w-4" />
               Transfer Dana
             </Button>
-            <Button onClick={handleCreateClick} className="flex items-center gap-1.5">
+            <Button onClick={handleCreateClick} className="flex items-center gap-1.5 shrink-0 snap-start whitespace-nowrap">
               <Plus className="h-4 w-4" />
               Tambah Transaksi
             </Button>
