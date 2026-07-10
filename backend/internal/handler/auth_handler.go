@@ -32,6 +32,7 @@ func (h *AuthHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		authGroup.POST("/invite-spouse", middleware.AuthMiddleware(), middleware.RoleMiddleware("owner"), h.InviteSpouse)
 		authGroup.POST("/register-spouse", h.RegisterSpouse) // Token passed in query or body
 		authGroup.PUT("/change-password", middleware.AuthMiddleware(), h.ChangePassword)
+		authGroup.GET("/me", middleware.AuthMiddleware(), h.GetMe)
 	}
 }
 
@@ -252,6 +253,24 @@ func (h *AuthHandler) ChangePassword(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Password changed successfully",
+	})
+}
+
+func (h *AuthHandler) GetMe(c *gin.Context) {
+	userID := c.GetString("user_id")
+	user, err := h.authService.GetMe(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_SERVER_ERROR",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"data": user.ToResponse(),
 	})
 }
 

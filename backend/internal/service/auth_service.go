@@ -24,6 +24,7 @@ type AuthService interface {
 	InviteSpouse(ctx context.Context, ownerID string, req dto.InviteSpouseRequest) (*dto.InviteLink, error)
 	RegisterSpouse(ctx context.Context, inviteToken string, req dto.RegisterRequest) (*dto.AuthResponse, error)
 	ChangePassword(ctx context.Context, userID string, req dto.ChangePasswordRequest) error
+	GetMe(ctx context.Context, userID string) (*model.User, error)
 }
 
 type authService struct {
@@ -298,4 +299,8 @@ func (s *authService) generateTokenPair(ctx context.Context, user *model.User) (
 	}
 
 	return accessToken, refreshToken, nil
+}
+
+func (s *authService) GetMe(ctx context.Context, userID string) (*model.User, error) {
+	return s.userRepo.GetUserByID(ctx, userID)
 }
