@@ -54,6 +54,11 @@ func (s *backupService) GetBackupFilePath(fileName string) string {
 func (s *backupService) CreateBackup(ctx context.Context) (*dto.BackupResponse, error) {
 	log.Info().Msg("Starting database backup creation process...")
 
+	// Check if pg_dump is available
+	if _, err := exec.LookPath("pg_dump"); err != nil {
+		return nil, errors.New("program pg_dump tidak ditemukan di dalam sistem/container, silakan install postgresql-client")
+	}
+
 	// 1. Execute pg_dump to custom format binary output
 	cmd := exec.Command("pg_dump", 
 		"-h", s.cfg.DBHost, 
@@ -137,6 +142,11 @@ func (s *backupService) ListBackups(ctx context.Context) ([]dto.BackupResponse, 
 
 func (s *backupService) RestoreBackup(ctx context.Context, fileName string) error {
 	log.Info().Str("filename", fileName).Msg("Starting database restore process...")
+
+	// Check if pg_restore is available
+	if _, err := exec.LookPath("pg_restore"); err != nil {
+		return errors.New("program pg_restore tidak ditemukan di dalam sistem/container, silakan install postgresql-client")
+	}
 
 	filePath := s.GetBackupFilePath(fileName)
 	encryptedBytes, err := os.ReadFile(filePath)
