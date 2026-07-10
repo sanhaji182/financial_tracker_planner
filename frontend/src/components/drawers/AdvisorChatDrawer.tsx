@@ -113,7 +113,7 @@ export const AdvisorChatDrawer: React.FC = () => {
         <button
           id="advisor-chat-toggle"
           onClick={() => setIsOpen(true)}
-          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-full shadow-xl transition-all duration-200 hover:scale-105 active:scale-95"
+          className="fixed bottom-20 right-4 md:bottom-6 md:right-6 z-50 flex items-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-full shadow-xl transition-all duration-200 hover:scale-105 active:scale-95"
           title="Tanya AI Advisor"
         >
           <Bot className="w-5 h-5" />
@@ -241,7 +241,7 @@ export const AdvisorChatDrawer: React.FC = () => {
           </div>
 
           {/* Input Area */}
-          <div className="p-4 border-t border-slate-200 dark:border-slate-700 shrink-0 bg-white dark:bg-slate-900">
+          <div className="p-4 pb-safe border-t border-slate-200 dark:border-slate-700 shrink-0 bg-white dark:bg-slate-900">
             <div className="flex gap-2 items-end">
               <textarea
                 ref={inputRef}

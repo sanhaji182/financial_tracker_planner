@@ -2,6 +2,7 @@ import React, { useState, Suspense } from 'react';
 import { Outlet } from 'react-router-dom';
 import { TopBar } from './TopBar';
 import { Sidebar } from './Sidebar';
+import { BottomNav } from './BottomNav';
 import { TableSkeleton } from '../ui/TableSkeleton';
 
 export const AppShell: React.FC = () => {
@@ -17,12 +18,15 @@ export const AppShell: React.FC = () => {
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         
         {/* Main Content Area */}
-        <main className="flex-1 lg:pl-[260px] p-6 overflow-x-hidden min-h-[calc(100vh-56px)]">
+        <main className="flex-1 lg:pl-[260px] p-4 sm:p-6 pb-20 lg:pb-6 overflow-x-hidden min-h-[calc(100vh-56px)]">
           <Suspense fallback={<div className="p-6"><TableSkeleton /></div>}>
             <Outlet />
           </Suspense>
         </main>
       </div>
+
+      {/* Mobile Bottom Navigation */}
+      <BottomNav />
     </div>
   );
 };

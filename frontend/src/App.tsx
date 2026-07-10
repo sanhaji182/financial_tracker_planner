@@ -185,7 +185,7 @@ const App: React.FC = () => {
                   </ProtectedRoute>
                 } 
               />
-              <Route path="settings" element={<NotFound />} />
+              <Route path="settings" element={<Navigate to="/settings/automation" replace />} />
               <Route path="404" element={<NotFound />} />
               <Route path="*" element={<Navigate to="/404" replace />} />
             </Route>

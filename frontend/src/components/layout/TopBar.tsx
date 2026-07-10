@@ -65,7 +65,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
         <Button
           variant="ghost"
           onClick={onMenuClick}
-          className="lg:hidden !p-2 !h-auto"
+          className="hidden !p-2 !h-auto"
         >
           <Menu className="w-5 h-5 text-text-secondary" />
         </Button>
