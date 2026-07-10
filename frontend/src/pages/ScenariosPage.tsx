@@ -70,9 +70,9 @@ export const ScenariosPage: React.FC = () => {
           categoriesService.getCategories(),
           scenariosService.getScenarios(),
         ]);
-        setDebts(dList.filter(d => d.status === 'active'));
-        setCategories(cList.filter(c => c.type === 'expense'));
-        setSavedScenarios(sList);
+        setDebts((dList || []).filter(d => d && d.status === 'active'));
+        setCategories((cList || []).filter(c => c && c.type === 'expense'));
+        setSavedScenarios(sList || []);
       } catch (err: any) {
         console.error('Failed to load scenarios dependencies', err);
       }
@@ -484,11 +484,11 @@ export const ScenariosPage: React.FC = () => {
               📂 Skenario Tersimpan
             </h2>
 
-            {savedScenarios.length === 0 ? (
+            {((savedScenarios || []).length === 0) ? (
               <p className="text-xs text-gray-400 py-6 text-center">Belum ada skenario yang disimpan.</p>
             ) : (
               <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                {savedScenarios.map(sc => (
+                {(savedScenarios || []).map(sc => (
                   <div
                     key={sc.id}
                     className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-2 hover:border-indigo-100 transition-colors"

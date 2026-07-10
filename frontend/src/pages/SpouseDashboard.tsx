@@ -1,4 +1,5 @@
 import React from 'react';
+import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
 import { useSearchParams } from 'react-router-dom';
 import { 
   useSharedSummary, 
@@ -15,10 +16,9 @@ import {
   User, 
   Folder, 
   Coins, 
-  LayoutDashboard, 
+  LayoutDashboard,
   CalendarDays, 
   FileText,
-  Loader2,
   Lock
 } from 'lucide-react';
 
@@ -61,12 +61,32 @@ export const SpouseDashboard: React.FC = () => {
     }
   };
 
+
   const isPageLoading = isSummaryLoading || isAssetsLoading || isDebtsLoading;
 
   if (isPageLoading) {
     return (
-      <div className="flex items-center justify-center min-h-[400px]">
-        <Loader2 className="h-8 w-8 animate-spin text-indigo-500" />
+      <div className="space-y-6">
+        {/* Header Skeleton */}
+        <div className="h-14 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-950 rounded-xl animate-pulse" />
+        
+        {/* Summary Card Grid Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
+
+        {/* Charts/Tables Skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <ChartSkeleton />
+          </div>
+          <div>
+            <CardSkeleton />
+          </div>
+        </div>
       </div>
     );
   }

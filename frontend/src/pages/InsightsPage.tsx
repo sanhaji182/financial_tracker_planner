@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { CardSkeleton } from '../components/ui/Skeleton';
 import {
   TrendingUp,
   BarChart3,
@@ -370,11 +371,12 @@ export const InsightsPage: React.FC = () => {
         </div>
       )}
 
+
       {/* Loading State */}
       {isLoading && (
-        <div className="flex flex-col items-center justify-center py-20">
-          <Loader2 className="h-10 w-10 text-indigo-500 animate-spin mb-4" />
-          <p className="text-gray-500 text-sm">Menganalisis data keuangan Anda...</p>
+        <div className="space-y-6">
+          <CardSkeleton />
+          <CardSkeleton />
         </div>
       )}
 

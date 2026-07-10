@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { TableSkeleton } from '../components/ui/TableSkeleton';
 import {
   Coins,
   Loader2,
@@ -34,7 +35,7 @@ export const CurrencyPage: React.FC = () => {
     setIsLoading(true);
     try {
       const list = await currenciesService.getCurrencies();
-      setCurrencies(list);
+      setCurrencies(list || []);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal memuat kurs mata uang');
     } finally {
@@ -102,10 +103,9 @@ export const CurrencyPage: React.FC = () => {
           </div>
         )}
 
+
         {isLoading ? (
-          <div className="flex justify-center py-10">
-            <Loader2 className="h-8 w-8 text-indigo-500 animate-spin" />
-          </div>
+          <TableSkeleton cols={5} rows={6} />
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">

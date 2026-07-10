@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { CardSkeleton } from '../components/ui/Skeleton';
 import { useClosings, useClosingDetail, useGenerateClosing } from '../hooks/useClosing';
 import { useAuthStore } from '../stores/authStore';
 import { Card } from '../components/ui/Card';
@@ -198,11 +199,13 @@ export const MonthlyClosingPage: React.FC = () => {
           </Card>
         </div>
 
+
         {/* RIGHT COLUMN: DETAIL REPORT DISPLAY */}
         <div className="lg:col-span-3 space-y-6">
           {isDetailLoading ? (
-            <div className="flex justify-center items-center h-[400px]">
-              <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
+            <div className="space-y-4">
+              <CardSkeleton />
+              <CardSkeleton />
             </div>
           ) : detailError || !closingDetail ? (
             <Card className="p-12 text-center text-slate-400 text-xs flex flex-col items-center justify-center space-y-3">

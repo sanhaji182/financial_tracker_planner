@@ -44,7 +44,7 @@ export const JournalPage: React.FC = () => {
 		setIsLoading(true);
 		setErrorMsg(null);
 		try {
-			const data = await journalService.getNotes(searchQuery, selectedTag || undefined);
+			const data = await journalService.getNotes(searchQuery, selectedTag || undefined) || [];
 			setNotes(data);
 
 			// Extract unique tags for filtering

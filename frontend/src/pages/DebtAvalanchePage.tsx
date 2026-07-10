@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
+import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
 import { useNavigate } from 'react-router-dom';
 import { useAvalancheSimulation } from '../hooks/useDebts';
 import { Card } from '../components/ui/Card';
 import { 
   ArrowLeft, 
-  Zap, 
-  Loader2
+  Zap
 } from 'lucide-react';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 
@@ -84,10 +84,12 @@ export const DebtAvalanchePage: React.FC = () => {
         </div>
       </Card>
 
+
       {/* Simulator Response Content */}
       {isLoading ? (
-        <div className="flex items-center justify-center min-h-[200px]">
-          <Loader2 className="h-8 w-8 animate-spin text-amber-500" />
+        <div className="space-y-6">
+          <CardSkeleton />
+          <ChartSkeleton />
         </div>
       ) : !simulation || simulation.schedules_with_extra.length === 0 ? (
         <Card className="p-8 text-center text-slate-400 font-semibold">

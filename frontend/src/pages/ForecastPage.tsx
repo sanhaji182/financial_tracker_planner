@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
 import { useMonthlyForecast } from '../hooks/useForecast';
 import { Card } from '../components/ui/Card';
 import { 
@@ -42,6 +43,7 @@ export const ForecastPage: React.FC = () => {
   };
 
   // Helper formatting numbers to Rupiah inside UI
+
   const formatValueToRupiah = (val: number) => {
     isFinite(val) ? null : val = 0;
     const isNeg = val < 0;
@@ -52,8 +54,18 @@ export const ForecastPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
+      <div className="space-y-6">
+        {/* Header Skeleton */}
+        <div className="space-y-2">
+          <div className="h-8 w-64 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
+          <div className="h-4 w-96 bg-slate-100 dark:bg-slate-800/60 rounded animate-pulse" />
+        </div>
+
+        {/* Top summary card skeleton */}
+        <CardSkeleton />
+
+        {/* Forecast chart skeleton */}
+        <ChartSkeleton />
       </div>
     );
   }

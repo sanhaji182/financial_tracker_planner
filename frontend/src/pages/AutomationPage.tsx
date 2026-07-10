@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { CardSkeleton } from '../components/ui/Skeleton';
 import {
   Plus,
   Trash,
@@ -74,9 +75,9 @@ export const AutomationPage: React.FC = () => {
         accountsService.getAccounts(),
         categoriesService.getCategories(),
       ]);
-      setRules(rList);
-      setAccounts(aList);
-      setCategories(cList);
+      setRules(rList || []);
+      setAccounts(aList || []);
+      setCategories(cList || []);
     } catch (err: any) {
       setErrorMsg(err.message || 'Gagal memuat aturan otomatisasi');
     } finally {
@@ -509,9 +510,11 @@ export const AutomationPage: React.FC = () => {
               </div>
             )}
 
+
             {isLoading ? (
-              <div className="flex justify-center py-10">
-                <Loader2 className="h-8 w-8 text-indigo-500 animate-spin" />
+              <div className="space-y-4">
+                <CardSkeleton />
+                <CardSkeleton />
               </div>
             ) : rules.length === 0 ? (
               <p className="text-sm text-gray-400 py-10 text-center">Belum ada aturan otomatisasi terdaftar.</p>

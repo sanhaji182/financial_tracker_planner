@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { TableSkeleton } from '../components/ui/TableSkeleton';
 import { 
 	Database, 
 	Download, 
@@ -38,7 +39,7 @@ export const BackupPage: React.FC = () => {
 		setIsLoading(true);
 		setErrorMsg(null);
 		try {
-			const data = await backupService.getBackups();
+			const data = await backupService.getBackups() || [];
 			setBackups(data);
 		} catch (err: any) {
 			setErrorMsg(err.message || 'Gagal memuat daftar backup');
@@ -190,10 +191,9 @@ export const BackupPage: React.FC = () => {
 					</button>
 				</div>
 
+
 				{isLoading ? (
-					<div className="py-20 flex justify-center items-center">
-						<Loader2 className="h-8 w-8 text-indigo-500 animate-spin" />
-					</div>
+					<TableSkeleton cols={4} rows={5} />
 				) : backups.length === 0 ? (
 					<div className="py-16 text-center text-slate-400">
 						<Database className="h-12 w-12 mx-auto mb-3 text-slate-300" />

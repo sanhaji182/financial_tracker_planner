@@ -134,7 +134,7 @@ export const DashboardPage: React.FC = () => {
   // Skeletons
   if (isLoading || !dash) {
     return (
-      <div className="space-y-6 animate-pulse">
+      <div data-testid="dashboard-skeleton" className="space-y-6 animate-pulse">
         {/* Header Skeleton */}
         <div className="h-10 w-48 bg-slate-200 dark:bg-slate-800 rounded" />
         

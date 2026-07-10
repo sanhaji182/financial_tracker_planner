@@ -62,10 +62,10 @@ export const SubscriptionsPage: React.FC = () => {
 				subscriptionsService.getSummary(),
 				categoriesService.getCategories()
 			]);
-			setSubs(subsData);
-			setSummary(summaryData);
+			setSubs(subsData || []);
+			setSummary(summaryData || { total_monthly_cost: 0, active_count: 0, warnings: [] });
 			// Only list expense categories
-			setCategories(catsData.filter(c => c.type === 'expense'));
+			setCategories((catsData || []).filter(c => c && c.type === 'expense'));
 		} catch (err: any) {
 			setErrorMsg(err.message || 'Gagal memuat data langganan');
 		} finally {
@@ -285,7 +285,7 @@ export const SubscriptionsPage: React.FC = () => {
 									Deteksi Pemborosan (Unused)
 								</span>
 								<h2 className="text-2xl font-black text-rose-600 dark:text-rose-400 mt-1">
-									{summary?.warnings.length || 0} Peringatan
+									{(summary?.warnings || []).length} Peringatan
 								</h2>
 								<span className="text-[10px] text-slate-400 font-semibold mt-1 block">
 									Tidak digunakan &gt; 60 hari
@@ -298,14 +298,14 @@ export const SubscriptionsPage: React.FC = () => {
 					</div>
 
 					{/* Warning alert panel if unused subscriptions found */}
-					{summary && summary.warnings.length > 0 && (
+					{summary && (summary.warnings || []).length > 0 && (
 						<div className="p-4 bg-rose-50 border border-rose-100 rounded-xl space-y-2">
 							<h3 className="text-xs font-bold text-rose-800 uppercase tracking-wider flex items-center gap-1.5">
 								<AlertTriangle className="h-4.5 w-4.5 text-rose-600" />
 								Rekomendasi Pembersihan Langganan (Waste Detection)
 							</h3>
 							<ul className="text-xs text-rose-700 space-y-1 list-disc pl-5">
-								{summary.warnings.map(w => (
+								{(summary.warnings || []).map(w => (
 									<li key={w.subscription_id} className="leading-relaxed">
 										{w.message}
 									</li>

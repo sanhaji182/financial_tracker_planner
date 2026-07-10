@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
 import { 
   useBudgets, 
   useBudgetSummary, 
@@ -164,8 +165,30 @@ export const BudgetsPage: React.FC = () => {
 
   if (isListLoading || isSummaryLoading) {
     return (
-      <div className="flex h-screen items-center justify-center">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" />
+      <div className="space-y-6">
+        {/* Header Skeleton */}
+        <div className="space-y-2">
+          <div className="h-8 w-64 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
+          <div className="h-4 w-96 bg-slate-100 dark:bg-slate-800/60 rounded animate-pulse" />
+        </div>
+
+        {/* Top Summary Skeleton */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <CardSkeleton />
+          <CardSkeleton />
+          <CardSkeleton />
+        </div>
+
+        {/* Detail/Charts Layout Skeleton */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-4">
+            <CardSkeleton />
+            <CardSkeleton />
+          </div>
+          <div>
+            <ChartSkeleton />
+          </div>
+        </div>
       </div>
     );
   }

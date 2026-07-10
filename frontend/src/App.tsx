@@ -55,9 +55,30 @@ const App: React.FC = () => {
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
         <React.Suspense fallback={
-          <div className="min-h-screen flex flex-col items-center justify-center bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400">
-            <div className="w-12 h-12 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mb-4"></div>
-            <p className="text-sm font-medium animate-pulse">Memuat aplikasi...</p>
+          <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400">
+            {/* Topbar skeleton */}
+            <div className="h-14 bg-white dark:bg-slate-850 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 animate-pulse">
+              <div className="h-6 bg-slate-200 dark:bg-slate-700 w-32 rounded"></div>
+              <div className="h-8 bg-slate-200 dark:bg-slate-700 w-8 rounded-full"></div>
+            </div>
+            <div className="flex flex-1">
+              {/* Sidebar skeleton */}
+              <div className="w-[260px] hidden lg:block bg-white dark:bg-slate-850 border-r border-slate-200 dark:border-slate-800 p-4 space-y-4 animate-pulse">
+                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-full rounded"></div>
+                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-full rounded"></div>
+                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-full rounded"></div>
+              </div>
+              {/* Content skeleton */}
+              <div className="flex-1 p-6 space-y-6">
+                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-48 rounded animate-pulse"></div>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
+                  <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
+                  <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
+                </div>
+                <div className="h-64 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
+              </div>
+            </div>
           </div>
         }>
           <Routes>

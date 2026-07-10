@@ -42,7 +42,7 @@ export const TasksPage: React.FC = () => {
 		try {
 			// Query according to tab filters
 			const statusFilter = activeTab === 'all' ? undefined : activeTab;
-			const data = await tasksService.getTasks(statusFilter);
+			const data = await tasksService.getTasks(statusFilter) || [];
 			setTasks(data);
 		} catch (err: any) {
 			setErrorMsg(err.message || 'Gagal mengambil agenda tugas');
