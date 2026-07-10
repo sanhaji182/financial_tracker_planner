@@ -9,6 +9,9 @@ ENV https_proxy=$https_proxy
 
 WORKDIR /app
 
+# Install postgresql-client for backup and restore features in development mode
+RUN apk add --no-cache postgresql-client
+
 # Copy dependency files
 COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
@@ -21,6 +24,9 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o main cmd/server/main.go
 
 # Run stage
 FROM alpine:3.19
+
+# Install postgresql-client for backup and restore features
+RUN apk add --no-cache postgresql-client
 
 WORKDIR /app
 
