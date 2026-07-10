@@ -66,12 +66,16 @@ func main() {
 	assetRepo := repository.NewAssetRepository(dbPool)
 	debtRepo := repository.NewDebtRepository(dbPool)
 	billRepo := repository.NewBillRepository(dbPool)
+	aiSettingsRepo := repository.NewAISettingsRepository(dbPool)
 
 	// Initialize Services
+	vaultService := service.NewVaultService("/app/uploads")
+	aiSettingsService := service.NewAISettingsService(aiSettingsRepo, vaultService)
+
 	authService := service.NewAuthService(userRepo, rdb)
 	accountService := service.NewAccountService(accountRepo)
 	categoryService := service.NewCategoryService(categoryRepo)
-	txService := service.NewTransactionService(txRepo, accountRepo, categoryRepo)
+	txService := service.NewTransactionService(txRepo, accountRepo, categoryRepo, aiSettingsService)
 	assetService := service.NewAssetService(assetRepo, accountRepo)
 	debtService := service.NewDebtService(debtRepo, accountRepo, categoryRepo)
 	dashboardService := service.NewDashboardService(dbPool, rdb)
@@ -90,6 +94,16 @@ func main() {
 	alertGeneratorService := service.NewAlertGeneratorService(dbPool, telegramService)
 	auditService := service.NewAuditService(txRepo)
 	docService := service.NewDocumentService(dbPool)
+	journalService := service.NewJournalService(dbPool)
+	taskService := service.NewTaskService(dbPool)
+	exportService := service.NewExportService(dbPool)
+	backupService := service.NewBackupService(cfg)
+	goalService := service.NewGoalService(dbPool)
+	subService := service.NewSubscriptionService(dbPool)
+	insightService := service.NewInsightService(dbPool)
+	scenarioService := service.NewScenarioService(dbPool)
+	currencyService := service.NewCurrencyService(dbPool)
+	ruleService := service.NewAutomationRuleService(dbPool, telegramService)
 
 	// Initialize Handlers
 	authHandler := handler.NewAuthHandler(authService)
@@ -112,6 +126,17 @@ func main() {
 	alertHandler := handler.NewAlertHandler(alertService)
 	auditHandler := handler.NewAuditHandler(auditService)
 	docHandler := handler.NewDocumentHandler(docService)
+	journalHandler := handler.NewJournalHandler(journalService)
+	taskHandler := handler.NewTaskHandler(taskService)
+	exportHandler := handler.NewExportHandler(exportService)
+	backupHandler := handler.NewBackupHandler(backupService, dbPool)
+	goalHandler := handler.NewGoalHandler(goalService)
+	subHandler := handler.NewSubscriptionHandler(subService)
+	insightHandler := handler.NewInsightHandler(insightService)
+	scenarioHandler := handler.NewScenarioHandler(scenarioService)
+	currencyHandler := handler.NewCurrencyHandler(currencyService)
+	ruleHandler := handler.NewAutomationRuleHandler(ruleService)
+	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService)
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -207,6 +232,19 @@ func main() {
 		// Register Document handler
 		docHandler.RegisterRoutes(v1)
 
+		// Register Journal, Task, Export, and Backup handlers
+		journalHandler.RegisterRoutes(v1)
+		taskHandler.RegisterRoutes(v1)
+		exportHandler.RegisterRoutes(v1)
+		backupHandler.RegisterRoutes(v1)
+		goalHandler.RegisterRoutes(v1)
+		subHandler.RegisterRoutes(v1)
+		insightHandler.RegisterRoutes(v1)
+		scenarioHandler.RegisterRoutes(v1)
+		currencyHandler.RegisterRoutes(v1)
+		ruleHandler.RegisterRoutes(v1)
+		aiSettingsHandler.RegisterRoutes(v1)
+
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
@@ -248,6 +286,52 @@ func main() {
 				log.Info().Msg("Running 6h alert generation cron...")
 				if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
 					log.Error().Err(err).Msg("Failed to run alert generation")
+				}
+			}
+		}
+	}()
+
+	// Start background cron job for task checklists auto-overdue check (every 1 hour)
+	go func() {
+		// Run immediately on startup
+		log.Info().Msg("Running initial task overdue check...")
+		if affected, err := taskService.RunAutoOverdue(context.Background()); err != nil {
+			log.Error().Err(err).Msg("Initial task overdue check failed")
+		} else if affected > 0 {
+			log.Info().Msgf("Initial task overdue check marked %d tasks as overdue", affected)
+		}
+
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Info().Msg("Running hourly task overdue check...")
+				if affected, err := taskService.RunAutoOverdue(context.Background()); err != nil {
+					log.Error().Err(err).Msg("Failed to run task overdue check")
+				} else if affected > 0 {
+					log.Info().Msgf("Hourly task overdue check marked %d tasks as overdue", affected)
+				}
+			}
+		}
+	}()
+
+	// Start background cron job for automation rules evaluation (every 24 hours)
+	go func() {
+		// Run immediately on startup
+		log.Info().Msg("Running initial automation rules evaluation...")
+		if err := ruleService.EvaluateRules(context.Background()); err != nil {
+			log.Error().Err(err).Msg("Initial automation rules evaluation failed")
+		}
+
+		ticker := time.NewTicker(24 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				log.Info().Msg("Running 24h automation rules evaluation cron...")
+				if err := ruleService.EvaluateRules(context.Background()); err != nil {
+					log.Error().Err(err).Msg("Failed to run automation rules evaluation")
 				}
 			}
 		}
