@@ -34,28 +34,28 @@ const journalService = {
 		if (dateTo) params.append('date_to', dateTo);
 
 		const query = params.toString();
-		const res = await api.get<HouseholdNote[]>(`/journal${query ? '?' + query : ''}`);
-		return res.data || [];
+		const res = await api.get<any>(`/journal${query ? '?' + query : ''}`);
+		return res.data.data || [];
 	},
 
 	getNoteByID: async (id: string): Promise<HouseholdNote> => {
-		const res = await api.get<HouseholdNote>(`/journal/${id}`);
-		return res.data;
+		const res = await api.get<any>(`/journal/${id}`);
+		return res.data.data;
 	},
 
 	createNote: async (payload: CreateNotePayload): Promise<HouseholdNote> => {
-		const res = await api.post<HouseholdNote>('/journal', payload);
-		return res.data;
+		const res = await api.post<any>('/journal', payload);
+		return res.data.data;
 	},
 
 	updateNote: async (id: string, payload: UpdateNotePayload): Promise<{ message: string }> => {
-		const res = await api.put<{ message: string }>(`/journal/${id}`, payload);
-		return res.data;
+		const res = await api.put<any>(`/journal/${id}`, payload);
+		return res.data.data;
 	},
 
 	deleteNote: async (id: string): Promise<{ message: string }> => {
-		const res = await api.delete<{ message: string }>(`/journal/${id}`);
-		return res.data;
+		const res = await api.delete<any>(`/journal/${id}`);
+		return res.data.data;
 	}
 };
 

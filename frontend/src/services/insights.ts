@@ -44,14 +44,14 @@ export interface InsightsListResponse {
 const insightsService = {
   getInsights: async (month?: string): Promise<InsightsListResponse> => {
     const params = month ? `?month=${month}` : '';
-    const res = await api.get<InsightsListResponse>(`/insights${params}`);
-    return res.data;
+    const res = await api.get<any>(`/insights${params}`);
+    return res.data.data;
   },
 
   generateInsights: async (month?: string): Promise<InsightsListResponse> => {
     const params = month ? `?month=${month}` : '';
-    const res = await api.post<InsightsListResponse>(`/insights/generate${params}`);
-    return res.data;
+    const res = await api.post<any>(`/insights/generate${params}`);
+    return res.data.data;
   },
 };
 

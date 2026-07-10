@@ -8,21 +8,21 @@ export interface BackupResponse {
 
 const backupService = {
 	getBackups: async (): Promise<BackupResponse[]> => {
-		const res = await api.get<BackupResponse[]>('/backup/list');
-		return res.data || [];
+		const res = await api.get<any>('/backup/list');
+		return res.data.data || [];
 	},
 
 	createBackup: async (): Promise<BackupResponse> => {
-		const res = await api.post<BackupResponse>('/backup/create');
-		return res.data;
+		const res = await api.post<any>('/backup/create');
+		return res.data.data;
 	},
 
 	restoreBackup: async (fileName: string, password: string): Promise<{ message: string }> => {
-		const res = await api.post<{ message: string }>('/backup/restore', {
+		const res = await api.post<any>('/backup/restore', {
 			file_name: fileName,
 			password: password,
 		});
-		return res.data;
+		return res.data.data;
 	},
 
 	downloadBackupFile: async (fileName: string): Promise<void> => {

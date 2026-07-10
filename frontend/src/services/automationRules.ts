@@ -47,18 +47,18 @@ export interface AutomationRuleResponse {
 
 const automationRulesService = {
   getRules: async (): Promise<AutomationRuleResponse[]> => {
-    const res = await api.get<AutomationRuleResponse[]>('/automation-rules');
-    return res.data || [];
+    const res = await api.get<any>('/automation-rules');
+    return res.data.data || [];
   },
 
   createRule: async (req: CreateAutomationRuleRequest): Promise<AutomationRuleResponse> => {
-    const res = await api.post<AutomationRuleResponse>('/automation-rules', req);
-    return res.data;
+    const res = await api.post<any>('/automation-rules', req);
+    return res.data.data;
   },
 
   updateRule: async (id: string, req: Partial<AutomationRuleResponse>): Promise<AutomationRuleResponse> => {
-    const res = await api.put<AutomationRuleResponse>(`/automation-rules/${id}`, req);
-    return res.data;
+    const res = await api.put<any>(`/automation-rules/${id}`, req);
+    return res.data.data;
   },
 
   deleteRule: async (id: string): Promise<void> => {

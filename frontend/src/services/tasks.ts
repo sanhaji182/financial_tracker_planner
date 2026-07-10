@@ -39,28 +39,28 @@ const tasksService = {
 		if (frequency) params.append('frequency', frequency);
 
 		const query = params.toString();
-		const res = await api.get<TaskChecklist[]>(`/tasks${query ? '?' + query : ''}`);
-		return res.data || [];
+		const res = await api.get<any>(`/tasks${query ? '?' + query : ''}`);
+		return res.data.data || [];
 	},
 
 	getTaskByID: async (id: string): Promise<TaskChecklist> => {
-		const res = await api.get<TaskChecklist>(`/tasks/${id}`);
-		return res.data;
+		const res = await api.get<any>(`/tasks/${id}`);
+		return res.data.data;
 	},
 
 	createTask: async (payload: CreateTaskPayload): Promise<TaskChecklist> => {
-		const res = await api.post<TaskChecklist>('/tasks', payload);
-		return res.data;
+		const res = await api.post<any>('/tasks', payload);
+		return res.data.data;
 	},
 
 	updateTask: async (id: string, payload: UpdateTaskPayload): Promise<{ message: string }> => {
-		const res = await api.put<{ message: string }>(`/tasks/${id}`, payload);
-		return res.data;
+		const res = await api.put<any>(`/tasks/${id}`, payload);
+		return res.data.data;
 	},
 
 	deleteTask: async (id: string): Promise<{ message: string }> => {
-		const res = await api.delete<{ message: string }>(`/tasks/${id}`);
-		return res.data;
+		const res = await api.delete<any>(`/tasks/${id}`);
+		return res.data.data;
 	}
 };
 

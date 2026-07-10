@@ -40,18 +40,18 @@ export interface ScenarioResponse {
 
 const scenariosService = {
   getScenarios: async (): Promise<ScenarioResponse[]> => {
-    const res = await api.get<ScenarioResponse[]>('/scenarios');
-    return res.data || [];
+    const res = await api.get<any>('/scenarios');
+    return res.data.data || [];
   },
 
   simulateScenario: async (changes: ScenarioChange[]): Promise<ScenarioResult> => {
-    const res = await api.post<ScenarioResult>('/scenarios/simulate', { changes });
-    return res.data;
+    const res = await api.post<any>('/scenarios/simulate', { changes });
+    return res.data.data;
   },
 
   saveScenario: async (name: string, changes: ScenarioChange[], result: ScenarioResult): Promise<ScenarioResponse> => {
-    const res = await api.post<ScenarioResponse>('/scenarios', { name, changes, result });
-    return res.data;
+    const res = await api.post<any>('/scenarios', { name, changes, result });
+    return res.data.data;
   },
 
   deleteScenario: async (id: string): Promise<void> => {

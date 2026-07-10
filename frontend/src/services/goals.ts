@@ -68,33 +68,33 @@ export interface GoalContributionPayload {
 
 const goalsService = {
 	getGoals: async (): Promise<Goal[]> => {
-		const res = await api.get<Goal[]>('/goals');
-		return res.data || [];
+		const res = await api.get<any>('/goals');
+		return res.data.data || [];
 	},
 
 	getGoalByID: async (id: string): Promise<Goal> => {
-		const res = await api.get<Goal>(`/goals/${id}`);
-		return res.data;
+		const res = await api.get<any>(`/goals/${id}`);
+		return res.data.data;
 	},
 
 	createGoal: async (payload: CreateGoalPayload): Promise<Goal> => {
-		const res = await api.post<Goal>('/goals', payload);
-		return res.data;
+		const res = await api.post<any>('/goals', payload);
+		return res.data.data;
 	},
 
 	updateGoal: async (id: string, payload: UpdateGoalPayload): Promise<{ message: string }> => {
-		const res = await api.put<{ message: string }>(`/goals/${id}`, payload);
-		return res.data;
+		const res = await api.put<any>(`/goals/${id}`, payload);
+		return res.data.data;
 	},
 
 	deleteGoal: async (id: string): Promise<{ message: string }> => {
-		const res = await api.delete<{ message: string }>(`/goals/${id}`);
-		return res.data;
+		const res = await api.delete<any>(`/goals/${id}`);
+		return res.data.data;
 	},
 
 	contributeToGoal: async (id: string, payload: GoalContributionPayload): Promise<{ message: string }> => {
-		const res = await api.post<{ message: string }>(`/goals/${id}/contribute`, payload);
-		return res.data;
+		const res = await api.post<any>(`/goals/${id}/contribute`, payload);
+		return res.data.data;
 	}
 };
 
