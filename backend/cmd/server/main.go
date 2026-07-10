@@ -178,6 +178,7 @@ func main() {
 
 		// Register Auth handler
 		authHandler.RegisterRoutes(v1)
+		authHandler.RegisterRoutes(&r.RouterGroup)
 
 		// Register Accounts handler
 		accountHandler.RegisterRoutes(v1)
