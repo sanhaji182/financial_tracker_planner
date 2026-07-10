@@ -15,6 +15,9 @@ ENV/
 dist/
 build/
 bin/
+backend/main
+fos-main-arm64
+*.exe
 
 # Local configuration and logs
 .env.local
