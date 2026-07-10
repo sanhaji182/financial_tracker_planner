@@ -19,7 +19,13 @@ import {
   Tag,
   Shield,
   Lock,
-  History
+  History,
+  BookOpen,
+  CheckSquare,
+  Database,
+  Zap,
+  Activity,
+  Bot
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { authService } from '../../services/auth';
@@ -51,6 +57,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Utang Bersama', path: '/spouse?tab=debts', icon: CreditCard },
         { name: 'Tagihan', path: '/spouse?tab=bills', icon: CalendarDays },
         { name: 'Laporan', path: '/spouse?tab=reports', icon: FileText },
+        { name: 'Goal Tracking', path: '/goals', icon: Target },
+        { name: 'Layanan Langganan', path: '/subscriptions', icon: CalendarDays },
+        { name: 'Jurnal Keluarga', path: '/journal', icon: BookOpen },
+        { name: 'Agenda Checklist', path: '/tasks', icon: CheckSquare },
+        { name: 'Simulasi Skenario', path: '/scenarios', icon: Activity },
+        { name: 'Aturan Otomatis', path: '/settings/automation', icon: SettingsIcon },
+        { name: 'Kurs Mata Uang', path: '/settings/currencies', icon: Coins },
       ]
     : [
         { name: 'Dashboard', path: '/', icon: LayoutDashboard },
@@ -63,13 +76,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Forecast Cashflow', path: '/forecast', icon: TrendingUp },
         { name: 'Dana Darurat', path: '/emergency-fund', icon: Shield },
         { name: 'Saran Alokasi', path: '/allocation', icon: Lightbulb },
+        { name: 'Simulasi Skenario', path: '/scenarios', icon: Activity },
         { name: 'Budget Kategori', path: '/budgets', icon: PieChart },
         { name: 'Tutup Buku Bulanan', path: '/closing', icon: Lock },
         { name: 'Goal Tracking', path: '/goals', icon: Target },
-        { name: 'Insight Bulanan', path: '/insights', icon: Lightbulb },
+        { name: 'Layanan Langganan', path: '/subscriptions', icon: CalendarDays },
+        { name: 'Insight Bulanan', path: '/insights', icon: Zap },
         { name: 'Alert Center', path: '/alerts', icon: Bell },
         { name: 'Document Center', path: '/documents', icon: FileText },
         { name: 'Audit Trail', path: '/admin/audit-log', icon: History },
+        { name: 'Jurnal Keluarga', path: '/journal', icon: BookOpen },
+        { name: 'Agenda Checklist', path: '/tasks', icon: CheckSquare },
+        { name: 'Backup & Restore', path: '/settings/backup', icon: Database },
+        { name: 'Aturan Otomatis', path: '/settings/automation', icon: SettingsIcon },
+        { name: 'Kurs Mata Uang', path: '/settings/currencies', icon: Coins },
+        { name: 'Asisten AI', path: '/settings/ai', icon: Bot },
         
         // Conditional Invite Spouse route (Owner only)
         ...(user?.role === 'owner' ? [{ name: 'Undang Pasangan', path: '/invite-spouse', icon: UserPlus }] : []),
