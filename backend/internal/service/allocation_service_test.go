@@ -9,7 +9,7 @@ import (
 )
 
 func TestAllocationService(t *testing.T) {
-	setupTestEnv()
+	setupTestEnv(t)
 
 	userRepo := repository.NewUserRepository(testDB)
 	efServ := NewEFService(testDB)

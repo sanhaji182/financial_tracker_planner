@@ -11,7 +11,7 @@ import (
 )
 
 func TestDashboardService(t *testing.T) {
-	setupTestEnv()
+	setupTestEnv(t)
 
 	userRepo := repository.NewUserRepository(testDB)
 	accountRepo := repository.NewAccountRepository(testDB)
