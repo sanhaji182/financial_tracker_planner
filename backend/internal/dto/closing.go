@@ -61,6 +61,12 @@ type ClosingComparison struct {
 	ExpenseDelta  DeltaValue `json:"expense_delta"`
 }
 
+type DataSufficiency struct {
+	IsSufficient       bool     `json:"is_sufficient"`
+	MissingFields      []string `json:"missing_fields,omitempty"`
+	UsesFallbackValues bool     `json:"uses_fallback_values"`
+}
+
 type MonthlyClosingResponse struct {
 	ID               string             `json:"id"`
 	Month            string             `json:"month"`
@@ -77,4 +83,5 @@ type MonthlyClosingResponse struct {
 	ConfirmedAt      string             `json:"confirmed_at,omitempty"`
 	Notes            string             `json:"notes"`
 	Comparison       *ClosingComparison `json:"comparison,omitempty"`
+	DataSufficiency  *DataSufficiency   `json:"data_sufficiency,omitempty"`
 }

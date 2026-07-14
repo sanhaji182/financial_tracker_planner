@@ -51,8 +51,8 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 	var monthlyOverride *float64
 
 	err = s.dbPool.QueryRow(ctx, `
-		SELECT target_months, monthly_living_cost_override 
-		FROM emergency_fund_configs 
+		SELECT target_months, monthly_living_cost_override
+		FROM emergency_fund_configs
 		WHERE user_id = $1
 	`, ownerID).Scan(&targetMonths, &monthlyOverride)
 
@@ -60,7 +60,7 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 		if errors.Is(err, pgx.ErrNoRows) {
 			// Insert default config
 			_, _ = s.dbPool.Exec(ctx, `
-				INSERT INTO emergency_fund_configs (user_id, target_months) 
+				INSERT INTO emergency_fund_configs (user_id, target_months)
 				VALUES ($1, 6)
 				ON CONFLICT (user_id) DO NOTHING
 			`, ownerID)
@@ -103,14 +103,13 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 		}
 
 		monthlyLivingCost = totalLivingCost / 3.0
-		if monthlyLivingCost <= 0 {
-			monthlyLivingCost = 12000000.0 // default fallback living cost
-		}
+		// Do not use hard-coded fallback - let caller handle zero value
+		// if monthlyLivingCost <= 0, data is insufficient
 	}
 
 	// 4. Calculate metrics
 	targetAmount := monthlyLivingCost * float64(targetMonths)
-	
+
 	var coverageMonths float64
 	if monthlyLivingCost > 0 {
 		coverageMonths = totalEmergencyFund / monthlyLivingCost

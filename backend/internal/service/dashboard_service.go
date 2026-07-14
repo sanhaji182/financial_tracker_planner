@@ -52,46 +52,46 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	endOfMonth := startOfMonth.AddDate(0, 1, 0).Add(-time.Nanosecond)
 
 	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
-	
+
 	// 2. Fetch Assets Total & Breakdown (Liquid, Invested, Property)
 	// We dynamically sum current_value, syncing with linked accounts balance where applicable
 	var totalAssets, liquidAssets, investedAssets, propertyAssets float64
 	assetQuery := `
-		SELECT 
+		SELECT
 			COALESCE(SUM(
-				CASE 
+				CASE
 					WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
 					ELSE a.current_value * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
 				END
 			), 0) AS total,
 			COALESCE(SUM(
-				CASE 
-					WHEN (a.type IN ('savings', 'cash', 'e_wallet') OR a.is_liquid = true) THEN 
-						CASE 
+				CASE
+					WHEN (a.type IN ('savings', 'cash', 'e_wallet') OR a.is_liquid = true) THEN
+						CASE
 							WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
 							ELSE a.current_value * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
 						END
-					ELSE 0 
+					ELSE 0
 				END
 			), 0) AS liquid,
 			COALESCE(SUM(
-				CASE 
-					WHEN a.type IN ('investment', 'deposit') THEN 
-						CASE 
+				CASE
+					WHEN a.type IN ('investment', 'deposit') THEN
+						CASE
 							WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
 							ELSE a.current_value * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
 						END
-					ELSE 0 
+					ELSE 0
 				END
 			), 0) AS invested,
 			COALESCE(SUM(
-				CASE 
-					WHEN a.type IN ('property', 'vehicle', 'other') AND a.is_liquid = false THEN 
-						CASE 
+				CASE
+					WHEN a.type IN ('property', 'vehicle', 'other') AND a.is_liquid = false THEN
+						CASE
 							WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
 							ELSE a.current_value * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
 						END
-					ELSE 0 
+					ELSE 0
 				END
 			), 0) AS property
 		FROM assets a
@@ -113,10 +113,10 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	var maxDebtName string
 
 	debtQuery := `
-		SELECT 
+		SELECT
 			COALESCE(SUM(d.outstanding_balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0),
 			COUNT(*),
-			COALESCE(SUM(d.minimum_payment * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0), 
+			COALESCE(SUM(d.minimum_payment * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0),
 			COALESCE(MAX(d.interest_rate), 0)
 		FROM debts d
 		LEFT JOIN currencies curr ON d.currency = curr.code
@@ -129,8 +129,8 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 
 	if maxDebtInterestRate > 0 {
 		_ = s.dbPool.QueryRow(ctx, `
-			SELECT name FROM debts 
-			WHERE user_id = $1 AND status = 'active' AND interest_rate = $2 AND deleted_at IS NULL 
+			SELECT name FROM debts
+			WHERE user_id = $1 AND status = 'active' AND interest_rate = $2 AND deleted_at IS NULL
 			LIMIT 1
 		`, userID, maxDebtInterestRate).Scan(&maxDebtName)
 	}
@@ -138,7 +138,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	// 4. Fetch Cash Available (accounts table bank, e_wallet, cash)
 	var cashAvailable float64
 	cashQuery := `
-		SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0) 
+		SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 		FROM accounts a
 		LEFT JOIN currencies curr ON a.currency = curr.code
 		WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash') AND a.is_active = true AND a.deleted_at IS NULL
@@ -151,11 +151,12 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	// 5. Fetch Income & Expenses for Current Month
 	var incomeThisMonth, expenseThisMonth float64
 	txQuery := `
-		SELECT 
-			COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0)
-		FROM transactions
-		WHERE user_id = $1 AND date >= $2 AND date <= $3 AND status = 'confirmed' AND deleted_at IS NULL
+		SELECT
+			COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount * COALESCE(curr.exchange_rate_to_idr, 1.0) ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN t.type = 'expense' THEN t.amount * COALESCE(curr.exchange_rate_to_idr, 1.0) ELSE 0 END), 0)
+		FROM transactions t
+		LEFT JOIN currencies curr ON t.currency = curr.code
+		WHERE t.user_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.status = 'confirmed' AND t.deleted_at IS NULL
 	`
 	err = s.dbPool.QueryRow(ctx, txQuery, userID, startOfMonth, endOfMonth).Scan(&incomeThisMonth, &expenseThisMonth)
 	if err != nil {
@@ -165,24 +166,21 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	// 6. Calculate Average Monthly Living Cost (past 3 months of expenses)
 	var totalExpensesLast3Months float64
 	err = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) 
-		FROM transactions 
-		WHERE user_id = $1 AND type = 'expense' AND date >= $2 AND date < $3 AND status = 'confirmed' AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
+		FROM transactions t
+		LEFT JOIN currencies curr ON t.currency = curr.code
+		WHERE t.user_id = $1 AND t.type = 'expense' AND t.date >= $2 AND t.date < $3 AND t.status = 'confirmed' AND t.deleted_at IS NULL
 	`, userID, threeMonthsAgo, startOfMonth).Scan(&totalExpensesLast3Months)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch past expenses: %w", err)
 	}
 
 	monthlyLivingCost := totalExpensesLast3Months / 3.0
-	if monthlyLivingCost <= 0 {
-		// Fallback living cost to default
-		monthlyLivingCost = 5000000.0
-	}
 
 	// 7. Calculate Emergency Fund Total
 	var efTotal float64
 	err = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0) 
+		SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 		FROM accounts a
 		LEFT JOIN currencies curr ON a.currency = curr.code
 		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
@@ -329,7 +327,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		var assetsAtMonth float64
 		assetTrendQuery := `
 			SELECT COALESCE(SUM(
-				CASE 
+				CASE
 					WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
 					ELSE COALESCE((SELECT value FROM asset_valuations WHERE asset_id = a.id AND valuation_date <= $2 ORDER BY valuation_date DESC, created_at DESC LIMIT 1), a.current_value) * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
 				END
@@ -408,7 +406,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			if errScan := rows.Scan(&b.ID, &b.Name, &b.Amount, &nextDue); errScan == nil {
 				b.FormattedAmount = formatRupiah(b.Amount)
 				b.DueDate = nextDue
-				days := int(nextDue.Sub(time.Now().Truncate(24 * time.Hour)).Hours() / 24)
+				days := int(nextDue.Sub(time.Now().Truncate(24*time.Hour)).Hours() / 24)
 				if days < 0 {
 					days = 0
 				}
@@ -472,14 +470,14 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			Value:          cashAvailable,
 			FormattedValue: formatRupiah(cashAvailable),
 		},
-		DTIRatio:         dtiRatio,
-		DTIStatus:        dtiStatus,
+		DTIRatio:  dtiRatio,
+		DTIStatus: dtiStatus,
 		HealthScore: dto.HealthScoreDto{
 			Score:       healthScoreVal,
 			Rating:      healthRating,
 			StatusColor: healthColor,
 		},
-		UpcomingBills:    dbBills,
+		UpcomingBills: dbBills,
 		ForecastEndMonth: dto.MoneyValue{
 			Value:          forecastEndMonth,
 			FormattedValue: formatRupiah(forecastEndMonth),

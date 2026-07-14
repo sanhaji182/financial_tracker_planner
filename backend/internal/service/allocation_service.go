@@ -107,7 +107,7 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 	}
 	var debts []dbDebt
 	rows, err := s.dbPool.Query(ctx, `
-		SELECT id, name, interest_rate, COALESCE(balance, 0)
+		SELECT id, name, interest_rate, COALESCE(outstanding_balance, 0)
 		FROM debts
 		WHERE user_id = $1 AND status = 'active' AND interest_rate > 12.0 AND deleted_at IS NULL
 		ORDER BY interest_rate DESC

@@ -66,18 +66,41 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	}
 
 	// 2. Fetch Starting Cash Available
+	now := time.Now()
+	isCurrentMonth := targetYearMonth.Year() == now.Year() && targetYearMonth.Month() == now.Month()
+
 	var startingCash float64
-	err = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0)
-		FROM accounts
-		WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
-	`, ownerID).Scan(&startingCash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get starting balance: %w", err)
+	if isCurrentMonth {
+		// Current month: use actual account balance
+		err = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(balance), 0)
+			FROM accounts
+			WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
+		`, ownerID).Scan(&startingCash)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get starting balance: %w", err)
+		}
+	} else {
+		// Future month: use projected end balance from the previous month's forecast
+		prevMonth := targetYearMonth.AddDate(0, -1, 0).Format("2006-01")
+		err = s.dbPool.QueryRow(ctx, `
+			SELECT projected_end_balance FROM forecasts
+			WHERE user_id = $1 AND month = $2
+		`, ownerID, prevMonth).Scan(&startingCash)
+		if err != nil {
+			// No previous forecast exists — fall back to actual account balance
+			err = s.dbPool.QueryRow(ctx, `
+				SELECT COALESCE(SUM(balance), 0)
+				FROM accounts
+				WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
+			`, ownerID).Scan(&startingCash)
+			if err != nil {
+				return nil, fmt.Errorf("failed to get starting balance: %w", err)
+			}
+		}
 	}
 
 	// 3. Query average income of last 3 months
-	now := time.Now()
 	startOfCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfCurrentMonth.AddDate(0, -3, 0)
 
@@ -89,9 +112,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalIncomeLast3Months)
 
 	estimatedIncome := totalIncomeLast3Months / 3.0
-	if estimatedIncome <= 0 {
-		estimatedIncome = 25000000.0 // Default fallback salary
-	}
+	incomeInsufficient := estimatedIncome <= 0
 
 	// 4. Query average variable expenses of last 3 months
 	var totalVariableExpensesLast3Months float64
@@ -104,9 +125,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalVariableExpensesLast3Months)
 
 	estimatedVariableExpenses := totalVariableExpensesLast3Months / 3.0
-	if estimatedVariableExpenses <= 0 {
-		estimatedVariableExpenses = 6000000.0 // Default variable expense
-	}
+	variableInsufficient := estimatedVariableExpenses <= 0
 
 	// 5. Query average living cost of last 3 months (excluding extra debt payoffs)
 	var totalLivingCostLast3Months float64
@@ -119,9 +138,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalLivingCostLast3Months)
 
 	monthlyLivingCostThreshold := totalLivingCostLast3Months / 3.0
-	if monthlyLivingCostThreshold <= 0 {
-		monthlyLivingCostThreshold = 12000000.0 // Default safety threshold
-	}
+	livingCostInsufficient := monthlyLivingCostThreshold <= 0
 
 	// 6. Query expected income day (day of month of latest income)
 	var expectedIncomeDay int = 25
@@ -155,12 +172,11 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	// 8. Generate Daily Projections
 	daysInMonth := time.Date(targetYearMonth.Year(), targetYearMonth.Month()+1, 0, 0, 0, 0, 0, targetYearMonth.Location()).Day()
-	
+
 	// Determine start projection date.
 	// If forecasting current month: start simulation from today onwards.
 	// If forecasting future month: start simulation from day 1.
 	startDay := 1
-	isCurrentMonth := targetYearMonth.Year() == now.Year() && targetYearMonth.Month() == now.Month()
 	if isCurrentMonth {
 		startDay = now.Day()
 	}
@@ -295,6 +311,23 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		safeToSpend = 0
 	}
 
+	// Track data sufficiency
+	var missingFields []string
+	if incomeInsufficient {
+		missingFields = append(missingFields, "income")
+	}
+	if variableInsufficient {
+		missingFields = append(missingFields, "variable_expenses")
+	}
+	if livingCostInsufficient {
+		missingFields = append(missingFields, "living_cost")
+	}
+	ds := &dto.DataSufficiency{
+		IsSufficient:       len(missingFields) == 0,
+		MissingFields:      missingFields,
+		UsesFallbackValues: false,
+	}
+
 	res := &dto.ForecastResponse{
 		Month: month,
 		EstimatedIncome: dto.MoneyValue{
@@ -328,6 +361,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 			FormattedValue: formatRupiah(monthlyLivingCostThreshold),
 		},
 		DailyProjections: projections,
+		DataSufficiency:  ds,
 	}
 
 	// 9. Save to Database (forecasts table)

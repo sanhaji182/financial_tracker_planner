@@ -19,6 +19,20 @@ import {
   ReferenceLine
 } from 'recharts';
 
+// Defined outside ForecastPage so it's not conditionally created after early returns
+const RenderLowestDot = (props: any & { lowestDay: number }) => {
+  const { cx, cy, payload, lowestDay } = props;
+  if (parseInt(payload.name) === lowestDay) {
+    return (
+      <g>
+        <circle cx={cx} cy={cy} r={7} fill="#ef4444" stroke="#ffffff" strokeWidth={2} />
+        <circle cx={cx} cy={cy} r={12} fill="#ef4444" opacity={0.3} className="animate-ping" />
+      </g>
+    );
+  }
+  return null;
+};
+
 export const ForecastPage: React.FC = () => {
   const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().substring(0, 7)); // YYYY-MM
 
@@ -45,7 +59,7 @@ export const ForecastPage: React.FC = () => {
   // Helper formatting numbers to Rupiah inside UI
 
   const formatValueToRupiah = (val: number) => {
-    isFinite(val) ? null : val = 0;
+    if (!isFinite(val)) val = 0;
     const isNeg = val < 0;
     if (isNeg) val = -val;
     const parts = Math.round(val).toLocaleString('id-ID');
@@ -95,20 +109,6 @@ export const ForecastPage: React.FC = () => {
   const threshold = fc.threshold_limit.value;
   const lowestDateStr = fc.lowest_balance_date;
   const lowestDay = new Date(lowestDateStr).getDate();
-
-  // Custom Dot for lowest balance
-  const RenderLowestDot = (props: any) => {
-    const { cx, cy, payload } = props;
-    if (parseInt(payload.name) === lowestDay) {
-      return (
-        <g>
-          <circle cx={cx} cy={cy} r={7} fill="#ef4444" stroke="#ffffff" strokeWidth={2} />
-          <circle cx={cx} cy={cy} r={12} fill="#ef4444" opacity={0.3} className="animate-ping" />
-        </g>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="space-y-6">
@@ -260,7 +260,7 @@ export const ForecastPage: React.FC = () => {
                 strokeWidth={2.5}
                 fillOpacity={1} 
                 fill="url(#colorBalance)" 
-                dot={<RenderLowestDot />}
+                dot={<RenderLowestDot lowestDay={lowestDay} />}
               />
             </AreaChart>
           </ResponsiveContainer>

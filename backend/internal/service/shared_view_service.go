@@ -69,9 +69,9 @@ func (s *sharedViewService) GetSharedSummary(ctx context.Context, userID string)
 	var totalAssetsShared float64
 	assetQuery := `
 		SELECT COALESCE(SUM(
-			CASE 
+			CASE
 				WHEN a.linked_account_id IS NOT NULL THEN ac.balance
-				ELSE a.current_value 
+				ELSE a.current_value
 			END
 		), 0)
 		FROM assets a
@@ -118,15 +118,12 @@ func (s *sharedViewService) GetSharedSummary(ctx context.Context, userID string)
 	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
 	var totalExpensesLast3Months float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) 
-		FROM transactions 
+		SELECT COALESCE(SUM(amount), 0)
+		FROM transactions
 		WHERE user_id = $1 AND type = 'expense' AND date >= $2 AND date < $3 AND status = 'confirmed' AND deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExpensesLast3Months)
-	
+
 	monthlyLivingCost := totalExpensesLast3Months / 3.0
-	if monthlyLivingCost <= 0 {
-		monthlyLivingCost = 5000000.0
-	}
 	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
 	daysRemaining := daysInMonth - now.Day()
 	if daysRemaining < 0 {
@@ -156,7 +153,7 @@ func (s *sharedViewService) GetSharedSummary(ctx context.Context, userID string)
 			if errScan := rows.Scan(&b.ID, &b.Name, &b.Amount, &nextDue); errScan == nil {
 				b.FormattedAmount = formatRupiah(b.Amount)
 				b.DueDate = nextDue
-				days := int(nextDue.Sub(time.Now().Truncate(24 * time.Hour)).Hours() / 24)
+				days := int(nextDue.Sub(time.Now().Truncate(24*time.Hour)).Hours() / 24)
 				if days < 0 {
 					days = 0
 				}
@@ -336,8 +333,8 @@ func (s *sharedViewService) GetSharedBills(ctx context.Context, userID string) (
 		}
 		b.FormattedAmount = formatRupiah(b.Amount)
 		b.DueDate = nextDue
-		
-		days := int(nextDue.Sub(time.Now().Truncate(24 * time.Hour)).Hours() / 24)
+
+		days := int(nextDue.Sub(time.Now().Truncate(24*time.Hour)).Hours() / 24)
 		if days < 0 {
 			days = 0
 		}

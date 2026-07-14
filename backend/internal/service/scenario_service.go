@@ -75,9 +75,6 @@ func (s *scenarioService) SimulateScenario(ctx context.Context, userID string, c
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalIncomeLast3Months)
 
 	avgMonthlyIncome := totalIncomeLast3Months / 3.0
-	if avgMonthlyIncome <= 0 {
-		avgMonthlyIncome = 25000000.0 // Default salary fallback
-	}
 
 	var totalExpenseLast3Months float64
 	_ = s.dbPool.QueryRow(ctx, `
@@ -87,9 +84,6 @@ func (s *scenarioService) SimulateScenario(ctx context.Context, userID string, c
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalExpenseLast3Months)
 
 	avgMonthlyExpense := totalExpenseLast3Months / 3.0
-	if avgMonthlyExpense <= 0 {
-		avgMonthlyExpense = 12000000.0 // Default safety threshold
-	}
 
 	// 3. Query current outstanding debts
 	var outstandingDebts float64

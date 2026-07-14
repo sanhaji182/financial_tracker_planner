@@ -94,27 +94,27 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	// Total Cash
 	var totalCash float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts 
+		SELECT COALESCE(SUM(balance), 0) FROM accounts
 		WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND deleted_at IS NULL AND is_active = true
 	`, ownerID).Scan(&totalCash)
 
 	// Total Account Balances (Cash + Invest + Deposits)
 	var totalAccounts float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts 
+		SELECT COALESCE(SUM(balance), 0) FROM accounts
 		WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
 	`, ownerID).Scan(&totalAccounts)
 
 	// Total Assets Valuation
 	var totalAssets float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(value), 0) FROM assets WHERE user_id = $1 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(current_value), 0) FROM assets WHERE user_id = $1 AND deleted_at IS NULL
 	`, ownerID).Scan(&totalAssets)
 
 	// Total Debts & Min Payments
 	var totalDebts, totalMinDebtPayments float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0), COALESCE(SUM(minimum_payment), 0) FROM debts 
+		SELECT COALESCE(SUM(outstanding_balance), 0), COALESCE(SUM(minimum_payment), 0) FROM debts
 		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
 	`, ownerID).Scan(&totalDebts, &totalMinDebtPayments)
 
@@ -124,14 +124,14 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	// 3. Transactions (Income & Expense)
 	var totalIncome, totalExpense float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions 
-		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed' 
+		SELECT COALESCE(SUM(amount), 0) FROM transactions
+		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
 		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
 	`, ownerID, req.Month).Scan(&totalIncome)
 
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions 
-		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed' 
+		SELECT COALESCE(SUM(amount), 0) FROM transactions
+		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
 		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
 	`, ownerID, req.Month).Scan(&totalExpense)
 
@@ -145,33 +145,31 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	var monthlyLivingCost float64
 	var targetMonths int
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(monthly_living_cost_override, 0), target_months 
+		SELECT COALESCE(monthly_living_cost_override, 0), target_months
 		FROM emergency_fund_configs WHERE user_id = $1
 	`, ownerID).Scan(&monthlyLivingCost, &targetMonths)
 
 	if monthlyLivingCost <= 0 {
 		// Fallback to 3-month average variable expenses
 		_ = s.dbPool.QueryRow(ctx, `
-			SELECT COALESCE(AVG(spent), 0) 
+			SELECT COALESCE(AVG(spent), 0)
 			FROM (
-				SELECT SUM(amount) as spent 
-				FROM transactions 
+				SELECT SUM(amount) as spent
+				FROM transactions
 				WHERE user_id = $1 AND type = 'expense' AND deleted_at IS NULL
 				GROUP BY TO_CHAR(date, 'YYYY-MM')
 				LIMIT 3
 			) tmp
 		`, ownerID).Scan(&monthlyLivingCost)
 	}
-	if monthlyLivingCost <= 0 {
-		monthlyLivingCost = 5000000 // default fallback
-	}
+
 	if targetMonths <= 0 {
 		targetMonths = 12
 	}
 
 	var efTotal float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts 
+		SELECT COALESCE(SUM(balance), 0) FROM accounts
 		WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
 	`, ownerID).Scan(&efTotal)
 
@@ -207,8 +205,8 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	var totalBudget, totalSpent float64
 	budgetRows, err := s.dbPool.Query(ctx, `
 		SELECT b.amount, c.name, COALESCE((
-			SELECT SUM(amount) FROM transactions 
-			WHERE user_id = $1 AND category_id = b.category_id AND type = 'expense' AND status = 'confirmed' 
+			SELECT SUM(amount) FROM transactions
+			WHERE user_id = $1 AND category_id = b.category_id AND type = 'expense' AND status = 'confirmed'
 			  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL AND is_split = false
 		), 0) + COALESCE((
 			SELECT SUM(s.amount) FROM transaction_splits s
@@ -247,7 +245,7 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 
 	// Fetch other active goals
 	goalRows, err := s.dbPool.Query(ctx, `
-		SELECT name, target_amount, current_amount FROM goals 
+		SELECT name, target_amount, current_amount FROM goals
 		WHERE user_id = $1 AND status = 'active'
 	`, ownerID)
 	if err == nil {
@@ -269,6 +267,20 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	}
 
 	// Build Snapshot
+	// Track data sufficiency
+	var missingFields []string
+	if totalIncome <= 0 {
+		missingFields = append(missingFields, "income")
+	}
+	if monthlyLivingCost <= 0 {
+		missingFields = append(missingFields, "monthly_living_cost")
+	}
+	ds := &dto.DataSufficiency{
+		IsSufficient:       len(missingFields) == 0,
+		MissingFields:      missingFields,
+		UsesFallbackValues: false,
+	}
+
 	snapshot := dto.ClosingSnapshot{
 		Month:            req.Month,
 		Accounts:         accounts,
@@ -294,7 +306,7 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		return nil, fmt.Errorf("failed to marshal snapshot: %w", err)
 	}
 
-	// 8. Insert monthly_closing
+	// 8. Insert monthly_closing (preserve DataSufficiency for response)
 	var closingID string
 	err = s.dbPool.QueryRow(ctx, `
 		INSERT INTO monthly_closings (
@@ -312,7 +324,12 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		VALUES ($1, 'closing', $2::uuid, 'close', $3)
 	`, ownerID, closingID, snapshotBytes)
 
-	return s.GetClosingDetail(ctx, userID, req.Month)
+	resp, err := s.GetClosingDetail(ctx, userID, req.Month)
+	if err != nil {
+		return nil, err
+	}
+	resp.DataSufficiency = ds
+	return resp, nil
 }
 
 func (s *closingService) GetClosingDetail(ctx context.Context, userID string, month string) (*dto.MonthlyClosingResponse, error) {
@@ -346,8 +363,8 @@ func (s *closingService) GetClosingDetail(ctx context.Context, userID string, mo
 
 	// Formatted values
 	res := &dto.MonthlyClosingResponse{
-		ID:    mcID,
-		Month: month,
+		ID:       mcID,
+		Month:    month,
 		Snapshot: snapshot,
 		TotalIncome: dto.MoneyValue{
 			Value:          snapshot.TotalIncome,
