@@ -56,7 +56,7 @@ func (r *pgTransactionRepository) Create(ctx context.Context, t *model.Transacti
 		t.TargetAccountID,
 		t.CategoryID,
 		t.Type,
-		t.Amount,
+		model.DecimalFromMoney(t.Amount),
 		t.Date,
 		t.Description,
 		t.Notes,
@@ -86,7 +86,7 @@ func (r *pgTransactionRepository) Create(ctx context.Context, t *model.Transacti
 			err = conn.QueryRow(ctx, querySplit,
 				splits[i].TransactionID,
 				splits[i].CategoryID,
-				splits[i].Amount,
+				model.DecimalFromMoney(splits[i].Amount),
 				splits[i].Description,
 			).Scan(&splits[i].ID, &splits[i].CreatedAt)
 			if err != nil {
@@ -98,23 +98,24 @@ func (r *pgTransactionRepository) Create(ctx context.Context, t *model.Transacti
 
 	// 3. Update account balance (only if status is confirmed)
 	if t.Status == "confirmed" {
+		amountDecimal := model.DecimalFromMoney(t.Amount)
 		if t.Type == "income" {
 			queryBalance := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, queryBalance, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, queryBalance, amountDecimal, t.AccountID)
 		} else if t.Type == "expense" {
 			queryBalance := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, queryBalance, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, queryBalance, amountDecimal, t.AccountID)
 		} else if t.Type == "transfer" {
 			// Reduce source account
 			querySrc := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, querySrc, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, querySrc, amountDecimal, t.AccountID)
 			if err != nil {
 				return nil, err
 			}
 			// Add target account
 			if t.TargetAccountID != nil {
 				queryTarget := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-				_, err = conn.Exec(ctx, queryTarget, t.Amount, *t.TargetAccountID)
+				_, err = conn.Exec(ctx, queryTarget, amountDecimal, *t.TargetAccountID)
 			} else {
 				return nil, errors.New("target account ID missing for transfer transaction")
 			}
@@ -171,35 +172,7 @@ func (r *pgTransactionRepository) GetByID(ctx context.Context, id string) (*mode
 	`
 
 	var t model.Transaction
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&t.ID,
-		&t.UserID,
-		&t.AccountID,
-		&t.AccountName,
-		&t.TargetAccountID,
-		&t.TargetAccountName,
-		&t.CategoryID,
-		&t.CategoryName,
-		&t.CategoryIcon,
-		&t.CategoryColor,
-		&t.Type,
-		&t.Amount,
-		&t.Date,
-		&t.Description,
-		&t.Notes,
-		&t.IsSplit,
-		&t.Source,
-		&t.SourceConfidence,
-		&t.Status,
-		&t.Reconciled,
-		&t.BillID,
-		&t.DebtPaymentID,
-		&t.Currency,
-		&t.ExchangeRate,
-		&t.Tags,
-		&t.CreatedAt,
-		&t.UpdatedAt,
-	)
+	err := scanTransaction(r.db.QueryRow(ctx, query, id), &t)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errors.New("transaction not found")
@@ -222,8 +195,10 @@ func (r *pgTransactionRepository) GetByID(ctx context.Context, id string) (*mode
 			var splits []model.TransactionSplit
 			for rows.Next() {
 				var s model.TransactionSplit
-				err := rows.Scan(&s.ID, &s.TransactionID, &s.CategoryID, &s.CategoryName, &s.Amount, &s.Description, &s.CreatedAt)
+				var amount float64
+				err := rows.Scan(&s.ID, &s.TransactionID, &s.CategoryID, &s.CategoryName, &amount, &s.Description, &s.CreatedAt)
 				if err == nil {
+					s.Amount = model.MoneyFromDecimal(amount)
 					splits = append(splits, s)
 				}
 			}
@@ -297,14 +272,14 @@ func (r *pgTransactionRepository) GetAll(ctx context.Context, userID string, fil
 		args = append(args, fDateTo)
 		argCount++
 	}
-	if fMinAmount, exists := filters["amount_min"]; exists && fMinAmount.(float64) > 0 {
+	if fMinAmount, exists := filters["amount_min"]; exists && fMinAmount.(model.Money) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("t.amount >= $%d", argCount))
-		args = append(args, fMinAmount)
+		args = append(args, model.DecimalFromMoney(fMinAmount.(model.Money)))
 		argCount++
 	}
-	if fMaxAmount, exists := filters["amount_max"]; exists && fMaxAmount.(float64) > 0 {
+	if fMaxAmount, exists := filters["amount_max"]; exists && fMaxAmount.(model.Money) > 0 {
 		whereClauses = append(whereClauses, fmt.Sprintf("t.amount <= $%d", argCount))
-		args = append(args, fMaxAmount)
+		args = append(args, model.DecimalFromMoney(fMaxAmount.(model.Money)))
 		argCount++
 	}
 	if fSearch, exists := filters["search"]; exists && fSearch != "" {
@@ -381,36 +356,7 @@ func (r *pgTransactionRepository) GetAll(ctx context.Context, userID string, fil
 	var transactions []model.Transaction
 	for rows.Next() {
 		var t model.Transaction
-		err := rows.Scan(
-			&t.ID,
-			&t.UserID,
-			&t.AccountID,
-			&t.AccountName,
-			&t.TargetAccountID,
-			&t.TargetAccountName,
-			&t.CategoryID,
-			&t.CategoryName,
-			&t.CategoryIcon,
-			&t.CategoryColor,
-			&t.Type,
-			&t.Amount,
-			&t.Date,
-			&t.Description,
-			&t.Notes,
-			&t.IsSplit,
-			&t.Source,
-			&t.SourceConfidence,
-			&t.Status,
-			&t.Reconciled,
-			&t.BillID,
-			&t.DebtPaymentID,
-			&t.Currency,
-			&t.ExchangeRate,
-			&t.Tags,
-			&t.CreatedAt,
-			&t.UpdatedAt,
-		)
-		if err != nil {
+		if err := scanTransaction(rows, &t); err != nil {
 			return nil, 0, err
 		}
 		transactions = append(transactions, t)
@@ -428,21 +374,22 @@ func (r *pgTransactionRepository) Update(ctx context.Context, t *model.Transacti
 
 	// 1. Reverse balance impact of old transaction (only if confirmed)
 	if old.Status == "confirmed" {
+		oldAmountDecimal := model.DecimalFromMoney(old.Amount)
 		if old.Type == "income" {
 			query := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, query, old.Amount, old.AccountID)
+			_, err = conn.Exec(ctx, query, oldAmountDecimal, old.AccountID)
 		} else if old.Type == "expense" {
 			query := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, query, old.Amount, old.AccountID)
+			_, err = conn.Exec(ctx, query, oldAmountDecimal, old.AccountID)
 		} else if old.Type == "transfer" {
 			querySrc := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, querySrc, old.Amount, old.AccountID)
+			_, err = conn.Exec(ctx, querySrc, oldAmountDecimal, old.AccountID)
 			if err != nil {
 				return err
 			}
 			if old.TargetAccountID != nil {
 				queryTarget := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-				_, err = conn.Exec(ctx, queryTarget, old.Amount, *old.TargetAccountID)
+				_, err = conn.Exec(ctx, queryTarget, oldAmountDecimal, *old.TargetAccountID)
 			}
 		}
 		if err != nil {
@@ -451,22 +398,23 @@ func (r *pgTransactionRepository) Update(ctx context.Context, t *model.Transacti
 	}
 
 	// 2. Apply balance impact of new transaction (only if confirmed)
+	amountDecimal := model.DecimalFromMoney(t.Amount)
 	if t.Status == "confirmed" {
 		if t.Type == "income" {
 			query := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, query, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, query, amountDecimal, t.AccountID)
 		} else if t.Type == "expense" {
 			query := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, query, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, query, amountDecimal, t.AccountID)
 		} else if t.Type == "transfer" {
 			querySrc := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, querySrc, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, querySrc, amountDecimal, t.AccountID)
 			if err != nil {
 				return err
 			}
 			if t.TargetAccountID != nil {
 				queryTarget := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-				_, err = conn.Exec(ctx, queryTarget, t.Amount, *t.TargetAccountID)
+				_, err = conn.Exec(ctx, queryTarget, amountDecimal, *t.TargetAccountID)
 			} else {
 				return errors.New("target account ID missing for transfer transaction")
 			}
@@ -488,7 +436,7 @@ func (r *pgTransactionRepository) Update(ctx context.Context, t *model.Transacti
 		t.TargetAccountID,
 		t.CategoryID,
 		t.Type,
-		t.Amount,
+		amountDecimal,
 		t.Date,
 		t.Description,
 		t.Notes,
@@ -538,13 +486,15 @@ func (r *pgTransactionRepository) SoftDelete(ctx context.Context, id string, aud
 	// 1. Fetch transaction to reverse balance
 	queryGet := `SELECT account_id, target_account_id, type, amount, status FROM transactions WHERE id = $1 AND deleted_at IS NULL`
 	var t model.Transaction
+	var amount float64
 	err = conn.QueryRow(ctx, queryGet, id).Scan(
 		&t.AccountID,
 		&t.TargetAccountID,
 		&t.Type,
-		&t.Amount,
+		&amount,
 		&t.Status,
 	)
+	t.Amount = model.MoneyFromDecimal(amount)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return errors.New("transaction not found")
@@ -554,21 +504,22 @@ func (r *pgTransactionRepository) SoftDelete(ctx context.Context, id string, aud
 
 	// 2. Reverse balance impact (only if confirmed)
 	if t.Status == "confirmed" {
+		amountDecimal := model.DecimalFromMoney(t.Amount)
 		if t.Type == "income" {
 			query := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, query, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, query, amountDecimal, t.AccountID)
 		} else if t.Type == "expense" {
 			query := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, query, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, query, amountDecimal, t.AccountID)
 		} else if t.Type == "transfer" {
 			querySrc := `UPDATE accounts SET balance = balance + $1, updated_at = NOW() WHERE id = $2`
-			_, err = conn.Exec(ctx, querySrc, t.Amount, t.AccountID)
+			_, err = conn.Exec(ctx, querySrc, amountDecimal, t.AccountID)
 			if err != nil {
 				return err
 			}
 			if t.TargetAccountID != nil {
 				queryTarget := `UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2`
-				_, err = conn.Exec(ctx, queryTarget, t.Amount, *t.TargetAccountID)
+				_, err = conn.Exec(ctx, queryTarget, amountDecimal, *t.TargetAccountID)
 			}
 		}
 	}
@@ -618,10 +569,13 @@ func (r *pgTransactionRepository) GetSummary(ctx context.Context, userID string,
 		WHERE user_id = $1 AND deleted_at IS NULL AND status = 'confirmed' AND date >= $2 AND date <= $3
 	`
 	var summary model.TransactionSummary
-	err := r.db.QueryRow(ctx, query, userID, dateFrom, dateTo).Scan(&summary.TotalIncome, &summary.TotalExpense)
+	var totalIncome, totalExpense float64
+	err := r.db.QueryRow(ctx, query, userID, dateFrom, dateTo).Scan(&totalIncome, &totalExpense)
 	if err != nil {
 		return nil, err
 	}
+	summary.TotalIncome = model.MoneyFromDecimal(totalIncome)
+	summary.TotalExpense = model.MoneyFromDecimal(totalExpense)
 	summary.Net = summary.TotalIncome - summary.TotalExpense
 	return &summary, nil
 }
@@ -758,7 +712,7 @@ func (r *pgTransactionRepository) SplitTransaction(ctx context.Context, txID str
 		_, err = conn.Exec(ctx, `
 			INSERT INTO transaction_splits (transaction_id, category_id, amount, description)
 			VALUES ($1, $2, $3, $4)
-		`, txID, s.CategoryID, s.Amount, s.Description)
+		`, txID, s.CategoryID, model.DecimalFromMoney(s.Amount), s.Description)
 		if err != nil {
 			return err
 		}
@@ -788,6 +742,43 @@ func (r *pgTransactionRepository) SplitTransaction(ctx context.Context, txID str
 	}
 
 	return conn.Commit(ctx)
+}
+
+func scanTransaction(scanner rowScanner, transaction *model.Transaction) error {
+	var amount float64
+	if err := scanner.Scan(
+		&transaction.ID,
+		&transaction.UserID,
+		&transaction.AccountID,
+		&transaction.AccountName,
+		&transaction.TargetAccountID,
+		&transaction.TargetAccountName,
+		&transaction.CategoryID,
+		&transaction.CategoryName,
+		&transaction.CategoryIcon,
+		&transaction.CategoryColor,
+		&transaction.Type,
+		&amount,
+		&transaction.Date,
+		&transaction.Description,
+		&transaction.Notes,
+		&transaction.IsSplit,
+		&transaction.Source,
+		&transaction.SourceConfidence,
+		&transaction.Status,
+		&transaction.Reconciled,
+		&transaction.BillID,
+		&transaction.DebtPaymentID,
+		&transaction.Currency,
+		&transaction.ExchangeRate,
+		&transaction.Tags,
+		&transaction.CreatedAt,
+		&transaction.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	transaction.Amount = model.MoneyFromDecimal(amount)
+	return nil
 }
 
 func (r *pgTransactionRepository) GetGlobalAuditLogs(ctx context.Context, ownerID string, entityType string, dateFrom, dateTo *time.Time, targetUserID string) ([]model.AuditLog, error) {

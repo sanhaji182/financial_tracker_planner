@@ -74,12 +74,12 @@ func (h *TransactionHandler) List(c *gin.Context) {
 		}
 	}
 	if val := c.Query("amount_min"); val != "" {
-		if amt, err := strconv.ParseFloat(val, 64); err == nil {
+		if amt, err := strconv.ParseInt(val, 10, 64); err == nil {
 			filters["amount_min"] = amt
 		}
 	}
 	if val := c.Query("amount_max"); val != "" {
-		if amt, err := strconv.ParseFloat(val, 64); err == nil {
+		if amt, err := strconv.ParseInt(val, 10, 64); err == nil {
 			filters["amount_max"] = amt
 		}
 	}

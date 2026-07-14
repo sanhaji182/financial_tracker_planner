@@ -42,10 +42,10 @@ func (r *pgDebtRepository) Create(ctx context.Context, d *model.Debt) (*model.De
 		d.Name,
 		d.Type,
 		d.Creditor,
-		d.OriginalAmount,
-		d.OutstandingBalance,
+		model.DecimalFromMoney(d.OriginalAmount),
+		model.DecimalFromMoney(d.OutstandingBalance),
 		d.InterestRate,
-		d.MinimumPayment,
+		decimalFromOptionalMoney(d.MinimumPayment),
 		d.DueDay,
 		d.StartDate,
 		d.EndDate,
@@ -76,29 +76,7 @@ func (r *pgDebtRepository) GetByID(ctx context.Context, id string) (*model.Debt,
 	`
 
 	var d model.Debt
-	err := r.db.QueryRow(ctx, query, id).Scan(
-		&d.ID,
-		&d.UserID,
-		&d.Name,
-		&d.Type,
-		&d.Creditor,
-		&d.OriginalAmount,
-		&d.OutstandingBalance,
-		&d.InterestRate,
-		&d.MinimumPayment,
-		&d.DueDay,
-		&d.StartDate,
-		&d.EndDate,
-		&d.TenorMonths,
-		&d.AccountID,
-		&d.AccountName,
-		&d.Currency,
-		&d.Status,
-		&d.Notes,
-		&d.IsShared,
-		&d.CreatedAt,
-		&d.UpdatedAt,
-	)
+	err := scanDebt(r.db.QueryRow(ctx, query, id), &d)
 
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -130,30 +108,7 @@ func (r *pgDebtRepository) GetAllByUser(ctx context.Context, userID string) ([]m
 	var list []model.Debt
 	for rows.Next() {
 		var d model.Debt
-		err := rows.Scan(
-			&d.ID,
-			&d.UserID,
-			&d.Name,
-			&d.Type,
-			&d.Creditor,
-			&d.OriginalAmount,
-			&d.OutstandingBalance,
-			&d.InterestRate,
-			&d.MinimumPayment,
-			&d.DueDay,
-			&d.StartDate,
-			&d.EndDate,
-			&d.TenorMonths,
-			&d.AccountID,
-			&d.AccountName,
-			&d.Currency,
-			&d.Status,
-			&d.Notes,
-			&d.IsShared,
-			&d.CreatedAt,
-			&d.UpdatedAt,
-		)
-		if err != nil {
+		if err := scanDebt(rows, &d); err != nil {
 			return nil, err
 		}
 		list = append(list, d)
@@ -174,9 +129,9 @@ func (r *pgDebtRepository) Update(ctx context.Context, d *model.Debt) error {
 	_, err := r.db.Exec(ctx, query,
 		d.Name,
 		d.Creditor,
-		d.OutstandingBalance,
+		model.DecimalFromMoney(d.OutstandingBalance),
 		d.InterestRate,
-		d.MinimumPayment,
+		decimalFromOptionalMoney(d.MinimumPayment),
 		d.DueDay,
 		d.StartDate,
 		d.EndDate,
@@ -216,7 +171,7 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 		SET balance = balance - $1, updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`
-	_, err = conn.Exec(ctx, queryAcc, p.Amount, paymentAccountID)
+	_, err = conn.Exec(ctx, queryAcc, model.DecimalFromMoney(p.Amount), paymentAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deduct account balance: %w", err)
 	}
@@ -232,7 +187,7 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 		expense.AccountID,
 		expense.CategoryID,
 		expense.Type,
-		expense.Amount,
+		model.DecimalFromMoney(expense.Amount),
 		expense.Date,
 		expense.Description,
 		expense.Notes,
@@ -281,12 +236,12 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 	`
 	err = conn.QueryRow(ctx, queryPayment,
 		p.DebtID,
-		p.Amount,
+		model.DecimalFromMoney(p.Amount),
 		p.PaymentDate,
 		p.IsExtraPayment,
-		p.PrincipalPortion,
-		p.InterestPortion,
-		p.RemainingBalance,
+		decimalFromOptionalMoney(p.PrincipalPortion),
+		decimalFromOptionalMoney(p.InterestPortion),
+		model.DecimalFromMoney(p.RemainingBalance),
 		p.TransactionID,
 		p.Notes,
 	).Scan(&p.ID, &p.CreatedAt)
@@ -319,15 +274,17 @@ func (r *pgDebtRepository) GetPaymentsByDebt(ctx context.Context, debtID string)
 	var list []model.DebtPayment
 	for rows.Next() {
 		var p model.DebtPayment
+		var amount, remainingBalance float64
+		var principalPortion, interestPortion *float64
 		err := rows.Scan(
 			&p.ID,
 			&p.DebtID,
-			&p.Amount,
+			&amount,
 			&p.PaymentDate,
 			&p.IsExtraPayment,
-			&p.PrincipalPortion,
-			&p.InterestPortion,
-			&p.RemainingBalance,
+			&principalPortion,
+			&interestPortion,
+			&remainingBalance,
 			&p.TransactionID,
 			&p.Notes,
 			&p.CreatedAt,
@@ -335,6 +292,10 @@ func (r *pgDebtRepository) GetPaymentsByDebt(ctx context.Context, debtID string)
 		if err != nil {
 			return nil, err
 		}
+		p.Amount = model.MoneyFromDecimal(amount)
+		p.PrincipalPortion = optionalMoneyFromDecimal(principalPortion)
+		p.InterestPortion = optionalMoneyFromDecimal(interestPortion)
+		p.RemainingBalance = model.MoneyFromDecimal(remainingBalance)
 		list = append(list, p)
 	}
 	return list, nil
@@ -351,15 +312,52 @@ func (r *pgDebtRepository) GetSummaryByUser(ctx context.Context, userID string) 
 	`
 
 	var s model.DebtSummary
+	var totalOutstanding, totalMinimumPayment float64
 	err := r.db.QueryRow(ctx, query, userID).Scan(
-		&s.TotalOutstanding,
-		&s.TotalMinimumPayment,
+		&totalOutstanding,
+		&totalMinimumPayment,
 		&s.ActiveCount,
 	)
 	if err != nil {
 		return nil, err
 	}
+	s.TotalOutstanding = model.MoneyFromDecimal(totalOutstanding)
+	s.TotalMinimumPayment = model.MoneyFromDecimal(totalMinimumPayment)
 	return &s, nil
+}
+
+func scanDebt(scanner rowScanner, debt *model.Debt) error {
+	var originalAmount, outstandingBalance float64
+	var minimumPayment *float64
+	if err := scanner.Scan(
+		&debt.ID,
+		&debt.UserID,
+		&debt.Name,
+		&debt.Type,
+		&debt.Creditor,
+		&originalAmount,
+		&outstandingBalance,
+		&debt.InterestRate,
+		&minimumPayment,
+		&debt.DueDay,
+		&debt.StartDate,
+		&debt.EndDate,
+		&debt.TenorMonths,
+		&debt.AccountID,
+		&debt.AccountName,
+		&debt.Currency,
+		&debt.Status,
+		&debt.Notes,
+		&debt.IsShared,
+		&debt.CreatedAt,
+		&debt.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	debt.OriginalAmount = model.MoneyFromDecimal(originalAmount)
+	debt.OutstandingBalance = model.MoneyFromDecimal(outstandingBalance)
+	debt.MinimumPayment = optionalMoneyFromDecimal(minimumPayment)
+	return nil
 }
 
 func (r *pgDebtRepository) createAuditLog(ctx context.Context, userID, entityType, entityID, action string, oldValue, newValue interface{}) {

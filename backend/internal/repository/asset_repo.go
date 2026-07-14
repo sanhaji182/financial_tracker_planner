@@ -2,9 +2,9 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"encoding/json"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -41,8 +41,8 @@ func (r *pgAssetRepository) Create(ctx context.Context, a *model.Asset) (*model.
 		a.UserID,
 		a.Name,
 		a.Type,
-		a.CurrentValue,
-		a.PurchaseValue,
+		model.DecimalFromMoney(a.CurrentValue),
+		decimalFromOptionalMoney(a.PurchaseValue),
 		a.PurchaseDate,
 		a.Currency,
 		a.LinkedAccountID,
@@ -70,13 +70,15 @@ func (r *pgAssetRepository) GetByID(ctx context.Context, id string) (*model.Asse
 	`
 
 	var a model.Asset
+	var currentValue float64
+	var purchaseValue *float64
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&a.ID,
 		&a.UserID,
 		&a.Name,
 		&a.Type,
-		&a.CurrentValue,
-		&a.PurchaseValue,
+		&currentValue,
+		&purchaseValue,
 		&a.PurchaseDate,
 		&a.Currency,
 		&a.LinkedAccountID,
@@ -95,6 +97,8 @@ func (r *pgAssetRepository) GetByID(ctx context.Context, id string) (*model.Asse
 		}
 		return nil, err
 	}
+	a.CurrentValue = model.MoneyFromDecimal(currentValue)
+	a.PurchaseValue = optionalMoneyFromDecimal(purchaseValue)
 	return &a, nil
 }
 
@@ -137,13 +141,15 @@ func (r *pgAssetRepository) GetAllByUser(ctx context.Context, userID string, typ
 	var list []model.Asset
 	for rows.Next() {
 		var a model.Asset
+		var currentValue float64
+		var purchaseValue *float64
 		err := rows.Scan(
 			&a.ID,
 			&a.UserID,
 			&a.Name,
 			&a.Type,
-			&a.CurrentValue,
-			&a.PurchaseValue,
+			&currentValue,
+			&purchaseValue,
 			&a.PurchaseDate,
 			&a.Currency,
 			&a.LinkedAccountID,
@@ -158,6 +164,8 @@ func (r *pgAssetRepository) GetAllByUser(ctx context.Context, userID string, typ
 		if err != nil {
 			return nil, err
 		}
+		a.CurrentValue = model.MoneyFromDecimal(currentValue)
+		a.PurchaseValue = optionalMoneyFromDecimal(purchaseValue)
 		list = append(list, a)
 	}
 	return list, nil
@@ -173,8 +181,8 @@ func (r *pgAssetRepository) Update(ctx context.Context, a *model.Asset) error {
 	`
 	_, err := r.db.Exec(ctx, query,
 		a.Name,
-		a.CurrentValue,
-		a.PurchaseValue,
+		model.DecimalFromMoney(a.CurrentValue),
+		decimalFromOptionalMoney(a.PurchaseValue),
 		a.PurchaseDate,
 		a.IsShared,
 		a.IsLiquid,
@@ -206,7 +214,7 @@ func (r *pgAssetRepository) CreateValuation(ctx context.Context, v *model.AssetV
 	`
 	err := r.db.QueryRow(ctx, query,
 		v.AssetID,
-		v.Value,
+		model.DecimalFromMoney(v.Value),
 		v.ValuationDate,
 		v.Source,
 		v.Notes,
@@ -234,10 +242,11 @@ func (r *pgAssetRepository) GetValuationsByAsset(ctx context.Context, assetID st
 	var list []model.AssetValuation
 	for rows.Next() {
 		var v model.AssetValuation
+		var value float64
 		err := rows.Scan(
 			&v.ID,
 			&v.AssetID,
-			&v.Value,
+			&value,
 			&v.ValuationDate,
 			&v.Source,
 			&v.Notes,
@@ -246,6 +255,7 @@ func (r *pgAssetRepository) GetValuationsByAsset(ctx context.Context, assetID st
 		if err != nil {
 			return nil, err
 		}
+		v.Value = model.MoneyFromDecimal(value)
 		list = append(list, v)
 	}
 	return list, nil
@@ -269,7 +279,9 @@ func (r *pgAssetRepository) GetSummaryByUser(ctx context.Context, userID string)
 	typeSet := make(map[string]bool)
 	for rows.Next() {
 		var b model.AssetTypeSummary
-		if err := rows.Scan(&b.Type, &b.Total); err == nil {
+		var total float64
+		if err := rows.Scan(&b.Type, &total); err == nil {
+			b.Total = model.MoneyFromDecimal(total)
 			breakdown = append(breakdown, b)
 			typeSet[b.Type] = true
 		}
@@ -295,18 +307,39 @@ func (r *pgAssetRepository) GetSummaryByUser(ctx context.Context, userID string)
 	`
 
 	var s model.AssetSummary
+	var totalAssets, totalLiquid, totalShared, totalPrivate float64
 	err = r.db.QueryRow(ctx, queryAggregations, userID).Scan(
-		&s.TotalAssets,
-		&s.TotalLiquid,
-		&s.TotalShared,
-		&s.TotalPrivate,
+		&totalAssets,
+		&totalLiquid,
+		&totalShared,
+		&totalPrivate,
 	)
 	if err != nil {
 		return nil, err
 	}
+	s.TotalAssets = model.MoneyFromDecimal(totalAssets)
+	s.TotalLiquid = model.MoneyFromDecimal(totalLiquid)
+	s.TotalShared = model.MoneyFromDecimal(totalShared)
+	s.TotalPrivate = model.MoneyFromDecimal(totalPrivate)
 	s.BreakdownByType = breakdown
 
 	return &s, nil
+}
+
+func decimalFromOptionalMoney(value *int64) *float64 {
+	if value == nil {
+		return nil
+	}
+	decimal := model.DecimalFromMoney(*value)
+	return &decimal
+}
+
+func optionalMoneyFromDecimal(value *float64) *int64 {
+	if value == nil {
+		return nil
+	}
+	money := model.MoneyFromDecimal(*value)
+	return &money
 }
 
 func (r *pgAssetRepository) createAuditLog(ctx context.Context, userID, entityType, entityID, action string, oldValue, newValue interface{}) {

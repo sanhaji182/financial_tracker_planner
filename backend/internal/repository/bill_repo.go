@@ -42,7 +42,7 @@ func (r *billRepository) CreateBill(ctx context.Context, b *model.Bill) (*model.
 		RETURNING id, created_at, updated_at
 	`
 	err := r.dbPool.QueryRow(ctx, query,
-		b.UserID, b.Name, b.Amount, b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
+		b.UserID, b.Name, model.DecimalFromMoney(b.Amount), b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
 		b.NextDueDate, b.CustomIntervalDays, b.AutoRemind, b.ReminderDaysBefore, b.Status, b.IsActive, b.Notes,
 	).Scan(&b.ID, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
@@ -64,12 +64,7 @@ func (r *billRepository) GetBillByID(ctx context.Context, userID string, id stri
 	WHERE b.id = $1 AND b.user_id = $2 AND b.deleted_at IS NULL
 	`
 	var b model.Bill
-	err := r.dbPool.QueryRow(ctx, query, id, userID).Scan(
-		&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.CategoryName,
-		&b.AccountID, &b.AccountName, &b.Frequency, &b.DueDay, &b.DueDate,
-		&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore,
-		&b.Status, &b.IsActive, &b.Notes, &b.CreatedAt, &b.UpdatedAt,
-	)
+	err := scanBill(r.dbPool.QueryRow(ctx, query, id, userID), &b)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("bill not found: %s", id)
@@ -91,7 +86,7 @@ func (r *billRepository) UpdateBill(ctx context.Context, b *model.Bill) error {
 		WHERE id = $15 AND user_id = $16 AND deleted_at IS NULL
 	`
 	_, err := r.dbPool.Exec(ctx, query,
-		b.Name, b.Amount, b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
+		b.Name, model.DecimalFromMoney(b.Amount), b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
 		b.NextDueDate, b.CustomIntervalDays, b.AutoRemind, b.ReminderDaysBefore, b.Status,
 		b.IsActive, b.Notes, b.ID, b.UserID,
 	)
@@ -149,13 +144,7 @@ func (r *billRepository) ListBills(ctx context.Context, userID string, status st
 	var list []model.Bill
 	for rows.Next() {
 		var b model.Bill
-		err := rows.Scan(
-			&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.CategoryName,
-			&b.AccountID, &b.AccountName, &b.Frequency, &b.DueDay, &b.DueDate,
-			&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore,
-			&b.Status, &b.IsActive, &b.Notes, &b.CreatedAt, &b.UpdatedAt,
-		)
-		if err != nil {
+		if err := scanBill(rows, &b); err != nil {
 			return nil, err
 		}
 		list = append(list, b)
@@ -185,13 +174,7 @@ func (r *billRepository) GetUpcomingBills(ctx context.Context, userID string, da
 	var list []model.Bill
 	for rows.Next() {
 		var b model.Bill
-		err := rows.Scan(
-			&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.CategoryName,
-			&b.AccountID, &b.AccountName, &b.Frequency, &b.DueDay, &b.DueDate,
-			&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore,
-			&b.Status, &b.IsActive, &b.Notes, &b.CreatedAt, &b.UpdatedAt,
-		)
-		if err != nil {
+		if err := scanBill(rows, &b); err != nil {
 			return nil, err
 		}
 		list = append(list, b)
@@ -219,13 +202,7 @@ func (r *billRepository) GetMonthlyBills(ctx context.Context, userID string, mon
 	var list []model.Bill
 	for rows.Next() {
 		var b model.Bill
-		err := rows.Scan(
-			&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.CategoryName,
-			&b.AccountID, &b.AccountName, &b.Frequency, &b.DueDay, &b.DueDate,
-			&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore,
-			&b.Status, &b.IsActive, &b.Notes, &b.CreatedAt, &b.UpdatedAt,
-		)
-		if err != nil {
+		if err := scanBill(rows, &b); err != nil {
 			return nil, err
 		}
 		list = append(list, b)
@@ -240,7 +217,7 @@ func (r *billRepository) CreateBillPayment(ctx context.Context, p *model.BillPay
 		RETURNING id, created_at
 	`
 	err := r.dbPool.QueryRow(ctx, query,
-		p.BillID, p.Amount, p.PaymentDate, p.IsPartial, p.RemainingAmount, p.TransactionID, p.Notes,
+		p.BillID, model.DecimalFromMoney(p.Amount), p.PaymentDate, p.IsPartial, model.DecimalFromMoney(p.RemainingAmount), p.TransactionID, p.Notes,
 	).Scan(&p.ID, &p.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -255,7 +232,7 @@ func (r *billRepository) CreateBillPaymentTx(ctx context.Context, tx pgx.Tx, p *
 		RETURNING id, created_at
 	`
 	err := tx.QueryRow(ctx, query,
-		p.BillID, p.Amount, p.PaymentDate, p.IsPartial, p.RemainingAmount, p.TransactionID, p.Notes,
+		p.BillID, model.DecimalFromMoney(p.Amount), p.PaymentDate, p.IsPartial, model.DecimalFromMoney(p.RemainingAmount), p.TransactionID, p.Notes,
 	).Scan(&p.ID, &p.CreatedAt)
 	if err != nil {
 		return nil, err
@@ -279,15 +256,36 @@ func (r *billRepository) GetPaymentsByBillID(ctx context.Context, billID string)
 	var list []model.BillPayment
 	for rows.Next() {
 		var p model.BillPayment
+		var amount, remainingAmount float64
 		err := rows.Scan(
-			&p.ID, &p.BillID, &p.Amount, &p.PaymentDate, &p.IsPartial, &p.RemainingAmount, &p.TransactionID, &p.Notes, &p.CreatedAt,
+			&p.ID, &p.BillID, &amount, &p.PaymentDate, &p.IsPartial, &remainingAmount, &p.TransactionID, &p.Notes, &p.CreatedAt,
 		)
 		if err != nil {
 			return nil, err
 		}
+		p.Amount = model.MoneyFromDecimal(amount)
+		p.RemainingAmount = model.MoneyFromDecimal(remainingAmount)
 		list = append(list, p)
 	}
 	return list, nil
+}
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanBill(scanner rowScanner, bill *model.Bill) error {
+	var amount float64
+	if err := scanner.Scan(
+		&bill.ID, &bill.UserID, &bill.Name, &amount, &bill.CategoryID, &bill.CategoryName,
+		&bill.AccountID, &bill.AccountName, &bill.Frequency, &bill.DueDay, &bill.DueDate,
+		&bill.NextDueDate, &bill.CustomIntervalDays, &bill.AutoRemind, &bill.ReminderDaysBefore,
+		&bill.Status, &bill.IsActive, &bill.Notes, &bill.CreatedAt, &bill.UpdatedAt,
+	); err != nil {
+		return err
+	}
+	bill.Amount = model.MoneyFromDecimal(amount)
+	return nil
 }
 
 func (r *billRepository) createAuditLog(ctx context.Context, userID, entityType, entityID, action string, oldValue, newValue interface{}) {

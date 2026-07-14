@@ -16,7 +16,7 @@ type AccountRepository interface {
 	Update(ctx context.Context, account *model.Account) error
 	SoftDelete(ctx context.Context, id string) error
 	GetSummaryByUser(ctx context.Context, userID string) (*model.AccountSummary, error)
-	UpdateBalance(ctx context.Context, accountID string, delta float64) error
+	UpdateBalance(ctx context.Context, accountID string, delta model.Money) error
 	HasActiveTransactions(ctx context.Context, accountID string) (bool, error)
 }
 
@@ -40,8 +40,8 @@ func (r *pgAccountRepository) Create(ctx context.Context, account *model.Account
 		account.Type,
 		account.BankProvider,
 		account.AccountNumberMasked,
-		account.Balance,
-		account.InitialBalance,
+		model.DecimalFromMoney(account.Balance),
+		model.DecimalFromMoney(account.InitialBalance),
 		account.Currency,
 		account.Icon,
 		account.Color,
@@ -65,6 +65,7 @@ func (r *pgAccountRepository) GetByID(ctx context.Context, id string) (*model.Ac
 		WHERE id = $1 AND deleted_at IS NULL
 	`
 	var a model.Account
+	var balance, initialBalance float64
 	err := r.db.QueryRow(ctx, query, id).Scan(
 		&a.ID,
 		&a.UserID,
@@ -72,8 +73,8 @@ func (r *pgAccountRepository) GetByID(ctx context.Context, id string) (*model.Ac
 		&a.Type,
 		&a.BankProvider,
 		&a.AccountNumberMasked,
-		&a.Balance,
-		&a.InitialBalance,
+		&balance,
+		&initialBalance,
 		&a.Currency,
 		&a.Icon,
 		&a.Color,
@@ -93,6 +94,8 @@ func (r *pgAccountRepository) GetByID(ctx context.Context, id string) (*model.Ac
 		}
 		return nil, err
 	}
+	a.Balance = model.MoneyFromDecimal(balance)
+	a.InitialBalance = model.MoneyFromDecimal(initialBalance)
 	return &a, nil
 }
 
@@ -112,6 +115,7 @@ func (r *pgAccountRepository) GetAllByUser(ctx context.Context, userID string) (
 	var accounts []model.Account
 	for rows.Next() {
 		var a model.Account
+		var balance, initialBalance float64
 		err := rows.Scan(
 			&a.ID,
 			&a.UserID,
@@ -119,8 +123,8 @@ func (r *pgAccountRepository) GetAllByUser(ctx context.Context, userID string) (
 			&a.Type,
 			&a.BankProvider,
 			&a.AccountNumberMasked,
-			&a.Balance,
-			&a.InitialBalance,
+			&balance,
+			&initialBalance,
 			&a.Currency,
 			&a.Icon,
 			&a.Color,
@@ -136,6 +140,8 @@ func (r *pgAccountRepository) GetAllByUser(ctx context.Context, userID string) (
 		if err != nil {
 			return nil, err
 		}
+		a.Balance = model.MoneyFromDecimal(balance)
+		a.InitialBalance = model.MoneyFromDecimal(initialBalance)
 		accounts = append(accounts, a)
 	}
 	return accounts, nil
@@ -211,14 +217,13 @@ func (r *pgAccountRepository) GetSummaryByUser(ctx context.Context, userID strin
 	return summary, nil
 }
 
-func (r *pgAccountRepository) UpdateBalance(ctx context.Context, accountID string, delta float64) error {
-	// Convert delta from float64 (decimal) to database format
+func (r *pgAccountRepository) UpdateBalance(ctx context.Context, accountID string, delta model.Money) error {
 	query := `
 		UPDATE accounts
 		SET balance = balance + $1, updated_at = NOW()
 		WHERE id = $2 AND deleted_at IS NULL
 	`
-	_, err := r.db.Exec(ctx, query, delta, accountID)
+	_, err := r.db.Exec(ctx, query, model.DecimalFromMoney(delta), accountID)
 	return err
 }
 
