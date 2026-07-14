@@ -305,6 +305,8 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		Progress:                   progress,
 		ProjectedCompletionDate:    projectedCompletion,
 		AverageMonthlyContribution: avgMonthly,
+		IsSinkingFund:              g.Type == "sinking_fund",
+		Priority:                   goalPriority(g.Type),
 		CreatedAt:                  g.CreatedAt,
 		ContributionHistory:        contribHistory,
 	}, nil
@@ -330,6 +332,7 @@ func (s *goalService) ListGoals(ctx context.Context, userID string) ([]dto.GoalR
 		if err := rows.Scan(&id); err == nil {
 			gRes, err := s.GetGoalByID(ctx, userID, id)
 			if err == nil {
+				enrichGoalAffordability(gRes, ctx, s.dbPool, ownerID)
 				res = append(res, *gRes)
 			}
 		}
@@ -568,4 +571,69 @@ func (s *goalService) ContributeToGoal(ctx context.Context, userID string, id st
 	`, ownerID, id, req)
 
 	return nil
+}
+
+func goalPriority(goalType string) int {
+	switch goalType {
+	case "emergency_fund":
+		return 1
+	case "debt_payoff":
+		return 2
+	case "sinking_fund":
+		return 3
+	default:
+		return 5
+	}
+}
+
+func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *pgxpool.Pool, ownerID string) {
+	if g.TargetDate == nil || g.Progress >= 100 {
+		return
+	}
+
+	targetDate, err := time.Parse("2006-01-02", *g.TargetDate)
+	if err != nil {
+		return
+	}
+
+	monthsRemaining := time.Until(targetDate).Hours() / 24 / 30
+	g.MonthsRemaining = &monthsRemaining
+
+	remaining := g.TargetAmount - g.CurrentAmount
+	if remaining <= 0 {
+		return
+	}
+
+	var monthlyReq float64
+	if monthsRemaining > 0 {
+		monthlyReq = remaining / monthsRemaining
+	}
+	g.MonthlyRequired = &monthlyReq
+
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
+
+	var totalIncome, totalExp float64
+	_ = dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount),0) FROM transactions
+		WHERE user_id=$1 AND type='income' AND status='confirmed'
+		AND date>=$2 AND date<$3 AND deleted_at IS NULL
+	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalIncome)
+	_ = dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount),0) FROM transactions
+		WHERE user_id=$1 AND type='expense' AND status='confirmed'
+		AND date>=$2 AND date<$3 AND deleted_at IS NULL
+	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExp)
+
+	surplus := (totalIncome / 3.0) - (totalExp / 3.0)
+	affordable := monthlyReq <= surplus
+	g.IsAffordable = &affordable
+
+	if !affordable {
+		gap := monthlyReq - surplus
+		if gap > 0 {
+			g.FundingGap = &gap
+		}
+	}
 }
