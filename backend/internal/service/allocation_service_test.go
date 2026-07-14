@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"testing"
+	"time"
 
+	"github.com/user/financial-os/internal/dto"
 	"github.com/user/financial-os/internal/model"
 	"github.com/user/financial-os/internal/repository"
 )
@@ -12,6 +14,9 @@ func TestAllocationService(t *testing.T) {
 	setupTestEnv(t)
 
 	userRepo := repository.NewUserRepository(testDB)
+	accountRepo := repository.NewAccountRepository(testDB)
+	categoryRepo := repository.NewCategoryRepository(testDB)
+	txRepo := repository.NewTransactionRepository(testDB)
 	efServ := NewEFService(testDB)
 	forecastServ := NewForecastService(testDB, testRedis)
 	allocationServ := NewAllocationService(testDB, forecastServ, efServ)
@@ -31,6 +36,52 @@ func TestAllocationService(t *testing.T) {
 	testUser, err = userRepo.CreateUser(ctx, testUser)
 	if err != nil {
 		t.Fatalf("failed to create test user: %v", err)
+	}
+
+	isShared, isEF := false, false
+	account, err := NewAccountService(accountRepo).CreateAccount(ctx, testUser.ID, dto.CreateAccountRequest{
+		Name:            "Allocation Source",
+		Type:            "bank",
+		InitialBalance:  3000000,
+		Currency:        "IDR",
+		IsShared:        &isShared,
+		IsEmergencyFund: &isEF,
+	})
+	if err != nil {
+		t.Fatalf("failed to create account: %v", err)
+	}
+
+	categories, err := categoryRepo.GetAll(ctx, testUser.ID)
+	if err != nil {
+		t.Fatalf("failed to list categories: %v", err)
+	}
+	var incomeCategoryID string
+	for _, category := range categories {
+		if category.Type == "income" {
+			incomeCategoryID = category.ID
+			break
+		}
+	}
+	if incomeCategoryID == "" {
+		t.Fatal("income category not found")
+	}
+
+	description := "Allocation income seed"
+	_, err = txRepo.Create(ctx, &model.Transaction{
+		UserID:       testUser.ID,
+		AccountID:    account.ID,
+		CategoryID:   &incomeCategoryID,
+		Type:         "income",
+		Amount:       3000000,
+		Date:         time.Now().AddDate(0, -1, 0),
+		Description:  &description,
+		Source:       "manual",
+		Status:       "confirmed",
+		Currency:     "IDR",
+		ExchangeRate: 1,
+	}, nil, nil)
+	if err != nil {
+		t.Fatalf("failed to seed income: %v", err)
 	}
 
 	t.Run("Get allocation advice success", func(t *testing.T) {

@@ -78,10 +78,10 @@ func TestForecastService(t *testing.T) {
 	ip := "127.0.0.1"
 	ua := "Go-Test-Agent"
 
-	// Create a transaction in the current month to seed forecasting input
+	// Seed the prior-three-month lookback used by forecasting.
 	desc := "Income Seed"
 	txReq := dto.CreateTransactionRequest{
-		Date:        time.Now(),
+		Date:        time.Now().AddDate(0, -1, 0),
 		Amount:      500000,
 		Type:        "income",
 		AccountID:   account.ID,
