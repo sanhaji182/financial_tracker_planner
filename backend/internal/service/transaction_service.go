@@ -106,7 +106,7 @@ func (s *transactionService) CreateTransaction(ctx context.Context, userID strin
 				Description: sp.Description,
 			})
 		}
-		if sumSplit != req.Amount {
+		if math.Abs(sumSplit-req.Amount) > 0.01 {
 			return nil, errors.New("sum of split amounts must equal transaction total amount")
 		}
 	}
