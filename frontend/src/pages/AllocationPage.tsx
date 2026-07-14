@@ -121,7 +121,7 @@ export const AllocationPage: React.FC = () => {
 
   // Formatting Rupiah
   const formatValueToRupiah = (val: number) => {
-    isFinite(val) ? null : val = 0;
+    if (!isFinite(val)) val = 0;
     const isNeg = val < 0;
     if (isNeg) val = -val;
     const parts = Math.round(val).toLocaleString('id-ID');

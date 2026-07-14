@@ -66,7 +66,7 @@ export const MonthlyClosingPage: React.FC = () => {
     setIsExporting(true);
     try {
       await exportService.exportMonthlyReportPDF(selectedMonth);
-    } catch (e) {
+    } catch {
       alert('Gagal mengunduh laporan PDF');
     } finally {
       setIsExporting(false);
@@ -79,7 +79,7 @@ export const MonthlyClosingPage: React.FC = () => {
 
   // Helper formatting numbers to Rupiah inside UI
   const formatValueToRupiah = (val: number) => {
-    isFinite(val) ? null : val = 0;
+    if (!isFinite(val)) val = 0;
     const isNeg = val < 0;
     if (isNeg) val = -val;
     const parts = Math.round(val).toLocaleString('id-ID');

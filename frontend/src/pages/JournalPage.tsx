@@ -62,9 +62,9 @@ export const JournalPage: React.FC = () => {
 		}
 	};
 
-	useEffect(() => {
-		fetchNotes();
-	}, [searchQuery, selectedTag]);
+	  useEffect(() => {
+			fetchNotes();
+		}, [fetchNotes, searchQuery, selectedTag]);
 
 	const handleOpenCreateModal = () => {
 		setEditingNote(null);

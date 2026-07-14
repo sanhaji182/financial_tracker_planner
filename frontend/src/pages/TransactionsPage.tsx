@@ -136,7 +136,7 @@ export const TransactionsPage: React.FC = () => {
     setIsExporting(true);
     try {
       await exportService.exportTransactionsCSV(dateFrom, dateTo, accountId);
-    } catch (e) {
+    } catch {
       alert('Gagal mengekspor data transaksi');
     } finally {
       setIsExporting(false);
