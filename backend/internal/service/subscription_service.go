@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -55,12 +56,12 @@ func (s *subscriptionService) checkWriteAccess(ctx context.Context, userID strin
 	return nil
 }
 
-func (s *subscriptionService) calculateMonthlyCost(amount float64, freq string) float64 {
+func (s *subscriptionService) calculateMonthlyCost(amount model.Money, freq string) model.Money {
 	switch freq {
 	case "yearly":
-		return amount / 12
+		return model.Money(math.Round(float64(amount) / 12))
 	case "weekly":
-		return amount * 52 / 12
+		return model.Money(math.Round(float64(amount) * 52 / 12))
 	default: // monthly
 		return amount
 	}
@@ -136,7 +137,7 @@ func (s *subscriptionService) CreateSubscription(ctx context.Context, userID str
 		INSERT INTO subscriptions (user_id, name, provider, amount, currency, frequency, category_id, next_renewal_date, last_used_date, is_active, auto_renew, notes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, created_at, updated_at
-	`, sub.UserID, sub.Name, sub.Provider, sub.Amount, sub.Currency, sub.Frequency, sub.CategoryID, sub.NextRenewalDate, sub.LastUsedDate, sub.IsActive, sub.AutoRenew, sub.Notes).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
+	`, sub.UserID, sub.Name, sub.Provider, model.DecimalFromMoney(sub.Amount), sub.Currency, sub.Frequency, sub.CategoryID, sub.NextRenewalDate, sub.LastUsedDate, sub.IsActive, sub.AutoRenew, sub.Notes).Scan(&sub.ID, &sub.CreatedAt, &sub.UpdatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create subscription: %w", err)
@@ -158,16 +159,18 @@ func (s *subscriptionService) GetSubscriptionByID(ctx context.Context, userID st
 	}
 
 	var sub model.Subscription
+	var amount float64
 	err = s.dbPool.QueryRow(ctx, `
 		SELECT id, user_id, name, provider, amount, currency, frequency, category_id, next_renewal_date, last_used_date, is_active, auto_renew, notes, created_at, updated_at
 		FROM subscriptions WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`, id, ownerID).Scan(
-		&sub.ID, &sub.UserID, &sub.Name, &sub.Provider, &sub.Amount, &sub.Currency, &sub.Frequency, &sub.CategoryID, &sub.NextRenewalDate, &sub.LastUsedDate, &sub.IsActive, &sub.AutoRenew, &sub.Notes, &sub.CreatedAt, &sub.UpdatedAt,
+		&sub.ID, &sub.UserID, &sub.Name, &sub.Provider, &amount, &sub.Currency, &sub.Frequency, &sub.CategoryID, &sub.NextRenewalDate, &sub.LastUsedDate, &sub.IsActive, &sub.AutoRenew, &sub.Notes, &sub.CreatedAt, &sub.UpdatedAt,
 	)
 
 	if err != nil {
 		return nil, err
 	}
+	sub.Amount = model.MoneyFromDecimal(amount)
 
 	// Fetch category name
 	categoryName := "Lainnya"
@@ -185,7 +188,7 @@ func (s *subscriptionService) GetSubscriptionByID(ctx context.Context, userID st
 		if daysUnused > 60 {
 			unusedWarning = true
 			monthlyAmount := s.calculateMonthlyCost(sub.Amount, sub.Frequency)
-			warningMsg = fmt.Sprintf("Subscription %s belum digunakan 60+ hari. Biaya Rp %.0f/bulan. Pertimbangkan cancel.", sub.Name, monthlyAmount)
+			warningMsg = fmt.Sprintf("Subscription %s belum digunakan 60+ hari. Biaya %s/bulan. Pertimbangkan cancel.", sub.Name, model.FormatRupiahMoney(monthlyAmount))
 		}
 	}
 
@@ -273,15 +276,17 @@ func (s *subscriptionService) UpdateSubscription(ctx context.Context, userID str
 
 	// Fetch old
 	var sub model.Subscription
+	var amount float64
 	err = s.dbPool.QueryRow(ctx, `
 		SELECT name, provider, amount, currency, frequency, category_id, next_renewal_date, last_used_date, is_active, auto_renew, notes
 		FROM subscriptions WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`, id, ownerID).Scan(
-		&sub.Name, &sub.Provider, &sub.Amount, &sub.Currency, &sub.Frequency, &sub.CategoryID, &sub.NextRenewalDate, &sub.LastUsedDate, &sub.IsActive, &sub.AutoRenew, &sub.Notes,
+		&sub.Name, &sub.Provider, &amount, &sub.Currency, &sub.Frequency, &sub.CategoryID, &sub.NextRenewalDate, &sub.LastUsedDate, &sub.IsActive, &sub.AutoRenew, &sub.Notes,
 	)
 	if err != nil {
 		return err
 	}
+	sub.Amount = model.MoneyFromDecimal(amount)
 
 	if req.Name != nil {
 		sub.Name = *req.Name
@@ -341,7 +346,7 @@ func (s *subscriptionService) UpdateSubscription(ctx context.Context, userID str
 		UPDATE subscriptions
 		SET name = $1, provider = $2, amount = $3, currency = $4, frequency = $5, category_id = $6, next_renewal_date = $7, last_used_date = $8, is_active = $9, auto_renew = $10, notes = $11, updated_at = NOW()
 		WHERE id = $12 AND user_id = $13 AND deleted_at IS NULL
-	`, sub.Name, sub.Provider, sub.Amount, sub.Currency, sub.Frequency, sub.CategoryID, sub.NextRenewalDate, sub.LastUsedDate, sub.IsActive, sub.AutoRenew, sub.Notes, id, ownerID)
+	`, sub.Name, sub.Provider, model.DecimalFromMoney(sub.Amount), sub.Currency, sub.Frequency, sub.CategoryID, sub.NextRenewalDate, sub.LastUsedDate, sub.IsActive, sub.AutoRenew, sub.Notes, id, ownerID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update subscription: %w", err)
@@ -399,7 +404,7 @@ func (s *subscriptionService) GetSubscriptionSummary(ctx context.Context, userID
 	}
 	defer rows.Close()
 
-	var totalMonthly float64 = 0
+	var totalMonthly model.Money
 	var activeCount int = 0
 	warnings := []dto.SubscriptionWarningItem{}
 
@@ -413,18 +418,19 @@ func (s *subscriptionService) GetSubscriptionSummary(ctx context.Context, userID
 		if err == nil {
 			if isActive {
 				activeCount++
-				monthly := s.calculateMonthlyCost(amount, frequency)
+				amountMoney := model.MoneyFromDecimal(amount)
+				monthly := s.calculateMonthlyCost(amountMoney, frequency)
 				totalMonthly += monthly
 
 				// Unused Warning detection
 				if lastUsed != nil {
 					daysUnused := int(time.Since(*lastUsed).Hours() / 24)
 					if daysUnused > 60 {
-						msg := fmt.Sprintf("Subscription %s belum digunakan 60+ hari. Biaya Rp %.0f/bulan. Pertimbangkan cancel.", name, monthly)
+						msg := fmt.Sprintf("Subscription %s belum digunakan 60+ hari. Biaya %s/bulan. Pertimbangkan cancel.", name, model.FormatRupiahMoney(monthly))
 						warnings = append(warnings, dto.SubscriptionWarningItem{
 							SubscriptionID: id,
 							Name:           name,
-							Amount:         amount,
+							Amount:         amountMoney,
 							Frequency:      frequency,
 							DaysUnused:     daysUnused,
 							Message:        msg,

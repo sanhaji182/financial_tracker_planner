@@ -20,7 +20,7 @@ type AuthService interface {
 	Login(ctx context.Context, req dto.LoginRequest) (*dto.AuthResponse, error)
 	RefreshToken(ctx context.Context, refreshToken string) (*dto.AuthResponse, error)
 	Logout(ctx context.Context, refreshToken string) error
-	
+
 	InviteSpouse(ctx context.Context, ownerID string, req dto.InviteSpouseRequest) (*dto.InviteLink, error)
 	RegisterSpouse(ctx context.Context, inviteToken string, req dto.RegisterRequest) (*dto.AuthResponse, error)
 	ChangePassword(ctx context.Context, userID string, req dto.ChangePasswordRequest) error

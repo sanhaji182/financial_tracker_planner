@@ -150,8 +150,8 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 			Priority: 3,
 			Title:    "Tahan Kas Sebagai Buffer",
 			AmountSuggested: dto.MoneyValue{
-				Value:          suggested,
-				FormattedValue: formatRupiah(suggested),
+				Value:          int64(suggested),
+				FormattedValue: dto.FormatRupiah(suggested),
 			},
 			Reason:     "Proyeksi saldo kas Anda akan turun di bawah batas aman bulan ini. Tahan sisa dana sebagai buffer darurat jangka pendek.",
 			ActionType: "hold_buffer",
@@ -167,8 +167,8 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 			Priority: 4,
 			Title:    "Alokasikan Ke Investasi",
 			AmountSuggested: dto.MoneyValue{
-				Value:          suggested,
-				FormattedValue: formatRupiah(suggested),
+				Value:          int64(suggested),
+				FormattedValue: dto.FormatRupiah(suggested),
 			},
 			Reason:     "Seluruh pos keuangan utama (Dana Darurat, Utang bunga tinggi, dan Forecast) dalam kondisi aman. Alokasikan sisa kas untuk investasi produktif.",
 			ActionType: "invest",
@@ -179,8 +179,8 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 
 	return &dto.AllocationAdviceResponse{
 		Surplus: dto.MoneyValue{
-			Value:          surplus,
-			FormattedValue: formatRupiah(surplus),
+			Value:          int64(surplus),
+			FormattedValue: dto.FormatRupiah(surplus),
 		},
 		Advices: advices,
 	}, nil

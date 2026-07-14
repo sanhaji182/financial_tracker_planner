@@ -268,7 +268,7 @@ func (s *assetService) AddValuation(ctx context.Context, assetID string, userID 
 		ID:             created.ID,
 		AssetID:        created.AssetID,
 		Value:          created.Value,
-		FormattedValue: dto.FormatRupiah(created.Value),
+		FormattedValue: model.FormatRupiahMoney(created.Value),
 		ValuationDate:  created.ValuationDate,
 		Source:         created.Source,
 		Notes:          created.Notes,

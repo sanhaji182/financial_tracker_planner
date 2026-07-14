@@ -61,7 +61,7 @@ func TestDebtService(t *testing.T) {
 	t.Run("Create debt success", func(t *testing.T) {
 		cred := "Kredit Mandiri"
 		interest := 12.0
-		minPay := 500000.0
+		minPay := model.Money(500000)
 		due := 15
 		tenor := 12
 		start := time.Now()
@@ -90,7 +90,7 @@ func TestDebtService(t *testing.T) {
 			t.Errorf("expected name %s, got %s", req.Name, resp.Name)
 		}
 		if resp.OutstandingBalance != 15000000 {
-			t.Errorf("expected outstanding balance 15000000, got %f", resp.OutstandingBalance)
+			t.Errorf("expected outstanding balance 15000000, got %d", resp.OutstandingBalance)
 		}
 
 		debtID = resp.ID
@@ -112,7 +112,7 @@ func TestDebtService(t *testing.T) {
 		}
 
 		if resp.Amount != 1000000 {
-			t.Errorf("expected payment amount 1000000, got %f", resp.Amount)
+			t.Errorf("expected payment amount 1000000, got %d", resp.Amount)
 		}
 
 		// Verify outstanding balance on debt decreased
@@ -122,9 +122,9 @@ func TestDebtService(t *testing.T) {
 		}
 
 		// Balance is: 15,000,000 - p.Amount (1,000,000) = 14,000,000
-		expectedBalance := 14000000.0
+		expectedBalance := model.Money(14000000)
 		if d.OutstandingBalance != expectedBalance {
-			t.Errorf("expected outstanding balance %f, got %f", expectedBalance, d.OutstandingBalance)
+			t.Errorf("expected outstanding balance %d, got %d", expectedBalance, d.OutstandingBalance)
 		}
 	})
 

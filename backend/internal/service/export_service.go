@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jung-kurt/gofpdf/v2"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type ExportService interface {
@@ -264,21 +265,6 @@ func (s *exportService) ExportMonthlyClosingPDF(ctx context.Context, userID stri
 		y += 12
 	}
 
-	// format rupiah helper
-	formatRupiah := func(val float64) string {
-		parts := fmt.Sprintf("%.0f", val)
-		// insert thousand dots
-		var result []byte
-		n := len(parts)
-		for i := 0; i < n; i++ {
-			if i > 0 && (n-i)%3 == 0 {
-				result = append(result, '.')
-			}
-			result = append(result, parts[i])
-		}
-		return "Rp " + string(result)
-	}
-
 	// 2. Overview Metrics 4-grid layout representation
 	drawSectionHeader("IKHTISAR KEUANGAN")
 
@@ -298,8 +284,8 @@ func (s *exportService) ExportMonthlyClosingPDF(ctx context.Context, userID stri
 
 	pdf.SetTextColor(darkSlate[0], darkSlate[1], darkSlate[2])
 	pdf.SetFont("Arial", "B", 11)
-	pdf.Text(18, y+12, formatRupiah(snapshot.NetWorth))
-	pdf.Text(113, y+12, formatRupiah(snapshot.TotalCash))
+	pdf.Text(18, y+12, model.FormatRupiahMoney(snapshot.NetWorth))
+	pdf.Text(113, y+12, model.FormatRupiahMoney(snapshot.TotalCash))
 	y += 20
 
 	// Assets & Debts Row
@@ -314,9 +300,9 @@ func (s *exportService) ExportMonthlyClosingPDF(ctx context.Context, userID stri
 
 	pdf.SetTextColor(emeraldColor[0], emeraldColor[1], emeraldColor[2])
 	pdf.SetFont("Arial", "B", 11)
-	pdf.Text(18, y+12, formatRupiah(snapshot.TotalAssets))
+	pdf.Text(18, y+12, model.FormatRupiahMoney(snapshot.TotalAssets))
 	pdf.SetTextColor(roseColor[0], roseColor[1], roseColor[2])
-	pdf.Text(113, y+12, formatRupiah(snapshot.TotalDebts))
+	pdf.Text(113, y+12, model.FormatRupiahMoney(snapshot.TotalDebts))
 	y += 24
 
 	// Income vs Expense Table
@@ -331,16 +317,16 @@ func (s *exportService) ExportMonthlyClosingPDF(ctx context.Context, userID stri
 
 	pdf.SetTextColor(darkSlate[0], darkSlate[1], darkSlate[2])
 	pdf.CellFormat(60, 8, "  Total Pendapatan (Income)", "1", 0, "L", false, 0, "")
-	pdf.CellFormat(60, 8, formatRupiah(snapshot.TotalIncome), "1", 0, "R", false, 0, "")
+	pdf.CellFormat(60, 8, model.FormatRupiahMoney(snapshot.TotalIncome), "1", 0, "R", false, 0, "")
 	pdf.CellFormat(60, 8, "100%", "1", 1, "R", false, 0, "")
 	y += 8
 
 	spentPct := 0.0
 	if snapshot.TotalIncome > 0 {
-		spentPct = (snapshot.TotalExpense / snapshot.TotalIncome) * 100
+		spentPct = (float64(snapshot.TotalExpense) / float64(snapshot.TotalIncome)) * 100
 	}
 	pdf.CellFormat(60, 8, "  Total Pengeluaran (Expense)", "1", 0, "L", false, 0, "")
-	pdf.CellFormat(60, 8, formatRupiah(snapshot.TotalExpense), "1", 0, "R", false, 0, "")
+	pdf.CellFormat(60, 8, model.FormatRupiahMoney(snapshot.TotalExpense), "1", 0, "R", false, 0, "")
 	pdf.CellFormat(60, 8, fmt.Sprintf("%.1f%%", spentPct), "1", 1, "R", false, 0, "")
 	y += 14
 
@@ -365,7 +351,7 @@ func (s *exportService) ExportMonthlyClosingPDF(ctx context.Context, userID stri
 	pdf.SetTextColor(darkSlate[0], darkSlate[1], darkSlate[2])
 	for _, acc := range snapshot.Accounts {
 		pdf.CellFormat(100, 6, "  "+acc.Name, "1", 0, "L", false, 0, "")
-		pdf.CellFormat(80, 6, formatRupiah(acc.Balance), "1", 1, "R", false, 0, "")
+		pdf.CellFormat(80, 6, model.FormatRupiahMoney(acc.Balance), "1", 1, "R", false, 0, "")
 		y += 6
 	}
 	y += 10
@@ -391,12 +377,12 @@ func (s *exportService) ExportMonthlyClosingPDF(ctx context.Context, userID stri
 	pdf.SetTextColor(darkSlate[0], darkSlate[1], darkSlate[2])
 	for _, c := range snapshot.BudgetSummary.Categories {
 		pdf.CellFormat(70, 6, "  "+c.Name, "1", 0, "L", false, 0, "")
-		pdf.CellFormat(55, 6, formatRupiah(c.Budget), "1", 0, "R", false, 0, "")
-		
+		pdf.CellFormat(55, 6, model.FormatRupiahMoney(c.Budget), "1", 0, "R", false, 0, "")
+
 		if c.Actual > c.Budget {
 			pdf.SetTextColor(roseColor[0], roseColor[1], roseColor[2])
 		}
-		pdf.CellFormat(55, 6, formatRupiah(c.Actual), "1", 1, "R", false, 0, "")
+		pdf.CellFormat(55, 6, model.FormatRupiahMoney(c.Actual), "1", 1, "R", false, 0, "")
 		pdf.SetTextColor(darkSlate[0], darkSlate[1], darkSlate[2])
 		y += 6
 	}

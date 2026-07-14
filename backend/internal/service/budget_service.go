@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type BudgetService interface {
@@ -69,7 +71,7 @@ func (s *budgetService) SetBudget(ctx context.Context, userID string, req *dto.B
 		ON CONFLICT (user_id, category_id, month) 
 		DO UPDATE SET amount = EXCLUDED.amount, updated_at = NOW()
 		RETURNING id
-	`, ownerID, req.CategoryID, req.Month, req.Amount).Scan(&budgetID)
+	`, ownerID, req.CategoryID, req.Month, model.DecimalFromMoney(req.Amount)).Scan(&budgetID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to upsert budget: %w", err)
 	}
@@ -99,7 +101,7 @@ func (s *budgetService) UpdateBudget(ctx context.Context, userID string, id stri
 		UPDATE budgets
 		SET amount = $1, updated_at = NOW()
 		WHERE id = $2 AND user_id = $3
-	`, req.Amount, id, ownerID)
+	`, model.DecimalFromMoney(req.Amount), id, ownerID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to update budget: %w", err)
 	}
@@ -143,8 +145,10 @@ func (s *budgetService) GetBudgets(ctx context.Context, userID string, month str
 	var budgets []dto.BudgetDto
 	for rows.Next() {
 		var b dto.BudgetDto
-		err = rows.Scan(&b.ID, &b.CategoryID, &b.CategoryName, &b.CategoryIcon, &b.CategoryColor, &b.Month, &b.Amount)
+		var amount float64
+		err = rows.Scan(&b.ID, &b.CategoryID, &b.CategoryName, &b.CategoryIcon, &b.CategoryColor, &b.Month, &amount)
 		if err == nil {
+			b.Amount = model.MoneyFromDecimal(amount)
 			budgets = append(budgets, b)
 		}
 	}
@@ -165,14 +169,15 @@ func (s *budgetService) GetBudgets(ctx context.Context, userID string, month str
 			), 0)
 		`, ownerID, budgets[i].CategoryID, month).Scan(&spent)
 
-		budgets[i].Spent = spent
-		budgets[i].FormattedSpent = formatRupiah(spent)
-		budgets[i].Remaining = budgets[i].Amount - spent
-		budgets[i].FormattedRemaining = formatRupiah(budgets[i].Remaining)
-		
+		spentMoney := model.MoneyFromDecimal(spent)
+		budgets[i].Spent = spentMoney
+		budgets[i].FormattedSpent = model.FormatRupiahMoney(spentMoney)
+		budgets[i].Remaining = budgets[i].Amount - spentMoney
+		budgets[i].FormattedRemaining = model.FormatRupiahMoney(budgets[i].Remaining)
+
 		var pct float64
 		if budgets[i].Amount > 0 {
-			pct = (spent / budgets[i].Amount) * 100.0
+			pct = (float64(spentMoney) / float64(budgets[i].Amount)) * 100.0
 		}
 		budgets[i].UsedPercentage = pct
 
@@ -186,7 +191,7 @@ func (s *budgetService) GetBudgets(ctx context.Context, userID string, month str
 		} else {
 			budgets[i].Status = "over"
 		}
-		budgets[i].FormattedAmount = formatRupiah(budgets[i].Amount)
+		budgets[i].FormattedAmount = model.FormatRupiahMoney(budgets[i].Amount)
 	}
 
 	return budgets, nil
@@ -198,7 +203,7 @@ func (s *budgetService) GetBudgetSummary(ctx context.Context, userID string, mon
 		return nil, err
 	}
 
-	var totalBudget, totalSpent, remaining float64
+	var totalBudget, totalSpent, remaining model.Money
 	var overCount int
 
 	for _, b := range budgets {
@@ -213,15 +218,15 @@ func (s *budgetService) GetBudgetSummary(ctx context.Context, userID string, mon
 	return &dto.BudgetSummaryResponse{
 		TotalBudget: dto.MoneyValue{
 			Value:          totalBudget,
-			FormattedValue: formatRupiah(totalBudget),
+			FormattedValue: model.FormatRupiahMoney(totalBudget),
 		},
 		TotalSpent: dto.MoneyValue{
 			Value:          totalSpent,
-			FormattedValue: formatRupiah(totalSpent),
+			FormattedValue: model.FormatRupiahMoney(totalSpent),
 		},
 		Remaining: dto.MoneyValue{
 			Value:          remaining,
-			FormattedValue: formatRupiah(remaining),
+			FormattedValue: model.FormatRupiahMoney(remaining),
 		},
 		CategoriesOver: overCount,
 		Month:          month,
@@ -251,15 +256,17 @@ func (s *budgetService) CopyFromPreviousMonth(ctx context.Context, userID string
 
 func (s *budgetService) getBudgetByID(ctx context.Context, ownerID string, budgetID string) (*dto.BudgetDto, error) {
 	var b dto.BudgetDto
+	var amount float64
 	err := s.dbPool.QueryRow(ctx, `
 		SELECT b.id, b.category_id, c.name, COALESCE(c.icon, ''), COALESCE(c.color, ''), b.month, b.amount
 		FROM budgets b
 		JOIN categories c ON b.category_id = c.id
 		WHERE b.user_id = $1 AND b.id = $2
-	`, ownerID, budgetID).Scan(&b.ID, &b.CategoryID, &b.CategoryName, &b.CategoryIcon, &b.CategoryColor, &b.Month, &b.Amount)
+	`, ownerID, budgetID).Scan(&b.ID, &b.CategoryID, &b.CategoryName, &b.CategoryIcon, &b.CategoryColor, &b.Month, &amount)
 	if err != nil {
 		return nil, err
 	}
+	b.Amount = model.MoneyFromDecimal(amount)
 
 	var spent float64
 	_ = s.dbPool.QueryRow(ctx, `
@@ -275,14 +282,15 @@ func (s *budgetService) getBudgetByID(ctx context.Context, ownerID string, budge
 		), 0)
 	`, ownerID, b.CategoryID, b.Month).Scan(&spent)
 
-	b.Spent = spent
-	b.FormattedSpent = formatRupiah(spent)
-	b.Remaining = b.Amount - spent
-	b.FormattedRemaining = formatRupiah(b.Remaining)
+	spentMoney := model.MoneyFromDecimal(spent)
+	b.Spent = spentMoney
+	b.FormattedSpent = model.FormatRupiahMoney(spentMoney)
+	b.Remaining = b.Amount - spentMoney
+	b.FormattedRemaining = model.FormatRupiahMoney(b.Remaining)
 
 	var pct float64
 	if b.Amount > 0 {
-		pct = (spent / b.Amount) * 100.0
+		pct = (float64(spentMoney) / float64(b.Amount)) * 100.0
 	}
 	b.UsedPercentage = pct
 
@@ -295,7 +303,7 @@ func (s *budgetService) getBudgetByID(ctx context.Context, ownerID string, budge
 	} else {
 		b.Status = "over"
 	}
-	b.FormattedAmount = formatRupiah(b.Amount)
+	b.FormattedAmount = model.FormatRupiahMoney(b.Amount)
 
 	return &b, nil
 }

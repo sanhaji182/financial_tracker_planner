@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type InvestmentService interface {
@@ -113,10 +114,11 @@ func (s *investmentService) GetInvestmentSummary(ctx context.Context, userID str
 		if totalInvestment > 0 {
 			pct = (val / totalInvestment) * 100.0
 		}
+		amountMoney := model.MoneyFromDecimal(val)
 		breakdown = append(breakdown, dto.InvestmentBreakdownDto{
 			AssetType:       cat,
-			Amount:          val,
-			FormattedAmount: formatRupiah(val),
+			Amount:          amountMoney,
+			FormattedAmount: model.FormatRupiahMoney(amountMoney),
 			Percentage:      pct,
 		})
 	}
@@ -157,28 +159,31 @@ func (s *investmentService) GetInvestmentSummary(ctx context.Context, userID str
 	for i := 0; i < 6; i++ {
 		mDate := sixMonthsAgo.AddDate(0, i, 0)
 		mStr := mDate.Format("2006-01")
-		
+
 		val := historyMap[mStr]
 		// If no historical value, fallback to totalInvestment as static projection
 		if val <= 0 {
 			val = totalInvestment
 		}
 
+		valueMoney := model.MoneyFromDecimal(val)
 		trend = append(trend, dto.MonthlyTrendDto{
 			Month:          mStr,
-			Value:          val,
-			FormattedValue: formatRupiah(val),
+			Value:          valueMoney,
+			FormattedValue: model.FormatRupiahMoney(valueMoney),
 		})
 	}
 
+	totalInvestmentMoney := model.MoneyFromDecimal(totalInvestment)
+	liquidCashMoney := model.MoneyFromDecimal(liquidCash)
 	return &dto.InvestmentSummaryResponse{
 		TotalInvestment: dto.MoneyValue{
-			Value:          totalInvestment,
-			FormattedValue: formatRupiah(totalInvestment),
+			Value:          totalInvestmentMoney,
+			FormattedValue: model.FormatRupiahMoney(totalInvestmentMoney),
 		},
 		LiquidCash: dto.MoneyValue{
-			Value:          liquidCash,
-			FormattedValue: formatRupiah(liquidCash),
+			Value:          liquidCashMoney,
+			FormattedValue: model.FormatRupiahMoney(liquidCashMoney),
 		},
 		LiquidRatio:   liquidRatio,
 		InvestedRatio: investedRatio,

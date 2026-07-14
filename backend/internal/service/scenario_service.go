@@ -113,13 +113,14 @@ func (s *scenarioService) SimulateScenario(ctx context.Context, userID string, c
 	for _, c := range changes {
 		switch c.Type {
 		case "extra_debt_payment":
-			scenarioTotalDebts -= c.Params.MonthlyExtraAmount
+			amount := model.DecimalFromMoney(c.Params.MonthlyExtraAmount)
+			scenarioTotalDebts -= amount
 			if scenarioTotalDebts < 0 {
 				scenarioTotalDebts = 0
 			}
 			// Paying extra debt reduces ending balance & cash pool
-			scenarioEndingBalance -= c.Params.MonthlyExtraAmount
-			scenarioCashPool -= c.Params.MonthlyExtraAmount
+			scenarioEndingBalance -= amount
+			scenarioCashPool -= amount
 
 		case "income_change":
 			changeAmt := avgMonthlyIncome * (c.Params.Percentage / 100.0)
@@ -127,24 +128,28 @@ func (s *scenarioService) SimulateScenario(ctx context.Context, userID string, c
 			scenarioEndingBalance += changeAmt
 
 		case "large_purchase":
-			scenarioEndingBalance -= c.Params.Amount
-			scenarioCashPool -= c.Params.Amount
+			amount := model.DecimalFromMoney(c.Params.Amount)
+			scenarioEndingBalance -= amount
+			scenarioCashPool -= amount
 
 		case "investment_increase":
 			// Shifting cash to investment reduces ending liquid balance
-			scenarioEndingBalance -= c.Params.MonthlyAmount
-			scenarioCashPool -= c.Params.MonthlyAmount
+			amount := model.DecimalFromMoney(c.Params.MonthlyAmount)
+			scenarioEndingBalance -= amount
+			scenarioCashPool -= amount
 
 		case "add_subscription":
-			scenarioMonthlyExpense += c.Params.MonthlyAmount
-			scenarioEndingBalance -= c.Params.MonthlyAmount
+			amount := model.DecimalFromMoney(c.Params.MonthlyAmount)
+			scenarioMonthlyExpense += amount
+			scenarioEndingBalance -= amount
 
 		case "remove_expense":
-			scenarioMonthlyExpense -= c.Params.MonthlyAmount
+			amount := model.DecimalFromMoney(c.Params.MonthlyAmount)
+			scenarioMonthlyExpense -= amount
 			if scenarioMonthlyExpense < 0 {
 				scenarioMonthlyExpense = 0
 			}
-			scenarioEndingBalance += c.Params.MonthlyAmount
+			scenarioEndingBalance += amount
 		}
 	}
 
@@ -184,24 +189,24 @@ func (s *scenarioService) SimulateScenario(ctx context.Context, userID string, c
 
 	return &dto.ScenarioResult{
 		EndingBalance: dto.MetricState{
-			Base:     baseEndingBalance,
-			Scenario: scenarioEndingBalance,
-			Impact:   endingBalanceImpact,
+			Base:     model.MoneyFromDecimal(baseEndingBalance),
+			Scenario: model.MoneyFromDecimal(scenarioEndingBalance),
+			Impact:   model.MoneyFromDecimal(endingBalanceImpact),
 			Severity: getSeverity(endingBalanceImpact, false),
 		},
 		TotalDebts: dto.MetricState{
-			Base:     baseTotalDebts,
-			Scenario: scenarioTotalDebts,
-			Impact:   totalDebtsImpact,
+			Base:     model.MoneyFromDecimal(baseTotalDebts),
+			Scenario: model.MoneyFromDecimal(scenarioTotalDebts),
+			Impact:   model.MoneyFromDecimal(totalDebtsImpact),
 			Severity: getSeverity(totalDebtsImpact, true), // less debt is good (positive)
 		},
-		EFCoverage: dto.MetricState{
+		EFCoverage: dto.RatioMetricState{
 			Base:     baseEFCoverage,
 			Scenario: scenarioEFCoverage,
 			Impact:   efCoverageImpact,
 			Severity: getSeverity(efCoverageImpact, false),
 		},
-		CashRunway: dto.MetricState{
+		CashRunway: dto.RatioMetricState{
 			Base:     baseCashRunway,
 			Scenario: scenarioCashRunway,
 			Impact:   cashRunwayImpact,

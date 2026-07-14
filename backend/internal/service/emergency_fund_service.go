@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type EFService interface {
@@ -130,19 +131,22 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 		status = "Kritis"
 	}
 
+	totalEmergencyFundMoney := model.MoneyFromDecimal(totalEmergencyFund)
+	monthlyLivingCostMoney := model.MoneyFromDecimal(monthlyLivingCost)
+	targetAmountMoney := model.MoneyFromDecimal(targetAmount)
 	return &dto.EFSummaryResponse{
 		TotalEmergencyFund: dto.MoneyValue{
-			Value:          totalEmergencyFund,
-			FormattedValue: formatRupiah(totalEmergencyFund),
+			Value:          totalEmergencyFundMoney,
+			FormattedValue: model.FormatRupiahMoney(totalEmergencyFundMoney),
 		},
 		MonthlyLivingCost: dto.MoneyValue{
-			Value:          monthlyLivingCost,
-			FormattedValue: formatRupiah(monthlyLivingCost),
+			Value:          monthlyLivingCostMoney,
+			FormattedValue: model.FormatRupiahMoney(monthlyLivingCostMoney),
 		},
 		TargetMonths: targetMonths,
 		TargetAmount: dto.MoneyValue{
-			Value:          targetAmount,
-			FormattedValue: formatRupiah(targetAmount),
+			Value:          targetAmountMoney,
+			FormattedValue: model.FormatRupiahMoney(targetAmountMoney),
 		},
 		CoverageMonths:     coverageMonths,
 		ProgressPercentage: progressPercentage,
@@ -174,7 +178,7 @@ func (s *efService) UpdateEFConfig(ctx context.Context, userID string, req *dto.
 
 	var overrideVal sql.NullFloat64
 	if req.MonthlyLivingCostOverride != nil {
-		overrideVal.Float64 = *req.MonthlyLivingCostOverride
+		overrideVal.Float64 = model.DecimalFromMoney(*req.MonthlyLivingCostOverride)
 		overrideVal.Valid = true
 	}
 

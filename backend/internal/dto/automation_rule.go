@@ -5,15 +5,15 @@ import "time"
 // RuleCondition defines options for all trigger types
 type RuleCondition struct {
 	AccountID  string  `json:"account_id,omitempty"`
-	Threshold  float64 `json:"threshold,omitempty"`
+	Threshold  int64   `json:"threshold,omitempty"`
 	DaysBefore int     `json:"days_before,omitempty"`
 	CategoryID string  `json:"category_id,omitempty"`
 	Percentage float64 `json:"percentage,omitempty"`
 	// For recurring transactions
-	Amount     float64 `json:"amount,omitempty"`
-	Frequency  string  `json:"frequency,omitempty"` // weekly, monthly, yearly
-	DayOfMonth int     `json:"day_of_month,omitempty"`
-	DayOfWeek  int     `json:"day_of_week,omitempty"` // 1-7 (Monday-Sunday)
+	Amount     int64  `json:"amount,omitempty"`
+	Frequency  string `json:"frequency,omitempty"` // weekly, monthly, yearly
+	DayOfMonth int    `json:"day_of_month,omitempty"`
+	DayOfWeek  int    `json:"day_of_week,omitempty"` // 1-7 (Monday-Sunday)
 }
 
 // RuleActionConfig defines options for all action types
@@ -22,7 +22,7 @@ type RuleActionConfig struct {
 	TelegramChat string   `json:"telegram_chat,omitempty"` // chat target if custom
 	AccountID    string   `json:"account_id,omitempty"`
 	CategoryID   string   `json:"category_id,omitempty"`
-	Amount       float64  `json:"amount,omitempty"`
+	Amount       int64    `json:"amount,omitempty"`
 	Description  string   `json:"description,omitempty"`
 	Type         string   `json:"type,omitempty"` // expense, income
 	Tags         []string `json:"tags,omitempty"`

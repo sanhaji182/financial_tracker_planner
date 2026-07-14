@@ -121,7 +121,7 @@ func (s *goalService) CreateGoal(ctx context.Context, userID string, req *dto.Cr
 		INSERT INTO goals (user_id, name, type, target_amount, current_amount, target_date, linked_account_id, linked_debt_id, icon, color, status, notes)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		RETURNING id, created_at
-	`, g.UserID, g.Name, g.Type, g.TargetAmount, g.CurrentAmount, g.TargetDate, g.LinkedAccountID, g.LinkedDebtID, g.Icon, g.Color, g.Status, g.Notes).Scan(&g.ID, &g.CreatedAt)
+	`, g.UserID, g.Name, g.Type, model.DecimalFromMoney(g.TargetAmount), model.DecimalFromMoney(g.CurrentAmount), g.TargetDate, g.LinkedAccountID, g.LinkedDebtID, g.Icon, g.Color, g.Status, g.Notes).Scan(&g.ID, &g.CreatedAt)
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create goal: %w", err)
@@ -143,26 +143,30 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 	}
 
 	var g model.Goal
+	var targetAmount, storedCurrentAmount float64
 	err = s.dbPool.QueryRow(ctx, `
 		SELECT id, user_id, name, type, target_amount, current_amount, target_date, linked_account_id, linked_debt_id, icon, color, status, notes, created_at
 		FROM goals WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`, id, ownerID).Scan(
-		&g.ID, &g.UserID, &g.Name, &g.Type, &g.TargetAmount, &g.CurrentAmount, &g.TargetDate, &g.LinkedAccountID, &g.LinkedDebtID, &g.Icon, &g.Color, &g.Status, &g.Notes, &g.CreatedAt,
+		&g.ID, &g.UserID, &g.Name, &g.Type, &targetAmount, &storedCurrentAmount, &g.TargetDate, &g.LinkedAccountID, &g.LinkedDebtID, &g.Icon, &g.Color, &g.Status, &g.Notes, &g.CreatedAt,
 	)
 
 	if err != nil {
 		return nil, err
 	}
+	g.TargetAmount = model.MoneyFromDecimal(targetAmount)
+	g.CurrentAmount = model.MoneyFromDecimal(storedCurrentAmount)
 
 	// Fetch dynamic calculated current_amount
-	var currentAmt float64 = g.CurrentAmount
+	currentAmt := g.CurrentAmount
 
 	if g.Type == "emergency_fund" {
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(balance), 0)
 			FROM accounts
 			WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
-		`, ownerID).Scan(&currentAmt)
+		`, ownerID).Scan(&storedCurrentAmount)
+		currentAmt = model.MoneyFromDecimal(storedCurrentAmount)
 	} else if g.Type == "debt_payoff" && g.LinkedDebtID != nil {
 		var originalAmt, outstandingAmt float64
 		err := s.dbPool.QueryRow(ctx, `
@@ -173,7 +177,7 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		if err == nil {
 			paid := originalAmt - outstandingAmt
 			if paid > 0 {
-				currentAmt = paid
+				currentAmt = model.MoneyFromDecimal(paid)
 			} else {
 				currentAmt = 0
 			}
@@ -186,7 +190,7 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 			FROM transactions
 			WHERE user_id = $1 AND goal_id = $2 AND deleted_at IS NULL
 		`, ownerID, g.ID).Scan(&contribSum)
-		currentAmt = g.CurrentAmount + contribSum
+		currentAmt = g.CurrentAmount + model.MoneyFromDecimal(contribSum)
 	}
 
 	// Fetch account name
@@ -222,9 +226,11 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		defer rows.Close()
 		for rows.Next() {
 			var item dto.GoalContributionItem
+			var amount float64
 			var dateVal time.Time
-			err := rows.Scan(&item.ID, &item.Amount, &dateVal, &item.Description, &item.SourceAccountName, &item.Notes)
+			err := rows.Scan(&item.ID, &amount, &dateVal, &item.Description, &item.SourceAccountName, &item.Notes)
 			if err == nil {
+				item.Amount = model.MoneyFromDecimal(amount)
 				item.Date = dateVal.Format("2006-01-02")
 				contribHistory = append(contribHistory, item)
 			}
@@ -232,7 +238,7 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 	}
 
 	// Calculate trends and completion projection
-	var totalContributed float64 = 0
+	var totalContributed model.Money
 	for _, c := range contribHistory {
 		totalContributed += c.Amount
 	}
@@ -241,9 +247,12 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 	if monthsElapsed < 1.0 {
 		monthsElapsed = 1.0
 	}
-	avgMonthly := totalContributed / monthsElapsed
+	avgMonthly := model.Money(math.Round(float64(totalContributed) / monthsElapsed))
 
-	progress := (currentAmt / g.TargetAmount) * 100
+	progress := 0.0
+	if g.TargetAmount > 0 {
+		progress = (float64(currentAmt) / float64(g.TargetAmount)) * 100
+	}
 	if progress > 100 {
 		progress = 100
 	}
@@ -259,7 +268,7 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 			projectedCompletion = &ds
 		}
 	} else if avgMonthly > 0 {
-		monthsToComplete := remaining / avgMonthly
+		monthsToComplete := float64(remaining) / float64(avgMonthly)
 		if !math.IsNaN(monthsToComplete) && !math.IsInf(monthsToComplete, 0) {
 			projDate := time.Now().AddDate(0, int(math.Ceil(monthsToComplete)), 0)
 			ds := projDate.Format("2006-01-02")
@@ -353,15 +362,18 @@ func (s *goalService) UpdateGoal(ctx context.Context, userID string, id string, 
 
 	// Fetch old
 	var g model.Goal
+	var targetAmount, currentAmount float64
 	err = s.dbPool.QueryRow(ctx, `
 		SELECT name, type, target_amount, current_amount, target_date, linked_account_id, linked_debt_id, icon, color, status, notes
 		FROM goals WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 	`, id, ownerID).Scan(
-		&g.Name, &g.Type, &g.TargetAmount, &g.CurrentAmount, &g.TargetDate, &g.LinkedAccountID, &g.LinkedDebtID, &g.Icon, &g.Color, &g.Status, &g.Notes,
+		&g.Name, &g.Type, &targetAmount, &currentAmount, &g.TargetDate, &g.LinkedAccountID, &g.LinkedDebtID, &g.Icon, &g.Color, &g.Status, &g.Notes,
 	)
 	if err != nil {
 		return err
 	}
+	g.TargetAmount = model.MoneyFromDecimal(targetAmount)
+	g.CurrentAmount = model.MoneyFromDecimal(currentAmount)
 
 	if req.Name != nil {
 		g.Name = *req.Name
@@ -429,7 +441,7 @@ func (s *goalService) UpdateGoal(ctx context.Context, userID string, id string, 
 		UPDATE goals
 		SET name = $1, type = $2, target_amount = $3, current_amount = $4, target_date = $5, linked_account_id = $6, linked_debt_id = $7, icon = $8, color = $9, status = $10, notes = $11, updated_at = NOW()
 		WHERE id = $12 AND user_id = $13 AND deleted_at IS NULL
-	`, g.Name, g.Type, g.TargetAmount, g.CurrentAmount, g.TargetDate, g.LinkedAccountID, g.LinkedDebtID, g.Icon, g.Color, g.Status, g.Notes, id, ownerID)
+	`, g.Name, g.Type, model.DecimalFromMoney(g.TargetAmount), model.DecimalFromMoney(g.CurrentAmount), g.TargetDate, g.LinkedAccountID, g.LinkedDebtID, g.Icon, g.Color, g.Status, g.Notes, id, ownerID)
 
 	if err != nil {
 		return fmt.Errorf("failed to update goal: %w", err)
@@ -517,7 +529,8 @@ func (s *goalService) ContributeToGoal(ctx context.Context, userID string, id st
 		return errors.New("rekening sumber tidak ditemukan")
 	}
 
-	if sourceBalance < req.Amount {
+	amountDecimal := model.DecimalFromMoney(req.Amount)
+	if sourceBalance < amountDecimal {
 		return errors.New("saldo rekening sumber tidak mencukupi")
 	}
 
@@ -531,12 +544,12 @@ func (s *goalService) ContributeToGoal(ctx context.Context, userID string, id st
 	}
 
 	// Perform balances updates
-	_, err = tx.Exec(ctx, "UPDATE accounts SET balance = balance - $1 WHERE id = $2", req.Amount, req.SourceAccountID)
+	_, err = tx.Exec(ctx, "UPDATE accounts SET balance = balance - $1 WHERE id = $2", amountDecimal, req.SourceAccountID)
 	if err != nil {
 		return err
 	}
 
-	_, err = tx.Exec(ctx, "UPDATE accounts SET balance = balance + $1 WHERE id = $2", req.Amount, targetAccID)
+	_, err = tx.Exec(ctx, "UPDATE accounts SET balance = balance + $1 WHERE id = $2", amountDecimal, targetAccID)
 	if err != nil {
 		return err
 	}
@@ -553,7 +566,7 @@ func (s *goalService) ContributeToGoal(ctx context.Context, userID string, id st
 		INSERT INTO transactions (user_id, account_id, target_account_id, type, amount, date, description, notes, status, goal_id)
 		VALUES ($1, $2, $3, 'transfer', $4, $5, $6, $7, 'confirmed', $8)
 		RETURNING id
-	`, ownerID, req.SourceAccountID, targetAccID, req.Amount, parsedDate, txDesc, req.Notes, id).Scan(&txID)
+	`, ownerID, req.SourceAccountID, targetAccID, amountDecimal, parsedDate, txDesc, req.Notes, id).Scan(&txID)
 	if err != nil {
 		return fmt.Errorf("failed to record contribution transaction: %w", err)
 	}
@@ -604,9 +617,9 @@ func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *p
 		return
 	}
 
-	var monthlyReq float64
+	var monthlyReq model.Money
 	if monthsRemaining > 0 {
-		monthlyReq = remaining / monthsRemaining
+		monthlyReq = model.Money(math.Round(float64(remaining) / monthsRemaining))
 	}
 	g.MonthlyRequired = &monthlyReq
 
@@ -626,7 +639,7 @@ func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *p
 		AND date>=$2 AND date<$3 AND deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExp)
 
-	surplus := (totalIncome / 3.0) - (totalExp / 3.0)
+	surplus := model.MoneyFromDecimal((totalIncome / 3.0) - (totalExp / 3.0))
 	affordable := monthlyReq <= surplus
 	g.IsAffordable = &affordable
 

@@ -1,10 +1,10 @@
 package dto
 
 type InvestmentBreakdownDto struct {
-	AssetType       string     `json:"asset_type"` // e.g. Reksadana, Saham, Deposito, Logam Mulia
-	Amount          float64    `json:"amount"`
-	FormattedAmount string     `json:"formatted_amount"`
-	Percentage      float64    `json:"percentage"`
+	AssetType       string  `json:"asset_type"` // e.g. Reksadana, Saham, Deposito, Logam Mulia
+	Amount          int64   `json:"amount"`
+	FormattedAmount string  `json:"formatted_amount"`
+	Percentage      float64 `json:"percentage"`
 }
 
 type InvestmentSummaryResponse struct {
@@ -17,7 +17,7 @@ type InvestmentSummaryResponse struct {
 }
 
 type MonthlyTrendDto struct {
-	Month           string     `json:"month"` // YYYY-MM
-	Value           float64    `json:"value"`
-	FormattedValue  string     `json:"formatted_value"`
+	Month          string `json:"month"` // YYYY-MM
+	Value          int64  `json:"value"`
+	FormattedValue string `json:"formatted_value"`
 }

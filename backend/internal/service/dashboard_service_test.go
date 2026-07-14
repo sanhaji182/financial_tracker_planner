@@ -57,7 +57,7 @@ func TestDashboardService(t *testing.T) {
 	}
 
 	// Create test asset
-	val := 12000000.0
+	val := model.Money(12000000)
 	liquid := true
 	asset := &model.Asset{
 		UserID:       testUser.ID,
@@ -74,7 +74,7 @@ func TestDashboardService(t *testing.T) {
 
 	// Create test debt
 	interest := 10.0
-	minPay := 200000.0
+	minPay := model.Money(200000)
 	due := 10
 	tenor := 6
 	start := time.Now()
@@ -106,17 +106,17 @@ func TestDashboardService(t *testing.T) {
 
 		// NetWorth calculation is:
 		// Assets (12,000,000 in Gold) - Debts (2,000,000 in Gadget Installment) = 10,000,000
-		expectedNetWorth := 10000000.0
+		expectedNetWorth := model.Money(10000000)
 		if resp.NetWorth.Value != expectedNetWorth {
-			t.Errorf("expected net worth %f, got %f", expectedNetWorth, resp.NetWorth.Value)
+			t.Errorf("expected net worth %d, got %d", expectedNetWorth, resp.NetWorth.Value)
 		}
 
 		if resp.CashAvailable.Value != 5000000 {
-			t.Errorf("expected cash available 5000000, got %f", resp.CashAvailable.Value)
+			t.Errorf("expected cash available 5000000, got %d", resp.CashAvailable.Value)
 		}
 
 		if resp.TotalDebts.TotalOutstanding != 2000000 {
-			t.Errorf("expected total debts 2000000, got %f", resp.TotalDebts.TotalOutstanding)
+			t.Errorf("expected total debts 2000000, got %d", resp.TotalDebts.TotalOutstanding)
 		}
 	})
 

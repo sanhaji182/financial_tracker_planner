@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type TransferService interface {
@@ -81,8 +82,9 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 		return nil, err
 	}
 
-	if sourceBalance < req.Amount {
-		return nil, fmt.Errorf("insufficient balance in source account %s (available: %s)", sourceName, formatRupiah(sourceBalance))
+	amountDecimal := model.DecimalFromMoney(req.Amount)
+	if sourceBalance < amountDecimal {
+		return nil, fmt.Errorf("insufficient balance in source account %s (available: %s)", sourceName, model.FormatRupiahMoney(model.MoneyFromDecimal(sourceBalance)))
 	}
 
 	// 2. Verify target account exists
@@ -114,7 +116,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 		UPDATE accounts
 		SET balance = balance - $1, updated_at = NOW()
 		WHERE id = $2 AND user_id = $3
-	`, req.Amount, req.SourceAccountID, ownerID)
+	`, amountDecimal, req.SourceAccountID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +126,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 		UPDATE accounts
 		SET balance = balance + $1, updated_at = NOW()
 		WHERE id = $2 AND user_id = $3
-	`, req.Amount, req.TargetAccountID, ownerID)
+	`, amountDecimal, req.TargetAccountID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +143,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 			user_id, account_id, target_account_id, type, amount, date, notes, status, created_at, updated_at
 		) VALUES ($1, $2, $3, 'transfer', $4, $5, $6, 'confirmed', NOW(), NOW())
 		RETURNING id
-	`, ownerID, req.SourceAccountID, req.TargetAccountID, req.Amount, parsedDate, notesText).Scan(&txID)
+	`, ownerID, req.SourceAccountID, req.TargetAccountID, amountDecimal, parsedDate, notesText).Scan(&txID)
 	if err != nil {
 		return nil, err
 	}
@@ -187,11 +189,13 @@ func (s *transferService) ListTransfers(ctx context.Context, userID string) ([]d
 	var list []dto.TransactionResponse
 	for rows.Next() {
 		var tx dto.TransactionResponse
+		var amount float64
 		var dateVal time.Time
-		err = rows.Scan(&tx.ID, &tx.AccountID, &tx.AccountName, &tx.TargetAccountID, &tx.TargetAccountName, &tx.Type, &tx.Amount, &dateVal, &tx.Notes, &tx.Status, &tx.CreatedAt)
+		err = rows.Scan(&tx.ID, &tx.AccountID, &tx.AccountName, &tx.TargetAccountID, &tx.TargetAccountName, &tx.Type, &amount, &dateVal, &tx.Notes, &tx.Status, &tx.CreatedAt)
 		if err == nil {
+			tx.Amount = model.MoneyFromDecimal(amount)
 			tx.Date = dateVal
-			tx.FormattedAmount = formatRupiah(tx.Amount)
+			tx.FormattedAmount = model.FormatRupiahMoney(tx.Amount)
 			list = append(list, tx)
 		}
 	}
@@ -201,6 +205,7 @@ func (s *transferService) ListTransfers(ctx context.Context, userID string) ([]d
 
 func (s *transferService) getTransactionByID(ctx context.Context, ownerID string, txID string) (*dto.TransactionResponse, error) {
 	var tx dto.TransactionResponse
+	var amount float64
 	var dateVal time.Time
 	err := s.dbPool.QueryRow(ctx, `
 		SELECT t.id, t.account_id, a.name, t.target_account_id, ta.name, t.type, t.amount, t.date, t.notes, t.status, t.created_at
@@ -208,12 +213,13 @@ func (s *transferService) getTransactionByID(ctx context.Context, ownerID string
 		JOIN accounts a ON t.account_id = a.id
 		JOIN accounts ta ON t.target_account_id = ta.id
 		WHERE t.user_id = $1 AND t.id = $2
-	`, ownerID, txID).Scan(&tx.ID, &tx.AccountID, &tx.AccountName, &tx.TargetAccountID, &tx.TargetAccountName, &tx.Type, &tx.Amount, &dateVal, &tx.Notes, &tx.Status, &tx.CreatedAt)
+	`, ownerID, txID).Scan(&tx.ID, &tx.AccountID, &tx.AccountName, &tx.TargetAccountID, &tx.TargetAccountName, &tx.Type, &amount, &dateVal, &tx.Notes, &tx.Status, &tx.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
 
+	tx.Amount = model.MoneyFromDecimal(amount)
 	tx.Date = dateVal
-	tx.FormattedAmount = formatRupiah(tx.Amount)
+	tx.FormattedAmount = model.FormatRupiahMoney(tx.Amount)
 	return &tx, nil
 }

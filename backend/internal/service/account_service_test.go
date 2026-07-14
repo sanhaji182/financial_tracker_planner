@@ -63,7 +63,7 @@ func TestAccountService(t *testing.T) {
 			t.Errorf("expected name %s, got %s", req.Name, resp.Name)
 		}
 		if resp.Balance != req.InitialBalance {
-			t.Errorf("expected balance %f, got %f", req.InitialBalance, resp.Balance)
+			t.Errorf("expected balance %d, got %d", req.InitialBalance, resp.Balance)
 		}
 		if *resp.AccountNumberMasked != "****7890" {
 			t.Errorf("expected masked account number ****7890, got %s", *resp.AccountNumberMasked)
@@ -130,7 +130,7 @@ func TestAccountService(t *testing.T) {
 		}
 
 		if summary.GrandTotal != 10000000 {
-			t.Errorf("expected grand total 10000000, got %f", summary.GrandTotal)
+			t.Errorf("expected grand total 10000000, got %d", summary.GrandTotal)
 		}
 	})
 

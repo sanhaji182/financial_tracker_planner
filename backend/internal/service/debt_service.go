@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"time"
 
@@ -19,7 +20,7 @@ type DebtService interface {
 	DeleteDebt(ctx context.Context, debtID string, userID string) error
 	RecordPayment(ctx context.Context, debtID string, userID string, req dto.RecordDebtPaymentRequest) (*dto.DebtPaymentResponse, error)
 	GetDebtSummary(ctx context.Context, userID string) (*dto.DebtSummaryResponse, error)
-	SimulateAvalanche(ctx context.Context, userID string, extraMonthly float64) (*dto.AvalancheSimulationResponse, error)
+	SimulateAvalanche(ctx context.Context, userID string, extraMonthly model.Money) (*dto.AvalancheSimulationResponse, error)
 }
 
 type debtService struct {
@@ -62,10 +63,15 @@ func (s *debtService) CreateDebt(ctx context.Context, userID string, req dto.Cre
 		EndDate:            req.EndDate,
 		TenorMonths:        req.TenorMonths,
 		AccountID:          req.AccountID,
-		Currency:           func() string { if req.Currency != "" { return req.Currency }; return "IDR" }(),
-		Status:             "active",
-		Notes:              req.Notes,
-		IsShared:           req.IsShared,
+		Currency: func() string {
+			if req.Currency != "" {
+				return req.Currency
+			}
+			return "IDR"
+		}(),
+		Status:   "active",
+		Notes:    req.Notes,
+		IsShared: req.IsShared,
 	}
 
 	created, err := s.debtRepo.Create(ctx, d)
@@ -201,17 +207,16 @@ func (s *debtService) RecordPayment(ctx context.Context, debtID string, userID s
 		}
 	}
 
-	// Calculate interest portion: interest_rate / 12 months / 100%
-	var interestPortion, principalPortion float64
+	// Calculate interest portion: interest_rate / 12 months / 100%.
+	// Rates are fractional, so round the result back to Money once.
+	var interestPortion model.Money
 	if d.InterestRate != nil && *d.InterestRate > 0 {
-		interestPortion = d.OutstandingBalance * ((*d.InterestRate) / 12 / 100)
+		interestPortion = model.Money(math.Round(float64(d.OutstandingBalance) * ((*d.InterestRate) / 12 / 100)))
 		if interestPortion > req.Amount {
 			interestPortion = req.Amount
 		}
-		principalPortion = req.Amount - interestPortion
-	} else {
-		principalPortion = req.Amount
 	}
+	principalPortion := req.Amount - interestPortion
 
 	// Construct payment log
 	p := &model.DebtPayment{
@@ -276,7 +281,7 @@ type simDebt struct {
 	minimumPayment float64
 }
 
-func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extraMonthly float64) (*dto.AvalancheSimulationResponse, error) {
+func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extraMonthly model.Money) (*dto.AvalancheSimulationResponse, error) {
 	list, err := s.debtRepo.GetAllByUser(ctx, userID)
 	if err != nil {
 		return nil, err
@@ -302,7 +307,7 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 	monthsNoExtra, interestNoExtra, schedNoExtra := runSim(activeDebts, 0)
 
 	// Run Simulation 2: With Extra (Avalanche)
-	monthsWithExtra, interestWithExtra, schedWithExtra := runSim(activeDebts, extraMonthly)
+	monthsWithExtra, interestWithExtra, schedWithExtra := runSim(activeDebts, float64(extraMonthly))
 
 	savingsInterest := interestNoExtra - interestWithExtra
 	savingsMonths := monthsNoExtra - monthsWithExtra
@@ -322,7 +327,7 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 			PayoffMonthIndex:       sc.PayoffMonthIndex,
 			PayoffDate:             sc.PayoffDate,
 			TotalInterestPaid:      sc.TotalInterestPaid,
-			FormattedTotalInterest: dto.FormatRupiah(sc.TotalInterestPaid),
+			FormattedTotalInterest: model.FormatRupiahMoney(sc.TotalInterestPaid),
 		})
 	}
 
@@ -334,19 +339,22 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 			PayoffMonthIndex:       sc.PayoffMonthIndex,
 			PayoffDate:             sc.PayoffDate,
 			TotalInterestPaid:      sc.TotalInterestPaid,
-			FormattedTotalInterest: dto.FormatRupiah(sc.TotalInterestPaid),
+			FormattedTotalInterest: model.FormatRupiahMoney(sc.TotalInterestPaid),
 		})
 	}
 
+	interestWithExtraMoney := model.Money(math.Round(interestWithExtra))
+	interestNoExtraMoney := model.Money(math.Round(interestNoExtra))
+	savingsInterestMoney := model.Money(math.Round(savingsInterest))
 	return &dto.AvalancheSimulationResponse{
 		MonthsToPayoff:                monthsWithExtra,
-		TotalInterestPaid:             interestWithExtra,
-		FormattedTotalInterest:        dto.FormatRupiah(interestWithExtra),
+		TotalInterestPaid:             interestWithExtraMoney,
+		FormattedTotalInterest:        model.FormatRupiahMoney(interestWithExtraMoney),
 		MonthsToPayoffWithoutExtra:    monthsNoExtra,
-		TotalInterestPaidWithoutExtra: interestNoExtra,
-		FormattedInterestWithoutExtra: dto.FormatRupiah(interestNoExtra),
-		SavingsInterest:               savingsInterest,
-		FormattedSavingsInterest:      dto.FormatRupiah(savingsInterest),
+		TotalInterestPaidWithoutExtra: interestNoExtraMoney,
+		FormattedInterestWithoutExtra: model.FormatRupiahMoney(interestNoExtraMoney),
+		SavingsInterest:               savingsInterestMoney,
+		FormattedSavingsInterest:      model.FormatRupiahMoney(savingsInterestMoney),
 		SavingsMonths:                 savingsMonths,
 		SchedulesWithExtra:            schedulesWithExtra,
 		SchedulesWithoutExtra:         schedulesWithoutExtra,
@@ -364,12 +372,12 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 		}
 		minPay := 0.0
 		if d.MinimumPayment != nil {
-			minPay = *d.MinimumPayment
+			minPay = float64(*d.MinimumPayment)
 		}
 		simDebts = append(simDebts, &simDebt{
 			id:             d.ID,
 			name:           d.Name,
-			balance:        d.OutstandingBalance,
+			balance:        float64(d.OutstandingBalance),
 			interestRate:   rate,
 			minimumPayment: minPay,
 		})
@@ -411,7 +419,7 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 
 				// Record interest paid per debt inside payoffSchedules
 				sched := payoffSchedules[d.id]
-				sched.TotalInterestPaid += interest
+				sched.TotalInterestPaid += model.Money(math.Round(interest))
 				payoffSchedules[d.id] = sched
 			}
 		}

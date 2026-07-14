@@ -2,14 +2,15 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"encoding/json"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type ReconciliationService interface {
@@ -75,7 +76,8 @@ func (s *reconciliationService) StartReconciliation(ctx context.Context, userID 
 		return nil, fmt.Errorf("invalid date format (YYYY-MM-DD): %w", err)
 	}
 
-	difference := appBalance - req.ActualBalance
+	appBalanceMoney := model.MoneyFromDecimal(appBalance)
+	difference := appBalanceMoney - req.ActualBalance
 	var status string
 	var suggestion string
 
@@ -114,17 +116,19 @@ func (s *reconciliationService) StartReconciliation(ctx context.Context, userID 
 	unmatched := make([]dto.TransactionResponse, 0)
 	for rows.Next() {
 		var tx dto.TransactionResponse
+		var amount float64
 		var dateVal time.Time
 		var targetAccId, targetAccName, catId, catName, catIcon, catColor string
 		err = rows.Scan(
 			&tx.ID, &tx.AccountID, &tx.AccountName, &targetAccId, &targetAccName,
 			&catId, &catName, &catIcon, &catColor,
-			&tx.Type, &tx.Amount, &dateVal, &tx.Notes, &tx.Status, &tx.CreatedAt,
+			&tx.Type, &amount, &dateVal, &tx.Notes, &tx.Status, &tx.CreatedAt,
 		)
 		if err == nil {
+			tx.Amount = model.MoneyFromDecimal(amount)
 			tx.Date = dateVal
-			tx.FormattedAmount = formatRupiah(tx.Amount)
-			
+			tx.FormattedAmount = model.FormatRupiahMoney(tx.Amount)
+
 			if targetAccId != "" {
 				tx.TargetAccountID = &targetAccId
 				tx.TargetAccountName = &targetAccName
@@ -141,7 +145,7 @@ func (s *reconciliationService) StartReconciliation(ctx context.Context, userID 
 
 	return &dto.ReconciliationResponse{
 		Difference:            difference,
-		FormattedDifference:   formatRupiah(difference),
+		FormattedDifference:   model.FormatRupiahMoney(difference),
 		UnmatchedTransactions: unmatched,
 		Suggestions:           suggestion,
 		Status:                status,

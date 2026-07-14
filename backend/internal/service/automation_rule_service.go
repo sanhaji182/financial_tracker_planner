@@ -23,8 +23,8 @@ type AutomationRuleService interface {
 }
 
 type automationRuleService struct {
-	dbPool           *pgxpool.Pool
-	telegramService  TelegramService
+	dbPool          *pgxpool.Pool
+	telegramService TelegramService
 }
 
 // NewAutomationRuleService creates a new AutomationRuleService
@@ -244,9 +244,10 @@ func (s *automationRuleService) EvaluateRules(ctx context.Context) error {
 			err := s.dbPool.QueryRow(ctx, `
 				SELECT balance FROM accounts WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
 			`, cond.AccountID, rule.UserID).Scan(&balance)
-			if err == nil && balance < cond.Threshold {
+			thresholdDecimal := model.DecimalFromMoney(cond.Threshold)
+			if err == nil && balance < thresholdDecimal {
 				triggered = true
-				triggerMsg = fmt.Sprintf("Saldo rekening Anda turun di bawah batas aman: Rp %.0f (Batas: Rp %.0f)", balance, cond.Threshold)
+				triggerMsg = fmt.Sprintf("Saldo rekening Anda turun di bawah batas aman: %s (Batas: %s)", model.FormatRupiahMoney(model.MoneyFromDecimal(balance)), model.FormatRupiahMoney(cond.Threshold))
 			}
 
 		case "bill_due_soon":
@@ -378,13 +379,15 @@ func (s *automationRuleService) executeAutoCreateTransaction(ctx context.Context
 		categoryPtr = &act.CategoryID
 	}
 
+	amountDecimal := model.DecimalFromMoney(act.Amount)
+
 	// Insert transaction
 	var txID string
 	err = tx.QueryRow(ctx, `
 		INSERT INTO transactions (user_id, account_id, category_id, type, amount, date, description, source, status)
 		VALUES ($1, $2, $3, $4, $5, CURRENT_DATE, $6, 'recurring', 'confirmed')
 		RETURNING id
-	`, userID, act.AccountID, categoryPtr, txType, act.Amount, desc).Scan(&txID)
+	`, userID, act.AccountID, categoryPtr, txType, amountDecimal, desc).Scan(&txID)
 	if err != nil {
 		return fmt.Errorf("failed to insert transaction: %w", err)
 	}
@@ -397,7 +400,7 @@ func (s *automationRuleService) executeAutoCreateTransaction(ctx context.Context
 		balanceUpdateQuery = `UPDATE accounts SET balance = balance - $1 WHERE id = $2`
 	}
 
-	_, err = tx.Exec(ctx, balanceUpdateQuery, act.Amount, act.AccountID)
+	_, err = tx.Exec(ctx, balanceUpdateQuery, amountDecimal, act.AccountID)
 	if err != nil {
 		return fmt.Errorf("failed to update account balance: %w", err)
 	}

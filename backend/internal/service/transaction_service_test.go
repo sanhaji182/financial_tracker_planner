@@ -113,7 +113,7 @@ func TestTransactionService(t *testing.T) {
 		// Verify account balance updated
 		acc, _ := accountRepo.GetByID(ctx, account1.ID)
 		if acc.Balance != 1200000 {
-			t.Errorf("expected balance 1200000, got %f", acc.Balance)
+			t.Errorf("expected balance 1200000, got %d", acc.Balance)
 		}
 
 		// Verify audit log exists
@@ -155,7 +155,7 @@ func TestTransactionService(t *testing.T) {
 		// Verify account balance updated
 		acc, _ := accountRepo.GetByID(ctx, account1.ID)
 		if acc.Balance != 1150000 {
-			t.Errorf("expected balance 1150000, got %f", acc.Balance)
+			t.Errorf("expected balance 1150000, got %d", acc.Balance)
 		}
 	})
 
@@ -178,13 +178,13 @@ func TestTransactionService(t *testing.T) {
 		// Verify account 1 balance
 		acc1, _ := accountRepo.GetByID(ctx, account1.ID)
 		if acc1.Balance != 1000000 {
-			t.Errorf("expected account 1 balance 1000000, got %f", acc1.Balance)
+			t.Errorf("expected account 1 balance 1000000, got %d", acc1.Balance)
 		}
 
 		// Verify account 2 balance
 		acc2, _ := accountRepo.GetByID(ctx, account2.ID)
 		if acc2.Balance != 650000 {
-			t.Errorf("expected account 2 balance 650000, got %f", acc2.Balance)
+			t.Errorf("expected account 2 balance 650000, got %d", acc2.Balance)
 		}
 	})
 

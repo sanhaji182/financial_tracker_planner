@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type SharedViewService interface {
@@ -149,9 +150,11 @@ func (s *sharedViewService) GetSharedSummary(ctx context.Context, userID string)
 		defer rows.Close()
 		for rows.Next() {
 			var b dto.UpcomingBillDto
+			var amount float64
 			var nextDue time.Time
-			if errScan := rows.Scan(&b.ID, &b.Name, &b.Amount, &nextDue); errScan == nil {
-				b.FormattedAmount = formatRupiah(b.Amount)
+			if errScan := rows.Scan(&b.ID, &b.Name, &amount, &nextDue); errScan == nil {
+				b.Amount = model.MoneyFromDecimal(amount)
+				b.FormattedAmount = model.FormatRupiahMoney(b.Amount)
 				b.DueDate = nextDue
 				days := int(nextDue.Sub(time.Now().Truncate(24*time.Hour)).Hours() / 24)
 				if days < 0 {
@@ -164,18 +167,22 @@ func (s *sharedViewService) GetSharedSummary(ctx context.Context, userID string)
 	}
 
 	netWorthShared := totalAssetsShared - totalDebts
+	totalAssetsSharedMoney := model.MoneyFromDecimal(totalAssetsShared)
+	totalDebtsMoney := model.MoneyFromDecimal(totalDebts)
+	netWorthSharedMoney := model.MoneyFromDecimal(netWorthShared)
+	forecastEndMonthMoney := model.MoneyFromDecimal(forecastEndMonth)
 
 	return &dto.SharedSummaryResponse{
-		TotalAssetsShared:    totalAssetsShared,
-		FormattedTotalAssets: formatRupiah(totalAssetsShared),
-		TotalDebts:           totalDebts,
-		FormattedTotalDebts:  formatRupiah(totalDebts),
-		NetWorthShared:       netWorthShared,
-		FormattedNetWorth:    formatRupiah(netWorthShared),
+		TotalAssetsShared:    totalAssetsSharedMoney,
+		FormattedTotalAssets: model.FormatRupiahMoney(totalAssetsSharedMoney),
+		TotalDebts:           totalDebtsMoney,
+		FormattedTotalDebts:  model.FormatRupiahMoney(totalDebtsMoney),
+		NetWorthShared:       netWorthSharedMoney,
+		FormattedNetWorth:    model.FormatRupiahMoney(netWorthSharedMoney),
 		UpcomingBills:        dbBills,
 		ForecastEndMonth: dto.MoneyValue{
-			Value:          forecastEndMonth,
-			FormattedValue: formatRupiah(forecastEndMonth),
+			Value:          forecastEndMonthMoney,
+			FormattedValue: model.FormatRupiahMoney(forecastEndMonthMoney),
 		},
 		OwnerName: ownerName,
 	}, nil
@@ -227,13 +234,14 @@ func (s *sharedViewService) GetSharedAssets(ctx context.Context, userID string) 
 			}
 		}
 
-		a.CurrentValue = currentVal
-		a.FormattedValue = formatRupiah(currentVal)
+		a.CurrentValue = model.MoneyFromDecimal(currentVal)
+		a.FormattedValue = model.FormatRupiahMoney(a.CurrentValue)
 		a.LinkedAccountID = linkedAccID
 		a.LinkedAccountName = linkedAccName
-		a.PurchaseValue = purchaseVal
 		if purchaseVal != nil {
-			str := formatRupiah(*purchaseVal)
+			purchaseMoney := model.MoneyFromDecimal(*purchaseVal)
+			a.PurchaseValue = &purchaseMoney
+			str := model.FormatRupiahMoney(purchaseMoney)
 			a.FormattedPurchase = &str
 		}
 		a.PurchaseDate = purchaseDate
@@ -269,12 +277,13 @@ func (s *sharedViewService) GetSharedDebts(ctx context.Context, userID string) (
 	for rows.Next() {
 		var d dto.DebtResponse
 		var creditor, accountID, accountName, notes *string
+		var originalAmount, outstandingBalance float64
 		var interestRate, minimumPayment *float64
 		var dueDay, tenorMonths *int
 		var startDate, endDate *time.Time
 
 		err := rows.Scan(
-			&d.ID, &d.UserID, &d.Name, &d.Type, &creditor, &d.OriginalAmount, &d.OutstandingBalance,
+			&d.ID, &d.UserID, &d.Name, &d.Type, &creditor, &originalAmount, &outstandingBalance,
 			&interestRate, &minimumPayment, &dueDay, &startDate, &endDate, &tenorMonths,
 			&accountID, &accountName, &d.Currency, &d.Status, &notes, &d.IsShared, &d.CreatedAt, &d.UpdatedAt,
 		)
@@ -282,14 +291,17 @@ func (s *sharedViewService) GetSharedDebts(ctx context.Context, userID string) (
 			return nil, err
 		}
 
-		d.FormattedOriginal = formatRupiah(d.OriginalAmount)
-		d.FormattedOutstanding = formatRupiah(d.OutstandingBalance)
+		d.OriginalAmount = model.MoneyFromDecimal(originalAmount)
+		d.OutstandingBalance = model.MoneyFromDecimal(outstandingBalance)
+		d.FormattedOriginal = model.FormatRupiahMoney(d.OriginalAmount)
+		d.FormattedOutstanding = model.FormatRupiahMoney(d.OutstandingBalance)
 
 		d.Creditor = creditor
 		d.InterestRate = interestRate
-		d.MinimumPayment = minimumPayment
 		if minimumPayment != nil {
-			str := formatRupiah(*minimumPayment)
+			minimumPaymentMoney := model.MoneyFromDecimal(*minimumPayment)
+			d.MinimumPayment = &minimumPaymentMoney
+			str := model.FormatRupiahMoney(minimumPaymentMoney)
 			d.FormattedMinPayment = &str
 		}
 		d.DueDay = dueDay
@@ -326,12 +338,14 @@ func (s *sharedViewService) GetSharedBills(ctx context.Context, userID string) (
 	var list []dto.UpcomingBillDto
 	for rows.Next() {
 		var b dto.UpcomingBillDto
+		var amount float64
 		var nextDue time.Time
-		err = rows.Scan(&b.ID, &b.Name, &b.Amount, &nextDue)
+		err = rows.Scan(&b.ID, &b.Name, &amount, &nextDue)
 		if err != nil {
 			return nil, err
 		}
-		b.FormattedAmount = formatRupiah(b.Amount)
+		b.Amount = model.MoneyFromDecimal(amount)
+		b.FormattedAmount = model.FormatRupiahMoney(b.Amount)
 		b.DueDate = nextDue
 
 		days := int(nextDue.Sub(time.Now().Truncate(24*time.Hour)).Hours() / 24)

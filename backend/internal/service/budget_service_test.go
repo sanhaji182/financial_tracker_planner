@@ -90,7 +90,7 @@ func TestBudgetService(t *testing.T) {
 		}
 
 		if resp.Amount != 1000000 {
-			t.Errorf("expected budget amount 1000000, got %f", resp.Amount)
+			t.Errorf("expected budget amount 1000000, got %d", resp.Amount)
 		}
 
 		budgetID = resp.ID
@@ -126,10 +126,10 @@ func TestBudgetService(t *testing.T) {
 
 		b := budgets[0]
 		if b.Spent != 150000 {
-			t.Errorf("expected spent 150000, got %f", b.Spent)
+			t.Errorf("expected spent 150000, got %d", b.Spent)
 		}
 		if b.Remaining != 850000 {
-			t.Errorf("expected remaining 850000, got %f", b.Remaining)
+			t.Errorf("expected remaining 850000, got %d", b.Remaining)
 		}
 
 		// Get summary
@@ -139,7 +139,7 @@ func TestBudgetService(t *testing.T) {
 		}
 
 		if sum.TotalSpent.Value != 150000 {
-			t.Errorf("expected total spent 150000, got %f", sum.TotalSpent.Value)
+			t.Errorf("expected total spent 150000, got %d", sum.TotalSpent.Value)
 		}
 	})
 
@@ -153,7 +153,7 @@ func TestBudgetService(t *testing.T) {
 		}
 
 		if resp.Amount != 1200000 {
-			t.Errorf("expected updated budget amount 1200000, got %f", resp.Amount)
+			t.Errorf("expected updated budget amount 1200000, got %d", resp.Amount)
 		}
 	})
 

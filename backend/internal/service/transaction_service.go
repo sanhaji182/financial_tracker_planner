@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -97,7 +96,7 @@ func (s *transactionService) CreateTransaction(ctx context.Context, userID strin
 	isSplit := len(req.Splits) > 0
 	var modelSplits []model.TransactionSplit
 	if isSplit {
-		var sumSplit float64
+		var sumSplit model.Money
 		for _, sp := range req.Splits {
 			sumSplit += sp.Amount
 			modelSplits = append(modelSplits, model.TransactionSplit{
@@ -106,7 +105,7 @@ func (s *transactionService) CreateTransaction(ctx context.Context, userID strin
 				Description: sp.Description,
 			})
 		}
-		if math.Abs(sumSplit-req.Amount) > 0.01 {
+		if sumSplit != req.Amount {
 			return nil, errors.New("sum of split amounts must equal transaction total amount")
 		}
 	}
@@ -419,14 +418,13 @@ func (s *transactionService) SplitTransaction(ctx context.Context, transactionID
 	}
 
 	// 2. Validate sum of split amounts equals transaction amount
-	var splitSum float64
+	var splitSum model.Money
 	for _, split := range req.Splits {
 		splitSum += split.Amount
 	}
 
-	// Deal with float precision issues within 0.01 tolerance
-	if math.Abs(splitSum-tx.Amount) > 0.01 {
-		return nil, fmt.Errorf("total split amount (%f) must equal transaction amount (%f)", splitSum, tx.Amount)
+	if splitSum != tx.Amount {
+		return nil, fmt.Errorf("total split amount (%d) must equal transaction amount (%d)", splitSum, tx.Amount)
 	}
 
 	// 3. Validate categories exist
@@ -584,7 +582,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 				UserID:       userID,
 				AccountID:    targetAccountID,
 				Type:         txType,
-				Amount:       txAmount,
+				Amount:       model.Money(txAmount),
 				Date:         txDate,
 				Description:  &desc,
 				Status:       "pending_review",
@@ -675,7 +673,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 			UserID:       userID,
 			AccountID:    defaultAccountID,
 			Type:         "expense",
-			Amount:       ocrRes.ParsedData.Total,
+			Amount:       model.Money(ocrRes.ParsedData.Total),
 			Date:         txDate,
 			Description:  &desc,
 			Status:       "pending_review",

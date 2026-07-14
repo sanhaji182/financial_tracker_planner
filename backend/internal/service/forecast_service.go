@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type ForecastService interface {
@@ -292,13 +293,15 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 			isTight = true
 		}
 
+		projectedBalanceMoney := model.MoneyFromDecimal(runningBalance)
+		eventAmountMoney := model.MoneyFromDecimal(eventAmount)
 		projections = append(projections, dto.DailyProjectionDto{
 			Date:             dateStr,
-			ProjectedBalance: runningBalance,
-			FormattedBalance: formatRupiah(runningBalance),
+			ProjectedBalance: projectedBalanceMoney,
+			FormattedBalance: model.FormatRupiahMoney(projectedBalanceMoney),
 			EventName:        eventName,
-			EventAmount:      eventAmount,
-			FormattedAmount:  formatRupiah(eventAmount),
+			EventAmount:      eventAmountMoney,
+			FormattedAmount:  model.FormatRupiahMoney(eventAmountMoney),
 		})
 	}
 
@@ -328,37 +331,44 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		UsesFallbackValues: false,
 	}
 
+	estimatedIncomeMoney := model.MoneyFromDecimal(estimatedIncome)
+	estimatedFixedExpensesMoney := model.MoneyFromDecimal(estimatedFixedExpenses)
+	estimatedVariableExpensesMoney := model.MoneyFromDecimal(estimatedVariableExpenses)
+	projectedEndBalanceMoney := model.MoneyFromDecimal(projectedEndBalance)
+	lowestBalanceMoney := model.MoneyFromDecimal(lowestBalance)
+	safeToSpendMoney := model.MoneyFromDecimal(safeToSpend)
+	monthlyLivingCostThresholdMoney := model.MoneyFromDecimal(monthlyLivingCostThreshold)
 	res := &dto.ForecastResponse{
 		Month: month,
 		EstimatedIncome: dto.MoneyValue{
-			Value:          estimatedIncome,
-			FormattedValue: formatRupiah(estimatedIncome),
+			Value:          estimatedIncomeMoney,
+			FormattedValue: model.FormatRupiahMoney(estimatedIncomeMoney),
 		},
 		EstimatedFixedExpenses: dto.MoneyValue{
-			Value:          estimatedFixedExpenses,
-			FormattedValue: formatRupiah(estimatedFixedExpenses),
+			Value:          estimatedFixedExpensesMoney,
+			FormattedValue: model.FormatRupiahMoney(estimatedFixedExpensesMoney),
 		},
 		EstimatedVariableExpenses: dto.MoneyValue{
-			Value:          estimatedVariableExpenses,
-			FormattedValue: formatRupiah(estimatedVariableExpenses),
+			Value:          estimatedVariableExpensesMoney,
+			FormattedValue: model.FormatRupiahMoney(estimatedVariableExpensesMoney),
 		},
 		ProjectedEndBalance: dto.MoneyValue{
-			Value:          projectedEndBalance,
-			FormattedValue: formatRupiah(projectedEndBalance),
+			Value:          projectedEndBalanceMoney,
+			FormattedValue: model.FormatRupiahMoney(projectedEndBalanceMoney),
 		},
 		LowestBalance: dto.MoneyValue{
-			Value:          lowestBalance,
-			FormattedValue: formatRupiah(lowestBalance),
+			Value:          lowestBalanceMoney,
+			FormattedValue: model.FormatRupiahMoney(lowestBalanceMoney),
 		},
 		LowestBalanceDate: lowestBalanceDate.Format("2006-01-02"),
 		SafeToSpend: dto.MoneyValue{
-			Value:          safeToSpend,
-			FormattedValue: formatRupiah(safeToSpend),
+			Value:          safeToSpendMoney,
+			FormattedValue: model.FormatRupiahMoney(safeToSpendMoney),
 		},
 		IsTight: isTight,
 		ThresholdLimit: dto.MoneyValue{
-			Value:          monthlyLivingCostThreshold,
-			FormattedValue: formatRupiah(monthlyLivingCostThreshold),
+			Value:          monthlyLivingCostThresholdMoney,
+			FormattedValue: model.FormatRupiahMoney(monthlyLivingCostThresholdMoney),
 		},
 		DailyProjections: projections,
 		DataSufficiency:  ds,

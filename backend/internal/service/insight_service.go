@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 // InsightService manages monthly financial insight generation and retrieval
@@ -162,7 +163,7 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 				cats := []dto.InsightDataCategory{}
 				for _, c := range topCats {
 					parts = append(parts, fmt.Sprintf("%s Rp %.0f", c.Name, c.Amount))
-					cats = append(cats, dto.InsightDataCategory{Name: c.Name, Amount: c.Amount})
+					cats = append(cats, dto.InsightDataCategory{Name: c.Name, Amount: model.MoneyFromDecimal(c.Amount)})
 				}
 				desc := "Pengeluaran terbesar bulan ini: " + strings.Join(parts, ", ")
 
@@ -184,9 +185,9 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 	// ═══════════════════════════════════════════════════════
 	{
 		type catTrend struct {
-			Name         string
-			CurrentMonth float64
-			AvgPrev3     float64
+			Name          string
+			CurrentMonth  float64
+			AvgPrev3      float64
 			ChangePercent float64
 		}
 
@@ -250,9 +251,9 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 					change := ((current - avg) / avg) * 100
 					if change > 10 {
 						increases = append(increases, catTrend{
-							Name:         name,
-							CurrentMonth: current,
-							AvgPrev3:     avg,
+							Name:          name,
+							CurrentMonth:  current,
+							AvgPrev3:      avg,
 							ChangePercent: change,
 						})
 					}
@@ -272,7 +273,7 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 					for _, inc := range increases {
 						cats = append(cats, dto.InsightDataCategory{
 							Name:   inc.Name,
-							Amount: inc.CurrentMonth,
+							Amount: model.MoneyFromDecimal(inc.CurrentMonth),
 							Change: inc.ChangePercent,
 						})
 					}
@@ -347,8 +348,8 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 			}
 
 			data := dto.InsightData{
-				CurrentCost:  currentSubCost,
-				PreviousCost: prevSubCost,
+				CurrentCost:  model.MoneyFromDecimal(currentSubCost),
+				PreviousCost: model.MoneyFromDecimal(prevSubCost),
 			}
 			rawData, _ := json.Marshal(data)
 
@@ -417,7 +418,7 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 					}
 					cashflowData = append(cashflowData, dto.InsightDataCashflow{
 						Week:    fmt.Sprintf("Minggu ke-%d", w.Week),
-						Amount:  w.Amount,
+						Amount:  model.MoneyFromDecimal(w.Amount),
 						IsSpike: isSpike,
 					})
 				}
@@ -511,10 +512,12 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 		}
 
 		data := dto.InsightData{
-			CurrentNetWorth:  currentNetWorth,
-			PreviousNetWorth: prevNetWorth,
-			ChangePercent:    func() float64 {
-				if prevNetWorth == 0 { return 0 }
+			CurrentNetWorth:  model.MoneyFromDecimal(currentNetWorth),
+			PreviousNetWorth: model.MoneyFromDecimal(prevNetWorth),
+			ChangePercent: func() float64 {
+				if prevNetWorth == 0 {
+					return 0
+				}
 				return ((currentNetWorth - prevNetWorth) / math.Abs(prevNetWorth)) * 100
 			}(),
 		}

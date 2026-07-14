@@ -60,14 +60,14 @@ func (s *backupService) CreateBackup(ctx context.Context) (*dto.BackupResponse, 
 	}
 
 	// 1. Execute pg_dump to custom format binary output
-	cmd := exec.Command("pg_dump", 
-		"-h", s.cfg.DBHost, 
-		"-p", s.cfg.DBPort, 
-		"-U", s.cfg.DBUser, 
-		"-d", s.cfg.DBName, 
+	cmd := exec.Command("pg_dump",
+		"-h", s.cfg.DBHost,
+		"-p", s.cfg.DBPort,
+		"-U", s.cfg.DBUser,
+		"-d", s.cfg.DBName,
 		"-F", "c",
 	)
-	
+
 	// Set password environment variable
 	cmd.Env = append(os.Environ(), "PGPASSWORD="+s.cfg.DBPassword)
 

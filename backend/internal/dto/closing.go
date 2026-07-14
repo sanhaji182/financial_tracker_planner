@@ -39,16 +39,16 @@ type ClosingSnapshot struct {
 	TotalCash        int64                 `json:"total_cash"`
 	DTIRatio         float64               `json:"dti_ratio"`
 	HealthScore      int                   `json:"health_score"`
-	EFCoverageMonths int64                 `json:"ef_coverage_months"`
+	EFCoverageMonths float64               `json:"ef_coverage_months"`
 	BudgetSummary    ClosingBudgetSummary  `json:"budget_summary"`
 	GoalsProgress    []ClosingGoalProgress `json:"goals_progress"`
 }
 
 type DeltaValue struct {
-	AbsoluteChange          int64  `json:"absolute_change"`
-	FormattedAbsoluteChange string `json:"formatted_absolute_change"`
-	PercentageChange        int64  `json:"percentage_change"`
-	Direction               string `json:"direction"` // up, down, flat
+	AbsoluteChange          int64   `json:"absolute_change"`
+	FormattedAbsoluteChange string  `json:"formatted_absolute_change"`
+	PercentageChange        float64 `json:"percentage_change"`
+	Direction               string  `json:"direction"` // up, down, flat
 }
 
 type ClosingComparison struct {
@@ -78,7 +78,7 @@ type MonthlyClosingResponse struct {
 	TotalDebts       MoneyValue         `json:"total_debts"`
 	TotalCash        MoneyValue         `json:"total_cash"`
 	DTIRatio         float64            `json:"dti_ratio"`
-	EFCoverageMonths int64              `json:"ef_coverage_months"`
+	EFCoverageMonths float64            `json:"ef_coverage_months"`
 	IsConfirmed      bool               `json:"is_confirmed"`
 	ConfirmedAt      string             `json:"confirmed_at,omitempty"`
 	Notes            string             `json:"notes"`

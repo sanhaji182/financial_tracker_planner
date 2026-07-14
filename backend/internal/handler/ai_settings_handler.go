@@ -137,7 +137,7 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 
 	// 1. Gather dashboard, ef and budget context for the AI
 	ctx := c.Request.Context()
-	
+
 	// Fetch dashboard summary
 	dashboard, err := h.dashboardService.GetDashboardData(ctx, userID)
 	if err != nil {

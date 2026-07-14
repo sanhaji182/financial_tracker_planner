@@ -105,7 +105,7 @@ func TestForecastService(t *testing.T) {
 		}
 
 		if resp.EstimatedIncome.Value <= 0 {
-			t.Errorf("expected estimated income to be positive, got %f", resp.EstimatedIncome.Value)
+			t.Errorf("expected estimated income to be positive, got %d", resp.EstimatedIncome.Value)
 		}
 
 		// Check daily projections

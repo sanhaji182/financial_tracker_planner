@@ -11,6 +11,6 @@ type EFSummaryResponse struct {
 }
 
 type UpdateEFConfigRequest struct {
-	TargetMonths               int      `json:"target_months" binding:"required,min=1"`
-	MonthlyLivingCostOverride  *float64 `json:"monthly_living_cost_override"`
+	TargetMonths              int    `json:"target_months" binding:"required,min=1"`
+	MonthlyLivingCostOverride *int64 `json:"monthly_living_cost_override"`
 }

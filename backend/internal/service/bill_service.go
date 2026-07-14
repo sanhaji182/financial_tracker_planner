@@ -221,7 +221,7 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 	}
 
 	// 2. Fetch already paid sum for this specific bill instance
-	var paidSum float64
+	var paidSum int64
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM bill_payments WHERE bill_id = $1
 	`, billID).Scan(&paidSum)
@@ -235,7 +235,7 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 	}
 
 	if req.Amount > remainingAmountBefore {
-		return nil, fmt.Errorf("payment amount (Rp %.0f) exceeds remaining bill balance (Rp %.0f)", req.Amount, remainingAmountBefore)
+		return nil, fmt.Errorf("payment amount (Rp %d) exceeds remaining bill balance (Rp %d)", req.Amount, remainingAmountBefore)
 	}
 
 	remainingAmountAfter := remainingAmountBefore - req.Amount
@@ -250,8 +250,8 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 		return nil, fmt.Errorf("failed to fetch account balance: %w", err)
 	}
 
-	if currentBalance < req.Amount {
-		return nil, fmt.Errorf("insufficient account balance: current balance is %s", formatRupiah(currentBalance))
+	if currentBalance < model.DecimalFromMoney(req.Amount) {
+		return nil, fmt.Errorf("insufficient account balance: current balance is %s", model.FormatRupiahMoney(model.MoneyFromDecimal(currentBalance)))
 	}
 
 	_, err = tx.Exec(ctx, `
@@ -368,7 +368,7 @@ func (s *billService) GetMonthlyCommitment(ctx context.Context, userID string, m
 		return nil, err
 	}
 
-	var total, paid, unpaid, overdue float64
+	var total, paid, unpaid, overdue int64
 	for _, b := range bills {
 		total += b.Amount
 		switch b.Status {
@@ -384,13 +384,13 @@ func (s *billService) GetMonthlyCommitment(ctx context.Context, userID string, m
 	return &dto.BillMonthlyCommitmentResponse{
 		Month:            month,
 		TotalCommitment:  total,
-		FormattedTotal:   formatRupiah(total),
+		FormattedTotal:   model.FormatRupiahMoney(total),
 		TotalPaid:        paid,
-		FormattedPaid:    formatRupiah(paid),
+		FormattedPaid:    model.FormatRupiahMoney(paid),
 		TotalUnpaid:      unpaid,
-		FormattedUnpaid:  formatRupiah(unpaid),
+		FormattedUnpaid:  model.FormatRupiahMoney(unpaid),
 		TotalOverdue:     overdue,
-		FormattedOverdue: formatRupiah(overdue),
+		FormattedOverdue: model.FormatRupiahMoney(overdue),
 	}, nil
 }
 

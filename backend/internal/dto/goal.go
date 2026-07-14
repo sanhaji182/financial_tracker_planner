@@ -20,7 +20,7 @@ type GoalResponse struct {
 	Notes                      string  `json:"notes"`
 	Progress                   float64 `json:"progress"`                  // Percentage 0-100
 	ProjectedCompletionDate    *string `json:"projected_completion_date"` // YYYY-MM-DD
-	AverageMonthlyContribution float64 `json:"average_monthly_contribution"`
+	AverageMonthlyContribution int64   `json:"average_monthly_contribution"`
 	// Affordability & sinking fund fields (calculated)
 	MonthlyRequired     *int64                 `json:"monthly_required,omitempty"` // How much per month needed to reach target by target_date
 	IsAffordable        *bool                  `json:"is_affordable,omitempty"`    // true if monthly_required <= available surplus

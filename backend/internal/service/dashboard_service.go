@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type DashboardService interface {
@@ -385,7 +386,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		netWorthAtMonth := assetsAtMonth + accountsAtMonth - debtsAtMonth
 		netWorthTrend = append(netWorthTrend, dto.TrendPoint{
 			Month: t.Format("Jan"),
-			Value: netWorthAtMonth,
+			Value: model.MoneyFromDecimal(netWorthAtMonth),
 		})
 	}
 
@@ -402,9 +403,11 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		defer rows.Close()
 		for rows.Next() {
 			var b dto.UpcomingBillDto
+			var amount float64
 			var nextDue time.Time
-			if errScan := rows.Scan(&b.ID, &b.Name, &b.Amount, &nextDue); errScan == nil {
-				b.FormattedAmount = formatRupiah(b.Amount)
+			if errScan := rows.Scan(&b.ID, &b.Name, &amount, &nextDue); errScan == nil {
+				b.Amount = model.MoneyFromDecimal(amount)
+				b.FormattedAmount = model.FormatRupiahMoney(b.Amount)
 				b.DueDate = nextDue
 				days := int(nextDue.Sub(time.Now().Truncate(24*time.Hour)).Hours() / 24)
 				if days < 0 {
@@ -445,30 +448,39 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 
 	// Net Worth (Total Assets - Total Debts)
 	netWorth := totalAssets - totalDebts
+	netWorthMoney := model.MoneyFromDecimal(netWorth)
+	totalAssetsMoney := model.MoneyFromDecimal(totalAssets)
+	liquidAssetsMoney := model.MoneyFromDecimal(liquidAssets)
+	investedAssetsMoney := model.MoneyFromDecimal(investedAssets)
+	propertyAssetsMoney := model.MoneyFromDecimal(propertyAssets)
+	totalDebtsMoney := model.MoneyFromDecimal(totalDebts)
+	cashAvailableMoney := model.MoneyFromDecimal(cashAvailable)
+	forecastEndMonthMoney := model.MoneyFromDecimal(forecastEndMonth)
+	safeToSpendMoney := model.MoneyFromDecimal(safeToSpend)
 
 	resp := dto.DashboardResponse{
 		NetWorth: dto.MoneyValue{
-			Value:          netWorth,
-			FormattedValue: formatRupiah(netWorth),
+			Value:          netWorthMoney,
+			FormattedValue: model.FormatRupiahMoney(netWorthMoney),
 		},
 		TotalAssets: dto.AssetBreakdown{
-			Total:             totalAssets,
-			FormattedTotal:    formatRupiah(totalAssets),
-			Liquid:            liquidAssets,
-			FormattedLiquid:   formatRupiah(liquidAssets),
-			Invested:          investedAssets,
-			FormattedInvested: formatRupiah(investedAssets),
-			Property:          propertyAssets,
-			FormattedProperty: formatRupiah(propertyAssets),
+			Total:             totalAssetsMoney,
+			FormattedTotal:    model.FormatRupiahMoney(totalAssetsMoney),
+			Liquid:            liquidAssetsMoney,
+			FormattedLiquid:   model.FormatRupiahMoney(liquidAssetsMoney),
+			Invested:          investedAssetsMoney,
+			FormattedInvested: model.FormatRupiahMoney(investedAssetsMoney),
+			Property:          propertyAssetsMoney,
+			FormattedProperty: model.FormatRupiahMoney(propertyAssetsMoney),
 		},
 		TotalDebts: dto.DebtSummaryDto{
-			TotalOutstanding:          totalDebts,
-			FormattedTotalOutstanding: formatRupiah(totalDebts),
+			TotalOutstanding:          totalDebtsMoney,
+			FormattedTotalOutstanding: model.FormatRupiahMoney(totalDebtsMoney),
 			ActiveCount:               activeDebtsCount,
 		},
 		CashAvailable: dto.MoneyValue{
-			Value:          cashAvailable,
-			FormattedValue: formatRupiah(cashAvailable),
+			Value:          cashAvailableMoney,
+			FormattedValue: model.FormatRupiahMoney(cashAvailableMoney),
 		},
 		DTIRatio:  dtiRatio,
 		DTIStatus: dtiStatus,
@@ -479,12 +491,12 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		},
 		UpcomingBills: dbBills,
 		ForecastEndMonth: dto.MoneyValue{
-			Value:          forecastEndMonth,
-			FormattedValue: formatRupiah(forecastEndMonth),
+			Value:          forecastEndMonthMoney,
+			FormattedValue: model.FormatRupiahMoney(forecastEndMonthMoney),
 		},
 		SafeToSpend: dto.MoneyValue{
-			Value:          safeToSpend,
-			FormattedValue: formatRupiah(safeToSpend),
+			Value:          safeToSpendMoney,
+			FormattedValue: model.FormatRupiahMoney(safeToSpendMoney),
 		},
 		RecentAlerts:   recentAlerts,
 		InsightSummary: insightSummary,

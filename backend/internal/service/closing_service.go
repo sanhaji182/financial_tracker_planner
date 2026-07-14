@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type ClosingService interface {
@@ -84,7 +85,9 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	if err == nil {
 		for rows.Next() {
 			var acc dto.ClosingAccount
-			if scanErr := rows.Scan(&acc.ID, &acc.Name, &acc.Balance); scanErr == nil {
+			var balance float64
+			if scanErr := rows.Scan(&acc.ID, &acc.Name, &balance); scanErr == nil {
+				acc.Balance = model.MoneyFromDecimal(balance)
 				accounts = append(accounts, acc)
 			}
 		}
@@ -202,7 +205,7 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 
 	// 6. Budgets Snapshot
 	budgetCategories := make([]dto.ClosingCategoryBudget, 0)
-	var totalBudget, totalSpent float64
+	var totalBudget, totalSpent model.Money
 	budgetRows, err := s.dbPool.Query(ctx, `
 		SELECT b.amount, c.name, COALESCE((
 			SELECT SUM(amount) FROM transactions
@@ -221,7 +224,10 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	if err == nil {
 		for budgetRows.Next() {
 			var b dto.ClosingCategoryBudget
-			if scanErr := budgetRows.Scan(&b.Budget, &b.Name, &b.Actual); scanErr == nil {
+			var budget, actual float64
+			if scanErr := budgetRows.Scan(&budget, &b.Name, &actual); scanErr == nil {
+				b.Budget = model.MoneyFromDecimal(budget)
+				b.Actual = model.MoneyFromDecimal(actual)
 				totalBudget += b.Budget
 				totalSpent += b.Actual
 				budgetCategories = append(budgetCategories, b)
@@ -284,12 +290,12 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	snapshot := dto.ClosingSnapshot{
 		Month:            req.Month,
 		Accounts:         accounts,
-		TotalIncome:      totalIncome,
-		TotalExpense:     totalExpense,
-		TotalAssets:      totalAssets,
-		TotalDebts:       totalDebts,
-		NetWorth:         netWorth,
-		TotalCash:        totalCash,
+		TotalIncome:      model.MoneyFromDecimal(totalIncome),
+		TotalExpense:     model.MoneyFromDecimal(totalExpense),
+		TotalAssets:      model.MoneyFromDecimal(totalAssets),
+		TotalDebts:       model.MoneyFromDecimal(totalDebts),
+		NetWorth:         model.MoneyFromDecimal(netWorth),
+		TotalCash:        model.MoneyFromDecimal(totalCash),
 		DTIRatio:         dtiRatio,
 		HealthScore:      healthScoreVal,
 		EFCoverageMonths: efCoverageMonths,
@@ -368,27 +374,27 @@ func (s *closingService) GetClosingDetail(ctx context.Context, userID string, mo
 		Snapshot: snapshot,
 		TotalIncome: dto.MoneyValue{
 			Value:          snapshot.TotalIncome,
-			FormattedValue: formatRupiah(snapshot.TotalIncome),
+			FormattedValue: model.FormatRupiahMoney(snapshot.TotalIncome),
 		},
 		TotalExpense: dto.MoneyValue{
 			Value:          snapshot.TotalExpense,
-			FormattedValue: formatRupiah(snapshot.TotalExpense),
+			FormattedValue: model.FormatRupiahMoney(snapshot.TotalExpense),
 		},
 		NetWorth: dto.MoneyValue{
 			Value:          snapshot.NetWorth,
-			FormattedValue: formatRupiah(snapshot.NetWorth),
+			FormattedValue: model.FormatRupiahMoney(snapshot.NetWorth),
 		},
 		TotalAssets: dto.MoneyValue{
 			Value:          snapshot.TotalAssets,
-			FormattedValue: formatRupiah(snapshot.TotalAssets),
+			FormattedValue: model.FormatRupiahMoney(snapshot.TotalAssets),
 		},
 		TotalDebts: dto.MoneyValue{
 			Value:          snapshot.TotalDebts,
-			FormattedValue: formatRupiah(snapshot.TotalDebts),
+			FormattedValue: model.FormatRupiahMoney(snapshot.TotalDebts),
 		},
 		TotalCash: dto.MoneyValue{
 			Value:          snapshot.TotalCash,
-			FormattedValue: formatRupiah(snapshot.TotalCash),
+			FormattedValue: model.FormatRupiahMoney(snapshot.TotalCash),
 		},
 		DTIRatio:         snapshot.DTIRatio,
 		EFCoverageMonths: snapshot.EFCoverageMonths,
@@ -445,18 +451,25 @@ func (s *closingService) ListClosings(ctx context.Context, userID string) ([]dto
 	for rows.Next() {
 		var mc dto.MonthlyClosingResponse
 		var snapshot dto.ClosingSnapshot
+		var totalIncome, totalExpense, netWorth, totalAssets, totalDebts, totalCash float64
 		err = rows.Scan(
-			&mc.ID, &mc.Month, &snapshot.TotalIncome, &snapshot.TotalExpense, &snapshot.NetWorth,
-			&snapshot.TotalAssets, &snapshot.TotalDebts, &snapshot.TotalCash, &mc.DTIRatio, &mc.EFCoverageMonths,
+			&mc.ID, &mc.Month, &totalIncome, &totalExpense, &netWorth,
+			&totalAssets, &totalDebts, &totalCash, &mc.DTIRatio, &mc.EFCoverageMonths,
 			&mc.IsConfirmed, &mc.Notes,
 		)
 		if err == nil {
-			mc.TotalIncome = dto.MoneyValue{Value: snapshot.TotalIncome, FormattedValue: formatRupiah(snapshot.TotalIncome)}
-			mc.TotalExpense = dto.MoneyValue{Value: snapshot.TotalExpense, FormattedValue: formatRupiah(snapshot.TotalExpense)}
-			mc.NetWorth = dto.MoneyValue{Value: snapshot.NetWorth, FormattedValue: formatRupiah(snapshot.NetWorth)}
-			mc.TotalAssets = dto.MoneyValue{Value: snapshot.TotalAssets, FormattedValue: formatRupiah(snapshot.TotalAssets)}
-			mc.TotalDebts = dto.MoneyValue{Value: snapshot.TotalDebts, FormattedValue: formatRupiah(snapshot.TotalDebts)}
-			mc.TotalCash = dto.MoneyValue{Value: snapshot.TotalCash, FormattedValue: formatRupiah(snapshot.TotalCash)}
+			snapshot.TotalIncome = model.MoneyFromDecimal(totalIncome)
+			snapshot.TotalExpense = model.MoneyFromDecimal(totalExpense)
+			snapshot.NetWorth = model.MoneyFromDecimal(netWorth)
+			snapshot.TotalAssets = model.MoneyFromDecimal(totalAssets)
+			snapshot.TotalDebts = model.MoneyFromDecimal(totalDebts)
+			snapshot.TotalCash = model.MoneyFromDecimal(totalCash)
+			mc.TotalIncome = dto.MoneyValue{Value: snapshot.TotalIncome, FormattedValue: model.FormatRupiahMoney(snapshot.TotalIncome)}
+			mc.TotalExpense = dto.MoneyValue{Value: snapshot.TotalExpense, FormattedValue: model.FormatRupiahMoney(snapshot.TotalExpense)}
+			mc.NetWorth = dto.MoneyValue{Value: snapshot.NetWorth, FormattedValue: model.FormatRupiahMoney(snapshot.NetWorth)}
+			mc.TotalAssets = dto.MoneyValue{Value: snapshot.TotalAssets, FormattedValue: model.FormatRupiahMoney(snapshot.TotalAssets)}
+			mc.TotalDebts = dto.MoneyValue{Value: snapshot.TotalDebts, FormattedValue: model.FormatRupiahMoney(snapshot.TotalDebts)}
+			mc.TotalCash = dto.MoneyValue{Value: snapshot.TotalCash, FormattedValue: model.FormatRupiahMoney(snapshot.TotalCash)}
 			list = append(list, mc)
 		}
 	}
@@ -464,7 +477,7 @@ func (s *closingService) ListClosings(ctx context.Context, userID string) ([]dto
 	return list, nil
 }
 
-func calculateDelta(oldVal, newVal float64) dto.DeltaValue {
+func calculateDelta(oldVal, newVal model.Money) dto.DeltaValue {
 	diff := newVal - oldVal
 	direction := "flat"
 	if diff > 0 {
@@ -474,13 +487,13 @@ func calculateDelta(oldVal, newVal float64) dto.DeltaValue {
 	}
 
 	pct := 0.0
-	if oldVal > 0 {
-		pct = (diff / oldVal) * 100.0
+	if oldVal != 0 {
+		pct = (float64(diff) / float64(oldVal)) * 100.0
 	}
 
 	return dto.DeltaValue{
 		AbsoluteChange:          diff,
-		FormattedAbsoluteChange: formatRupiah(diff),
+		FormattedAbsoluteChange: model.FormatRupiahMoney(diff),
 		PercentageChange:        pct,
 		Direction:               direction,
 	}

@@ -6,11 +6,11 @@ import "time"
 type ScenarioChangeParam struct {
 	DebtID             string  `json:"debt_id,omitempty"`
 	CategoryID         string  `json:"category_id,omitempty"`
-	MonthlyExtraAmount float64 `json:"monthly_extra_amount,omitempty"`
+	MonthlyExtraAmount int64   `json:"monthly_extra_amount,omitempty"`
 	Percentage         float64 `json:"percentage,omitempty"`
-	Amount             float64 `json:"amount,omitempty"`
+	Amount             int64   `json:"amount,omitempty"`
 	Month              string  `json:"month,omitempty"` // YYYY-MM
-	MonthlyAmount      float64 `json:"monthly_amount,omitempty"`
+	MonthlyAmount      int64   `json:"monthly_amount,omitempty"`
 }
 
 // ScenarioChange represents a single simulated change
@@ -21,18 +21,25 @@ type ScenarioChange struct {
 
 // MetricState represents the comparison state for a single metric
 type MetricState struct {
+	Base     int64  `json:"base"`
+	Scenario int64  `json:"scenario"`
+	Impact   int64  `json:"impact"`
+	Severity string `json:"severity"` // positive (green), neutral (blue/gray), negative (red/yellow)
+}
+
+type RatioMetricState struct {
 	Base     float64 `json:"base"`
 	Scenario float64 `json:"scenario"`
 	Impact   float64 `json:"impact"`
-	Severity string  `json:"severity"` // positive (green), neutral (blue/gray), negative (red/yellow)
+	Severity string  `json:"severity"`
 }
 
 // ScenarioResult represents the simulated side-by-side impact comparison
 type ScenarioResult struct {
-	EndingBalance MetricState `json:"ending_balance"`
-	TotalDebts    MetricState `json:"total_debts"`
-	EFCoverage    MetricState `json:"ef_coverage"`
-	CashRunway    MetricState `json:"cash_runway"`
+	EndingBalance MetricState      `json:"ending_balance"`
+	TotalDebts    MetricState      `json:"total_debts"`
+	EFCoverage    RatioMetricState `json:"ef_coverage"`
+	CashRunway    RatioMetricState `json:"cash_runway"`
 }
 
 // SimulateScenarioRequest is the request body for simulation

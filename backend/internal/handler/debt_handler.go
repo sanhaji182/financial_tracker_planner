@@ -200,9 +200,9 @@ func (h *DebtHandler) SimulateAvalanche(c *gin.Context) {
 	userID := c.GetString("user_id")
 
 	extraStr := c.Query("extra")
-	var extra float64
+	var extra int64
 	if extraStr != "" {
-		val, err := strconv.ParseFloat(extraStr, 64)
+		val, err := strconv.ParseInt(extraStr, 10, 64)
 		if err == nil {
 			extra = val
 		}

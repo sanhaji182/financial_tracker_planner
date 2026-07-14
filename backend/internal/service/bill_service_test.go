@@ -95,7 +95,7 @@ func TestBillService(t *testing.T) {
 			t.Errorf("expected name %s, got %s", req.Name, resp.Name)
 		}
 		if resp.Amount != req.Amount {
-			t.Errorf("expected amount %f, got %f", req.Amount, resp.Amount)
+			t.Errorf("expected amount %d, got %d", req.Amount, resp.Amount)
 		}
 		if resp.Status != "unpaid" {
 			t.Errorf("expected initial status unpaid, got %s", resp.Status)
@@ -129,7 +129,7 @@ func TestBillService(t *testing.T) {
 		}
 
 		if resp.RemainingAmount != 0 {
-			t.Errorf("expected remaining amount 0, got %f", resp.RemainingAmount)
+			t.Errorf("expected remaining amount 0, got %d", resp.RemainingAmount)
 		}
 
 		// Check account balance decreased
@@ -139,7 +139,7 @@ func TestBillService(t *testing.T) {
 		}
 		// 2,000,000 - 450,000 = 1,550,000
 		if acc.Balance != 1550000 {
-			t.Errorf("expected balance 1550000, got %f", acc.Balance)
+			t.Errorf("expected balance 1550000, got %d", acc.Balance)
 		}
 
 		// Check bill status updated to paid

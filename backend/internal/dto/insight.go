@@ -5,15 +5,15 @@ import "time"
 // InsightDataCategory holds category breakdown data
 type InsightDataCategory struct {
 	Name   string  `json:"name"`
-	Amount float64 `json:"amount"`
+	Amount int64   `json:"amount"`
 	Change float64 `json:"change,omitempty"` // percentage change vs avg
 }
 
 // InsightDataCashflow holds weekly spending breakdown
 type InsightDataCashflow struct {
-	Week    string  `json:"week"` // "Minggu ke-1", etc.
-	Amount  float64 `json:"amount"`
-	IsSpike bool    `json:"is_spike"`
+	Week    string `json:"week"` // "Minggu ke-1", etc.
+	Amount  int64  `json:"amount"`
+	IsSpike bool   `json:"is_spike"`
 }
 
 // InsightData is a flexible JSON payload for supporting data
@@ -23,12 +23,12 @@ type InsightData struct {
 	// For cashflow_risk
 	Cashflow []InsightDataCashflow `json:"cashflow,omitempty"`
 	// For networth_trend
-	CurrentNetWorth  float64 `json:"current_net_worth,omitempty"`
-	PreviousNetWorth float64 `json:"previous_net_worth,omitempty"`
+	CurrentNetWorth  int64   `json:"current_net_worth,omitempty"`
+	PreviousNetWorth int64   `json:"previous_net_worth,omitempty"`
 	ChangePercent    float64 `json:"change_percent,omitempty"`
 	// For subscription_change
-	CurrentCost  float64 `json:"current_cost,omitempty"`
-	PreviousCost float64 `json:"previous_cost,omitempty"`
+	CurrentCost  int64 `json:"current_cost,omitempty"`
+	PreviousCost int64 `json:"previous_cost,omitempty"`
 	// For recommendation
 	OverBudgetCategories []string `json:"over_budget_categories,omitempty"`
 }

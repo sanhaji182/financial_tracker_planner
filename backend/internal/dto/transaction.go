@@ -49,7 +49,7 @@ type TransactionResponse struct {
 	CategoryName      *string                         `json:"category_name,omitempty"`
 	CategoryIcon      *string                         `json:"category_icon,omitempty"`
 	CategoryColor     *string                         `json:"category_color,omitempty"`
-	Type              string                          `json:"type"` // income, expense, transfer
+	Type              string                          `json:"type"`   // income, expense, transfer
 	Amount            int64                           `json:"amount"` // Changed from float64
 	FormattedAmount   string                          `json:"formatted_amount"`
 	Date              time.Time                       `json:"date"`
@@ -212,17 +212,17 @@ type SplitTransactionRequest struct {
 }
 
 type ParsedOCRItem struct {
-	Name     string  `json:"name"`
-	Quantity int     `json:"quantity"`
-	Price    float64 `json:"price"`
-	Total    float64 `json:"total"`
+	Name     string `json:"name"`
+	Quantity int    `json:"quantity"`
+	Price    int64  `json:"price"`
+	Total    int64  `json:"total"`
 }
 
 type ParsedOCRData struct {
 	MerchantName  string          `json:"merchant_name"`
 	Date          string          `json:"date"`
 	Items         []ParsedOCRItem `json:"items"`
-	Total         float64         `json:"total"`
+	Total         int64           `json:"total"`
 	PaymentMethod string          `json:"payment_method"`
 }
 
@@ -234,11 +234,11 @@ type OCRResponse struct {
 }
 
 type ParsedPDFTransaction struct {
-	Date        string  `json:"date"`
-	Description string  `json:"description"`
-	Debit       float64 `json:"debit"`
-	Credit      float64 `json:"credit"`
-	Balance     float64 `json:"balance"`
+	Date        string `json:"date"`
+	Description string `json:"description"`
+	Debit       int64  `json:"debit"`
+	Credit      int64  `json:"credit"`
+	Balance     int64  `json:"balance"`
 }
 
 type PDFStatementResponse struct {
@@ -260,7 +260,7 @@ type DocumentUploadParseResponse struct {
 
 type ConfirmDraftTransactionRequest struct {
 	Date        time.Time `json:"date" binding:"required"`
-	Amount      float64   `json:"amount" binding:"required,gt=0"`
+	Amount      int64     `json:"amount" binding:"required,gt=0"`
 	Type        string    `json:"type" binding:"required,oneof=income expense transfer"`
 	AccountID   string    `json:"account_id" binding:"required"`
 	CategoryID  *string   `json:"category_id"`
