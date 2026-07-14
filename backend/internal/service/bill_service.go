@@ -206,6 +206,7 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 
 	// 1. Fetch Bill in Tx context
 	var b model.Bill
+	var billAmount float64
 	query := `
 		SELECT id, user_id, name, amount, category_id, account_id, frequency, due_day, due_date,
 		       next_due_date, custom_interval_days, auto_remind, reminder_days_before, status, is_active, notes
@@ -213,22 +214,24 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 		WHERE b.id = $1 AND b.user_id = $2 AND b.deleted_at IS NULL FOR UPDATE
 	`
 	err = tx.QueryRow(ctx, query, billID, ownerID).Scan(
-		&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.AccountID, &b.Frequency, &b.DueDay, &b.DueDate,
+		&b.ID, &b.UserID, &b.Name, &billAmount, &b.CategoryID, &b.AccountID, &b.Frequency, &b.DueDay, &b.DueDate,
 		&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore, &b.Status, &b.IsActive, &b.Notes,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch bill for payment: %w", err)
 	}
+	b.Amount = model.MoneyFromDecimal(billAmount)
 
 	// 2. Fetch already paid sum for this specific bill instance
-	var paidSum int64
+	var paidSumDecimal float64
 	err = tx.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM bill_payments WHERE bill_id = $1
-	`, billID).Scan(&paidSum)
+	`, billID).Scan(&paidSumDecimal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existing payments: %w", err)
 	}
 
+	paidSum := model.MoneyFromDecimal(paidSumDecimal)
 	remainingAmountBefore := b.Amount - paidSum
 	if remainingAmountBefore <= 0 {
 		return nil, fmt.Errorf("bill is already fully paid")
@@ -256,7 +259,7 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 
 	_, err = tx.Exec(ctx, `
 		UPDATE accounts SET balance = balance - $1, updated_at = NOW() WHERE id = $2
-	`, req.Amount, req.AccountID)
+	`, model.DecimalFromMoney(req.Amount), req.AccountID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to deduct account balance: %w", err)
 	}
@@ -284,7 +287,7 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 		INSERT INTO transactions (user_id, account_id, category_id, type, amount, date, status, notes)
 		VALUES ($1, $2, $3, 'expense', $4, $5, 'confirmed', $6)
 		RETURNING id
-	`, b.UserID, req.AccountID, categoryID, req.Amount, req.PaymentDate, txNotes).Scan(&txID)
+	`, b.UserID, req.AccountID, categoryID, model.DecimalFromMoney(req.Amount), req.PaymentDate, txNotes).Scan(&txID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to write ledger transaction: %w", err)
 	}
@@ -320,7 +323,7 @@ func (s *billService) PayBill(ctx context.Context, userID string, billID string,
 					user_id, name, amount, category_id, account_id, frequency, due_day, due_date,
 					next_due_date, custom_interval_days, auto_remind, reminder_days_before, status, is_active, notes
 				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'unpaid', $13, $14)
-			`, b.UserID, b.Name, b.Amount, b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
+			`, b.UserID, b.Name, model.DecimalFromMoney(b.Amount), b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
 				nextDueDate, b.CustomIntervalDays, b.AutoRemind, b.ReminderDaysBefore, b.IsActive, b.Notes,
 			)
 			if err != nil {
