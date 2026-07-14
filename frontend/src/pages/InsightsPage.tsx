@@ -138,8 +138,8 @@ function InsightCard({ insight }: { insight: MonthlyInsight }) {
             </span>
           </div>
 
-          <h3 className="text-sm font-semibold text-gray-900 leading-snug">{insight.title}</h3>
-          <p className="text-sm text-gray-600 mt-1 leading-relaxed">{insight.description}</p>
+          <h3 className="text-sm font-bold text-slate-900 dark:text-white leading-snug">{insight.title}</h3>
+          <p className="text-sm text-slate-650 dark:text-slate-400 mt-1 leading-relaxed">{insight.description}</p>
         </div>
 
         {/* Expand toggle */}
@@ -154,12 +154,12 @@ function InsightCard({ insight }: { insight: MonthlyInsight }) {
           {/* Category bar chart (top_categories, spending_increase) */}
           {hasCategories && (
             <div>
-              <p className="text-xs font-semibold text-gray-500 mb-3 uppercase tracking-wide">Detail Pengeluaran per Kategori</p>
+              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400 mb-3 uppercase tracking-wide">Detail Pengeluaran per Kategori</p>
               <div className="space-y-2">
                 {insight.data.categories!.map(cat => (
                   <div key={cat.name} className="flex items-center gap-3">
-                    <span className="text-sm text-gray-700 w-28 truncate font-medium">{cat.name}</span>
-                    <div className="flex-1 bg-gray-200 rounded-full h-2 relative">
+                    <span className="text-sm text-slate-700 dark:text-slate-300 w-28 truncate font-medium">{cat.name}</span>
+                    <div className="flex-1 bg-slate-200 dark:bg-slate-800 rounded-full h-2 relative">
                       <div
                         className="h-2 rounded-full transition-all duration-500"
                         style={{
@@ -168,7 +168,7 @@ function InsightCard({ insight }: { insight: MonthlyInsight }) {
                         }}
                       />
                     </div>
-                    <span className="text-sm font-semibold text-gray-900 w-20 text-right">{formatRupiah(cat.amount)}</span>
+                    <span className="text-sm font-semibold text-slate-900 dark:text-white w-20 text-right">{formatRupiah(cat.amount)}</span>
                     {cat.change !== undefined && cat.change !== 0 && (
                       <span className={`text-xs font-medium w-14 text-right ${cat.change > 0 ? 'text-red-500' : 'text-emerald-500'}`}>
                         {cat.change > 0 ? '+' : ''}{cat.change.toFixed(1)}%
@@ -207,13 +207,13 @@ function InsightCard({ insight }: { insight: MonthlyInsight }) {
           {/* Net worth numbers */}
           {hasNetWorth && (
             <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-3 bg-white rounded-lg border border-gray-100">
-                <p className="text-xs text-gray-500 mb-1">Bulan Ini</p>
-                <p className="text-lg font-bold text-gray-900">{formatRupiah(insight.data.current_net_worth ?? 0)}</p>
+              <div className="text-center p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Bulan Ini</p>
+                <p className="text-lg font-bold text-slate-900 dark:text-white">{formatRupiah(insight.data.current_net_worth ?? 0)}</p>
               </div>
-              <div className="text-center p-3 bg-white rounded-lg border border-gray-100">
-                <p className="text-xs text-gray-500 mb-1">Bulan Lalu</p>
-                <p className="text-lg font-bold text-gray-500">{formatRupiah(insight.data.previous_net_worth ?? 0)}</p>
+              <div className="text-center p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Bulan Lalu</p>
+                <p className="text-lg font-bold text-slate-500 dark:text-slate-450">{formatRupiah(insight.data.previous_net_worth ?? 0)}</p>
               </div>
               {(insight.data.change_percent ?? 0) !== 0 && (
                 <div className="col-span-2 text-center">
@@ -228,13 +228,13 @@ function InsightCard({ insight }: { insight: MonthlyInsight }) {
           {/* Subscription cost */}
           {hasSubCost && (
             <div className="grid grid-cols-2 gap-4">
-              <div className="text-center p-3 bg-white rounded-lg border border-gray-100">
-                <p className="text-xs text-gray-500 mb-1">Bulan Ini</p>
-                <p className="text-lg font-bold text-gray-900">{formatRupiah(insight.data.current_cost ?? 0)}/bln</p>
+              <div className="text-center p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Bulan Ini</p>
+                <p className="text-lg font-bold text-slate-900 dark:text-white">{formatRupiah(insight.data.current_cost ?? 0)}/bln</p>
               </div>
-              <div className="text-center p-3 bg-white rounded-lg border border-gray-100">
-                <p className="text-xs text-gray-500 mb-1">Bulan Lalu</p>
-                <p className="text-lg font-bold text-gray-500">{formatRupiah(insight.data.previous_cost ?? 0)}/bln</p>
+              <div className="text-center p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg">
+                <p className="text-xs text-slate-500 dark:text-slate-400 mb-1">Bulan Lalu</p>
+                <p className="text-lg font-bold text-slate-500 dark:text-slate-450">{formatRupiah(insight.data.previous_cost ?? 0)}/bln</p>
               </div>
             </div>
           )}
@@ -313,23 +313,23 @@ export const InsightsPage: React.FC = () => {
       {/* Page Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Zap className="h-6 w-6 text-indigo-500" />
             Monthly Insight Engine
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             Analisis otomatis pola keuangan dan rekomendasi aksi bulan ini
           </p>
         </div>
         <div className="flex items-center gap-3">
           {/* Month Picker */}
           <div className="relative">
-            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400 pointer-events-none" />
+            <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 dark:text-slate-500 pointer-events-none" />
             <select
               id="month-picker"
               value={selectedMonth}
               onChange={(e) => setSelectedMonth(e.target.value)}
-              className="pl-9 pr-4 py-2 text-sm border border-gray-200 rounded-lg bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300 appearance-none cursor-pointer"
+              className="pl-9 pr-4 py-2 text-sm border border-slate-200 dark:border-slate-800 rounded-lg bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 appearance-none cursor-pointer"
             >
               {months.map(m => (
                 <option key={m} value={m}>

@@ -196,11 +196,11 @@ export const ScenariosPage: React.FC = () => {
     <div className="space-y-6 p-6 max-w-5xl mx-auto">
       {/* Page Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
           <Zap className="h-6 w-6 text-amber-500" />
           What-If Scenario Planner
         </h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
           Simulasikan dampak keputusan finansial besar terhadap saldo, utang, dan ketahanan kas Anda secara instan.
         </p>
       </div>
@@ -209,12 +209,12 @@ export const ScenariosPage: React.FC = () => {
         {/* Left Side: Builder Form */}
         <div className="lg:col-span-2 space-y-6">
           <Card className="p-5 space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-gray-100">
-              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+            <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-slate-800">
+              <h2 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
                 🛠️ Scenario Builder
               </h2>
               {changes.length > 0 && (
-                <Button variant="ghost" size="sm" onClick={handleReset} className="text-gray-500 flex items-center gap-1">
+                <Button variant="ghost" size="sm" onClick={handleReset} className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
                   <RotateCcw className="h-3 w-3" />
                   Mulai Ulang
                 </Button>
@@ -222,9 +222,9 @@ export const ScenariosPage: React.FC = () => {
             </div>
 
             {changes.length === 0 ? (
-              <div className="text-center py-10 border-2 border-dashed border-gray-200 rounded-xl">
-                <Lightbulb className="h-10 w-10 text-gray-300 mx-auto mb-3" />
-                <p className="text-sm text-gray-500">Belum ada simulasi perubahan anggaran.</p>
+              <div className="text-center py-10 border-2 border-dashed border-slate-200 dark:border-slate-850 rounded-xl">
+                <Lightbulb className="h-10 w-10 text-slate-350 dark:text-slate-600 mx-auto mb-3" />
+                <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada simulasi perubahan anggaran.</p>
                 <Button variant="secondary" size="sm" onClick={handleAddChange} className="mt-3 flex items-center gap-1 mx-auto">
                   <Plus className="h-4 w-4" />
                   Tambah Perubahan
@@ -249,7 +249,7 @@ export const ScenariosPage: React.FC = () => {
                         <select
                           value={change.type}
                           onChange={(e) => handleUpdateChange(index, { type: e.target.value as any })}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
                           <option value="large_purchase">📦 Pembelian Besar (Sekali Bayar)</option>
                           <option value="extra_debt_payment">💳 Cicilan Ekstra (Bulanan)</option>
@@ -270,7 +270,7 @@ export const ScenariosPage: React.FC = () => {
                               placeholder="Contoh: 15000000"
                               value={change.params.amount || ''}
                               onChange={(e) => handleUpdateParams(index, { amount: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white focus:outline-none"
+                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             />
                           </div>
                         )}
@@ -282,7 +282,7 @@ export const ScenariosPage: React.FC = () => {
                               <select
                                 value={change.params.debt_id || ''}
                                 onChange={(e) => handleUpdateParams(index, { debt_id: e.target.value })}
-                                className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                               >
                                 <option value="">-- Pilih --</option>
                                 {debts.map(d => (
@@ -297,7 +297,7 @@ export const ScenariosPage: React.FC = () => {
                                 placeholder="Rp/bulan"
                                 value={change.params.monthly_extra_amount || ''}
                                 onChange={(e) => handleUpdateParams(index, { monthly_extra_amount: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                               />
                             </div>
                           </div>
@@ -311,7 +311,7 @@ export const ScenariosPage: React.FC = () => {
                               placeholder="Contoh: -15 (untuk turun) atau 10 (naik)"
                               value={change.params.percentage || ''}
                               onChange={(e) => handleUpdateParams(index, { percentage: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             />
                           </div>
                         )}
@@ -324,7 +324,7 @@ export const ScenariosPage: React.FC = () => {
                               placeholder="Contoh: 1000000"
                               value={change.params.monthly_amount || ''}
                               onChange={(e) => handleUpdateParams(index, { monthly_amount: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             />
                           </div>
                         )}
@@ -337,7 +337,7 @@ export const ScenariosPage: React.FC = () => {
                               placeholder="Contoh: 150000"
                               value={change.params.monthly_amount || ''}
                               onChange={(e) => handleUpdateParams(index, { monthly_amount: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             />
                           </div>
                         )}
@@ -349,7 +349,7 @@ export const ScenariosPage: React.FC = () => {
                               <select
                                 value={change.params.category_id || ''}
                                 onChange={(e) => handleUpdateParams(index, { category_id: e.target.value })}
-                                className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                               >
                                 <option value="">-- Pilih --</option>
                                 {categories.map(c => (
@@ -364,7 +364,7 @@ export const ScenariosPage: React.FC = () => {
                                 placeholder="Rp/bulan"
                                 value={change.params.monthly_amount || ''}
                                 onChange={(e) => handleUpdateParams(index, { monthly_amount: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                               />
                             </div>
                           </div>
@@ -447,14 +447,14 @@ export const ScenariosPage: React.FC = () => {
 
               {/* Save Scenario Form (Only visible to Owner) */}
               {isOwner && (
-                <form onSubmit={handleSave} className="pt-4 border-t border-gray-100 flex flex-col sm:flex-row gap-3">
+                <form onSubmit={handleSave} className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row gap-3">
                   <div className="flex-1">
                     <input
                       type="text"
                       placeholder="Simpan skenario ini sebagai... (contoh: KPR Mobil vs Menabung)"
                       value={scenarioName}
                       onChange={(e) => setScenarioName(e.target.value)}
-                      className="w-full text-sm border border-gray-200 rounded-lg p-2.5 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                      className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                     />
                   </div>
                   <Button
@@ -480,25 +480,25 @@ export const ScenariosPage: React.FC = () => {
         {/* Right Side: Saved Scenarios List */}
         <div className="space-y-6">
           <Card className="p-5 space-y-4">
-            <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+            <h2 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
               📂 Skenario Tersimpan
             </h2>
 
             {((savedScenarios || []).length === 0) ? (
-              <p className="text-xs text-gray-400 py-6 text-center">Belum ada skenario yang disimpan.</p>
+              <p className="text-xs text-slate-400 dark:text-slate-500 py-6 text-center">Belum ada skenario yang disimpan.</p>
             ) : (
               <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
                 {(savedScenarios || []).map(sc => (
                   <div
                     key={sc.id}
-                    className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-2 hover:border-indigo-100 transition-colors"
+                    className="p-3 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-100 dark:border-slate-800 space-y-2 hover:border-indigo-100 dark:hover:border-indigo-900/50 transition-colors"
                   >
                     <div className="flex justify-between items-start">
-                      <h3 className="text-xs font-bold text-gray-800 leading-snug">{sc.name}</h3>
+                      <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-snug">{sc.name}</h3>
                       {isOwner && (
                         <button
                           onClick={() => handleDeleteScenario(sc.id)}
-                          className="text-gray-400 hover:text-red-500 transition-colors"
+                          className="text-slate-400 dark:text-slate-500 hover:text-red-500 transition-colors"
                           title="Hapus skenario"
                         >
                           <Trash className="h-3 w-3" />
@@ -506,7 +506,7 @@ export const ScenariosPage: React.FC = () => {
                       )}
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-gray-400 flex items-center gap-1">
+                      <span className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
                         {new Date(sc.created_at).toLocaleDateString('id-ID', {
                           day: 'numeric',
@@ -516,7 +516,7 @@ export const ScenariosPage: React.FC = () => {
                       </span>
                       <button
                         onClick={() => handleLoadScenario(sc)}
-                        className="text-[11px] font-semibold text-indigo-600 hover:underline flex items-center gap-0.5"
+                        className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
                       >
                         Buka <ArrowRight className="h-3 w-3" />
                       </button>

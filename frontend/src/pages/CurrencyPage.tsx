@@ -77,21 +77,21 @@ export const CurrencyPage: React.FC = () => {
     <div className="space-y-6 p-6 max-w-3xl mx-auto">
       {/* Header */}
       <div>
-        <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
           <Coins className="h-6 w-6 text-amber-500" />
           Pengaturan Kurs Mata Uang (Multi-Currency)
         </h1>
-        <p className="text-sm text-gray-500 mt-1">
+        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
           Kelola kurs pertukaran mata uang asing (USD, SGD, EUR) ke Rupiah untuk memantau total aset, utang, dan kekayaan bersih Anda secara akurat.
         </p>
       </div>
 
       <Card className="p-5 space-y-4">
-        <div className="flex justify-between items-center pb-2 border-b border-gray-100">
-          <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+        <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-slate-800">
+          <h2 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
             💱 Nilai Tukar (IDR Base)
           </h2>
-          <Button variant="ghost" size="sm" onClick={loadRates} className="text-gray-500 flex items-center gap-1">
+          <Button variant="ghost" size="sm" onClick={loadRates} className="text-slate-500 dark:text-slate-450 flex items-center gap-1">
             <RefreshCw className="h-3.5 w-3.5" />
             Muat Ulang
           </Button>
@@ -110,33 +110,33 @@ export const CurrencyPage: React.FC = () => {
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead>
-                <tr className="border-b border-gray-100 text-gray-400 font-medium">
+                <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 dark:text-slate-500 font-medium">
                   <th className="py-3 px-2">Kode</th>
                   <th className="py-3 px-2">Nama Mata Uang</th>
                   <th className="py-3 px-2 text-right">Nilai Kurs (1 Unit ke IDR)</th>
                   {isOwner && <th className="py-3 px-2 text-right">Aksi</th>}
                 </tr>
               </thead>
-              <tbody className="divide-y divide-gray-50">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                 {currencies.map(cur => (
-                  <tr key={cur.code} className="hover:bg-slate-50/30 transition-colors">
-                    <td className="py-4 px-2 font-bold text-slate-800 flex items-center gap-1.5">
-                      <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">
+                  <tr key={cur.code} className="hover:bg-slate-50/30 dark:hover:bg-slate-900/10 transition-colors">
+                    <td className="py-4 px-2 font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                      <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 px-2 py-0.5 rounded font-mono">
                         {cur.code}
                       </span>
                     </td>
-                    <td className="py-4 px-2 text-gray-600">
+                    <td className="py-4 px-2 text-slate-600 dark:text-slate-400">
                       {cur.name} ({cur.symbol})
                     </td>
-                    <td className="py-4 px-2 text-right font-semibold text-gray-900">
+                    <td className="py-4 px-2 text-right font-semibold text-slate-900 dark:text-white">
                       {editingCode === cur.code ? (
                         <div className="flex items-center justify-end gap-2">
-                          <span className="text-xs text-gray-400">Rp</span>
+                          <span className="text-xs text-slate-400">Rp</span>
                           <input
                             type="number"
                             value={editRate}
                             onChange={(e) => setEditRate(parseFloat(e.target.value) || 0)}
-                            className="w-28 text-sm text-right border border-gray-300 rounded p-1 bg-white"
+                            className="w-28 text-sm text-right border border-slate-300 dark:border-slate-700 rounded p-1 bg-white dark:bg-slate-900 text-slate-900 dark:text-white"
                           />
                         </div>
                       ) : (
@@ -146,7 +146,7 @@ export const CurrencyPage: React.FC = () => {
                     {isOwner && (
                       <td className="py-4 px-2 text-right">
                         {cur.code === 'IDR' ? (
-                          <span className="text-[10px] text-gray-400 font-mono italic">Base Currency</span>
+                          <span className="text-[10px] text-slate-400 dark:text-slate-500 font-mono italic">Base Currency</span>
                         ) : editingCode === cur.code ? (
                           <div className="flex items-center justify-end gap-2">
                             <Button

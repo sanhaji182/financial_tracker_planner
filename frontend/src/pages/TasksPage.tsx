@@ -206,9 +206,9 @@ export const TasksPage: React.FC = () => {
 										key={task.id} 
 										className={`p-4 transition-colors ${
 											isDone 
-												? 'bg-slate-50/50 dark:bg-slate-900/30 border-slate-100 dark:border-slate-900' 
+												? 'bg-slate-50 dark:bg-slate-900/30 border-slate-200 dark:border-slate-800'
 												: taskOverdue 
-													? 'border-rose-100 bg-rose-50/20 dark:bg-rose-950/10' 
+													? 'border-rose-200 bg-rose-50 dark:border-rose-900/30 dark:bg-rose-950/20'
 													: 'hover:border-slate-300 dark:hover:border-slate-700'
 										}`}
 									>
@@ -237,7 +237,7 @@ export const TasksPage: React.FC = () => {
 														{task.title}
 													</p>
 													
-													<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-slate-400 dark:text-slate-500 font-semibold">
+													<div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-[11px] text-slate-500 dark:text-slate-400 font-semibold">
 														<span className="flex items-center gap-1">
 															<Calendar className="h-3.5 w-3.5" />
 															Jatuh Tempo: <span className={taskOverdue ? 'text-rose-600 dark:text-rose-400 font-bold' : ''}>

@@ -201,11 +201,11 @@ export const AutomationPage: React.FC = () => {
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
             <Zap className="h-6 w-6 text-amber-500" />
             Aturan Otomatisasi (Automation Rules)
           </h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
             Bangun pemicu otomatis untuk notifikasi in-app, Telegram bot, atau pencatatan transaksi berulang keluarga Anda.
           </p>
         </div>
@@ -242,7 +242,7 @@ export const AutomationPage: React.FC = () => {
                     placeholder="Contoh: Warning Saldo BCA Rendah"
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                    className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   />
                 </div>
 
@@ -252,7 +252,7 @@ export const AutomationPage: React.FC = () => {
                   <select
                     value={triggerType}
                     onChange={(e) => setTriggerType(e.target.value as any)}
-                    className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                    className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                   >
                     <option value="balance_below">📉 Saldo Akun di Bawah Batas</option>
                     <option value="bill_due_soon">⏰ Tagihan Jatuh Tempo Dekat</option>
@@ -262,7 +262,7 @@ export const AutomationPage: React.FC = () => {
                 </div>
 
                 {/* Condition settings based on trigger */}
-                <div className="p-3 bg-slate-50 rounded-lg border border-slate-100 space-y-3">
+                <div className="p-3 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-200 dark:border-slate-800 space-y-3">
                   {triggerType === 'balance_below' && (
                     <>
                       <div>
@@ -271,7 +271,7 @@ export const AutomationPage: React.FC = () => {
                           required
                           value={accountId}
                           onChange={(e) => setAccountId(e.target.value)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
                           <option value="">-- Pilih --</option>
                           {accounts.map(a => (
@@ -287,7 +287,7 @@ export const AutomationPage: React.FC = () => {
                           placeholder="Batas nilai minimal"
                           value={threshold || ''}
                           onChange={(e) => setThreshold(parseFloat(e.target.value) || 0)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                     </>
@@ -316,7 +316,7 @@ export const AutomationPage: React.FC = () => {
                           required
                           value={categoryId}
                           onChange={(e) => setCategoryId(e.target.value)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         >
                           <option value="">-- Pilih --</option>
                           {categories.map(c => (
@@ -333,7 +333,7 @@ export const AutomationPage: React.FC = () => {
                           required
                           value={percentage}
                           onChange={(e) => setPercentage(parseFloat(e.target.value) || 80)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                     </>
@@ -347,7 +347,7 @@ export const AutomationPage: React.FC = () => {
                           <select
                             value={frequency}
                             onChange={(e) => setFrequency(e.target.value as any)}
-                            className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                            className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="weekly">Mingguan</option>
                             <option value="monthly">Bulanan</option>
@@ -363,7 +363,7 @@ export const AutomationPage: React.FC = () => {
                               required
                               value={dayOfMonth}
                               onChange={(e) => setDayOfMonth(parseInt(e.target.value) || 1)}
-                              className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             />
                           </div>
                         ) : (
@@ -372,7 +372,7 @@ export const AutomationPage: React.FC = () => {
                             <select
                               value={dayOfWeek}
                               onChange={(e) => setDayOfWeek(parseInt(e.target.value) || 1)}
-                              className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                             >
                               <option value="1">Senin</option>
                               <option value="2">Selasa</option>
@@ -413,7 +413,7 @@ export const AutomationPage: React.FC = () => {
                           placeholder="Pesan notifikasi..."
                           value={template}
                           onChange={(e) => setTemplate(e.target.value)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white h-20"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500 h-20"
                         />
                       </div>
                       {actionType === 'send_telegram' && (
@@ -424,7 +424,7 @@ export const AutomationPage: React.FC = () => {
                             placeholder="Gunakan Chat ID keluarga jika beda"
                             value={telegramChat}
                             onChange={(e) => setTelegramChat(e.target.value)}
-                            className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                            className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           />
                         </div>
                       )}
@@ -440,7 +440,7 @@ export const AutomationPage: React.FC = () => {
                             required
                             value={actAccountId}
                             onChange={(e) => setActAccountId(e.target.value)}
-                            className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                            className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="">-- Pilih --</option>
                             {accounts.map(a => (
@@ -454,7 +454,7 @@ export const AutomationPage: React.FC = () => {
                             required
                             value={actCategoryId}
                             onChange={(e) => setActCategoryId(e.target.value)}
-                            className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                            className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                           >
                             <option value="">-- Pilih --</option>
                             {categories.map(c => (
@@ -471,7 +471,7 @@ export const AutomationPage: React.FC = () => {
                           placeholder="Jumlah pengeluaran"
                           value={actAmount || ''}
                           onChange={(e) => setActAmount(parseFloat(e.target.value) || 0)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                       <div>
@@ -481,7 +481,7 @@ export const AutomationPage: React.FC = () => {
                           placeholder="Contoh: Auto Debit BPJS"
                           value={actDescription}
                           onChange={(e) => setActDescription(e.target.value)}
-                          className="w-full text-sm border border-gray-200 rounded-lg p-2 bg-white"
+                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
                         />
                       </div>
                     </>

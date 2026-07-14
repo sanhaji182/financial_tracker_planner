@@ -18,7 +18,7 @@ export const AppShell: React.FC = () => {
         <Sidebar isOpen={sidebarOpen} onClose={() => setSidebarOpen(false)} />
         
         {/* Main Content Area */}
-        <main className="flex-1 lg:pl-[260px] p-4 sm:p-6 pb-20 lg:pb-6 overflow-x-hidden min-h-[calc(100vh-56px)]">
+        <main className="flex-1 lg:pl-[284px] p-4 sm:p-6 lg:p-6 pb-20 lg:pb-8 overflow-x-hidden min-h-[calc(100vh-56px)]">
           <Suspense fallback={<div className="p-6"><TableSkeleton /></div>}>
             <Outlet />
           </Suspense>
