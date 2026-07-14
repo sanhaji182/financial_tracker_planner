@@ -14,7 +14,7 @@ type Transaction struct {
 	CategoryIcon     *string                  `json:"category_icon,omitempty"`     // Join field
 	CategoryColor    *string                  `json:"category_color,omitempty"`     // Join field
 	Type             string                   `json:"type" db:"type"`              // income, expense, transfer
-	Amount           float64                  `json:"amount" db:"amount"`
+	Amount           Money                    `json:"amount" db:"amount"` // Changed from float64
 	Date             time.Time                `json:"date" db:"date"`
 	Description      *string                  `json:"description,omitempty" db:"description"`
 	Notes            *string                  `json:"notes,omitempty" db:"notes"`
@@ -41,7 +41,7 @@ type TransactionSplit struct {
 	TransactionID string    `json:"transaction_id" db:"transaction_id"`
 	CategoryID    string    `json:"category_id" db:"category_id"`
 	CategoryName  string    `json:"category_name,omitempty"` // Join field
-	Amount        float64   `json:"amount" db:"amount"`
+	Amount        Money     `json:"amount" db:"amount"` // Changed from float64
 	Description   *string   `json:"description,omitempty" db:"description"`
 	CreatedAt     time.Time `json:"created_at" db:"created_at"`
 }
@@ -72,7 +72,7 @@ type AuditLog struct {
 }
 
 type TransactionSummary struct {
-	TotalIncome  float64 `json:"total_income"`
-	TotalExpense float64 `json:"total_expense"`
-	Net          float64 `json:"net"`
+	TotalIncome  Money `json:"total_income"` // Changed from float64
+	TotalExpense Money `json:"total_expense"` // Changed from float64
+	Net          Money `json:"net"` // Changed from float64
 }

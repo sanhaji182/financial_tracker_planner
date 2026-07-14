@@ -9,7 +9,7 @@ import (
 
 type CreateTransactionRequest struct {
 	Date            time.Time                       `json:"date" binding:"required"`
-	Amount          float64                         `json:"amount" binding:"required,gt=0"`
+	Amount          int64                           `json:"amount" binding:"required,gt=0"` // Changed from float64
 	Type            string                          `json:"type" binding:"required,oneof=income expense transfer"`
 	AccountID       string                          `json:"account_id" binding:"required"`
 	TargetAccountID *string                         `json:"target_account_id"`
@@ -22,13 +22,13 @@ type CreateTransactionRequest struct {
 
 type CreateTransactionSplitRequest struct {
 	CategoryID  string  `json:"category_id" binding:"required"`
-	Amount      float64 `json:"amount" binding:"required,gt=0"`
+	Amount      int64   `json:"amount" binding:"required,gt=0"` // Changed from float64
 	Description *string `json:"description"`
 }
 
 type UpdateTransactionRequest struct {
 	Date            time.Time `json:"date" binding:"required"`
-	Amount          float64   `json:"amount" binding:"required,gt=0"`
+	Amount          int64     `json:"amount" binding:"required,gt=0"` // Changed from float64
 	Type            string    `json:"type" binding:"required,oneof=income expense transfer"`
 	AccountID       string    `json:"account_id" binding:"required"`
 	TargetAccountID *string   `json:"target_account_id"`
@@ -50,7 +50,7 @@ type TransactionResponse struct {
 	CategoryIcon      *string                         `json:"category_icon,omitempty"`
 	CategoryColor     *string                         `json:"category_color,omitempty"`
 	Type              string                          `json:"type"` // income, expense, transfer
-	Amount            float64                         `json:"amount"`
+	Amount            int64                           `json:"amount"` // Changed from float64
 	FormattedAmount   string                          `json:"formatted_amount"`
 	Date              time.Time                       `json:"date"`
 	Description       *string                         `json:"description,omitempty"`
@@ -72,7 +72,7 @@ type TransactionSplitResponse struct {
 	ID              string  `json:"id"`
 	CategoryID      string  `json:"category_id"`
 	CategoryName    string  `json:"category_name,omitempty"`
-	Amount          float64 `json:"amount"`
+	Amount          int64   `json:"amount"` // Changed from float64
 	FormattedAmount string  `json:"formatted_amount"`
 	Description     *string `json:"description,omitempty"`
 }
@@ -102,12 +102,12 @@ type AuditLogResponse struct {
 }
 
 type TransactionSummaryResponse struct {
-	TotalIncome           float64 `json:"total_income"`
-	FormattedTotalIncome  string  `json:"formatted_total_income"`
-	TotalExpense          float64 `json:"total_expense"`
-	FormattedTotalExpense string  `json:"formatted_total_expense"`
-	Net                   float64 `json:"net"`
-	FormattedNet          string  `json:"formatted_net"`
+	TotalIncome           int64  `json:"total_income"` // Changed from float64
+	FormattedTotalIncome  string `json:"formatted_total_income"`
+	TotalExpense          int64  `json:"total_expense"` // Changed from float64
+	FormattedTotalExpense string `json:"formatted_total_expense"`
+	Net                   int64  `json:"net"` // Changed from float64
+	FormattedNet          string `json:"formatted_net"`
 }
 
 type PaginationMetadata struct {
@@ -130,7 +130,7 @@ func ToTransactionResponse(t *model.Transaction) TransactionResponse {
 			CategoryID:      s.CategoryID,
 			CategoryName:    s.CategoryName,
 			Amount:          s.Amount,
-			FormattedAmount: FormatRupiah(s.Amount),
+			FormattedAmount: model.FormatRupiahMoney(s.Amount),
 			Description:     s.Description,
 		}
 	}
@@ -178,7 +178,7 @@ func ToTransactionResponse(t *model.Transaction) TransactionResponse {
 		CategoryColor:     t.CategoryColor,
 		Type:              t.Type,
 		Amount:            t.Amount,
-		FormattedAmount:   FormatRupiah(t.Amount),
+		FormattedAmount:   model.FormatRupiahMoney(t.Amount),
 		Date:              t.Date,
 		Description:       t.Description,
 		Notes:             t.Notes,
@@ -199,11 +199,11 @@ func ToTransactionResponse(t *model.Transaction) TransactionResponse {
 func ToTransactionSummaryResponse(s *model.TransactionSummary) TransactionSummaryResponse {
 	return TransactionSummaryResponse{
 		TotalIncome:           s.TotalIncome,
-		FormattedTotalIncome:  FormatRupiah(s.TotalIncome),
+		FormattedTotalIncome:  model.FormatRupiahMoney(s.TotalIncome),
 		TotalExpense:          s.TotalExpense,
-		FormattedTotalExpense: FormatRupiah(s.TotalExpense),
+		FormattedTotalExpense: model.FormatRupiahMoney(s.TotalExpense),
 		Net:                   s.Net,
-		FormattedNet:          FormatRupiah(s.Net),
+		FormattedNet:          model.FormatRupiahMoney(s.Net),
 	}
 }
 
