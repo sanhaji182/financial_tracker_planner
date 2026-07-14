@@ -113,7 +113,7 @@ func (s *documentService) UploadDocument(ctx context.Context, userID, fileName s
 		UserID:             ownerID,
 		FileName:           uniqueFileName,
 		FilePath:           filePath,
-		FileURL:            fmt.Sprintf("/uploads/%s", uniqueFileName),
+		FileURL:            fmt.Sprintf("/api/v1/documents/%s/download", docID),
 		FileType:           fileType,
 		FileSize:           fileSize,
 		LinkedEntityType:   entityType,
@@ -133,8 +133,8 @@ func (s *documentService) ListDocuments(ctx context.Context, userID string, enti
 	}
 
 	query := `
-		SELECT id, user_id, file_name, file_path, file_type, file_size, 
-		       COALESCE(linked_entity_type, ''), COALESCE(linked_entity_id::text, ''), 
+		SELECT id, user_id, file_name, file_path, file_type, file_size,
+		       COALESCE(linked_entity_type, ''), COALESCE(linked_entity_id::text, ''),
 		       tags, COALESCE(description, ''), created_at, updated_at
 		FROM documents
 		WHERE user_id = $1 AND deleted_at IS NULL
@@ -172,7 +172,7 @@ func (s *documentService) ListDocuments(ctx context.Context, userID string, enti
 			&linkedType, &linkedIDStr, &tags, &d.Description, &d.CreatedAt, &d.UpdatedAt,
 		)
 		if err == nil {
-			d.FileURL = fmt.Sprintf("/uploads/%s", d.FileName)
+			d.FileURL = fmt.Sprintf("/api/v1/documents/%s/download", d.ID)
 			d.LinkedEntityType = linkedType
 			if linkedIDStr != "" {
 				d.LinkedEntityID = &linkedIDStr
@@ -195,8 +195,8 @@ func (s *documentService) GetDocumentByID(ctx context.Context, userID string, id
 	var linkedType, linkedIDStr string
 	var tags []string
 	err = s.dbPool.QueryRow(ctx, `
-		SELECT id, user_id, file_name, file_path, file_type, file_size, 
-		       COALESCE(linked_entity_type, ''), COALESCE(linked_entity_id::text, ''), 
+		SELECT id, user_id, file_name, file_path, file_type, file_size,
+		       COALESCE(linked_entity_type, ''), COALESCE(linked_entity_id::text, ''),
 		       tags, COALESCE(description, ''), created_at, updated_at
 		FROM documents
 		WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL
@@ -211,7 +211,7 @@ func (s *documentService) GetDocumentByID(ctx context.Context, userID string, id
 		return nil, err
 	}
 
-	d.FileURL = fmt.Sprintf("/uploads/%s", d.FileName)
+	d.FileURL = fmt.Sprintf("/api/v1/documents/%s/download", d.ID)
 	d.LinkedEntityType = linkedType
 	if linkedIDStr != "" {
 		d.LinkedEntityID = &linkedIDStr

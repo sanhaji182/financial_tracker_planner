@@ -1,9 +1,9 @@
-import api, { setRefreshToken } from '../utils/api';
+import api from '../utils/api';
 import type { User } from '../stores/authStore';
 
 export interface AuthResponse {
   access_token: string;
-  refresh_token: string;
+  refresh_token?: string;
   user: User;
 }
 
@@ -36,35 +36,33 @@ export interface ChangePasswordRequest {
   new_password?: string;
 }
 
+let restoreSessionPromise: Promise<AuthResponse> | null = null;
+
 export const authService = {
+  restoreSession(): Promise<AuthResponse> {
+    if (!restoreSessionPromise) {
+      restoreSessionPromise = api
+        .post('/auth/refresh', {})
+        .then((res) => res.data.data as AuthResponse)
+        .finally(() => {
+          restoreSessionPromise = null;
+        });
+    }
+    return restoreSessionPromise;
+  },
+
   async register(req: any): Promise<AuthResponse> {
     const res = await api.post('/auth/register', req);
-    const data = res.data.data as AuthResponse;
-    if (data.refresh_token) {
-      setRefreshToken(data.refresh_token);
-    }
-    return data;
+    return res.data.data as AuthResponse;
   },
 
   async login(req: any): Promise<AuthResponse> {
     const res = await api.post('/auth/login', req);
-    const data = res.data.data as AuthResponse;
-    if (data.refresh_token) {
-      setRefreshToken(data.refresh_token);
-    }
-    return data;
+    return res.data.data as AuthResponse;
   },
 
   async logout(): Promise<void> {
-    try {
-      const refreshToken =
-        typeof window !== 'undefined'
-          ? localStorage.getItem('financial-os-refresh-token')
-          : null;
-      await api.post('/auth/logout', refreshToken ? { refresh_token: refreshToken } : {});
-    } finally {
-      setRefreshToken(null);
-    }
+    await api.post('/auth/logout', {});
   },
 
   async inviteSpouse(email: string): Promise<InviteResponse> {
@@ -74,11 +72,7 @@ export const authService = {
 
   async registerSpouse(req: any): Promise<AuthResponse> {
     const res = await api.post('/auth/register-spouse', req);
-    const data = res.data.data as AuthResponse;
-    if (data.refresh_token) {
-      setRefreshToken(data.refresh_token);
-    }
-    return data;
+    return res.data.data as AuthResponse;
   },
 
   async changePassword(req: any): Promise<void> {

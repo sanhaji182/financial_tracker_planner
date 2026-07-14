@@ -59,6 +59,8 @@ services:
       - JWT_ACCESS_EXPIRY=15m
       - JWT_REFRESH_EXPIRY=168h
       - WORKER_URL=http://worker:8081
+      - WORKER_SECRET=local-worker-secret-change-in-production
+      - CORS_ALLOWED_ORIGINS=http://localhost:5173
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +68,7 @@ services:
         condition: service_healthy
     volumes:
       - ../uploads:/app/uploads
+      - backend-private-data:/app/data
 
   worker:
     build:
@@ -75,11 +78,13 @@ services:
         - http_proxy
         - https_proxy
     container_name: fos-worker
-    ports:
-      - "8081:8081"
+    expose:
+      - "8081"
     environment:
       - APP_ENV=development
       - WORKER_PORT=8081
+      - WORKER_SECRET=local-worker-secret-change-in-production
+      - CORS_ORIGINS=http://localhost:5173,http://localhost:8080
     depends_on:
       - redis
 
@@ -101,3 +106,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  backend-private-data:

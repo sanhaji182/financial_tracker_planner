@@ -8,15 +8,15 @@ import (
 )
 
 type CreateTransactionRequest struct {
-	Date            time.Time                      `json:"date" binding:"required"`
-	Amount          float64                        `json:"amount" binding:"required,gt=0"`
-	Type            string                         `json:"type" binding:"required,oneof=income expense transfer"`
-	AccountID       string                         `json:"account_id" binding:"required"`
-	TargetAccountID *string                        `json:"target_account_id"`
-	CategoryID      *string                        `json:"category_id"`
-	Description     *string                        `json:"description"`
-	Notes           *string                        `json:"notes"`
-	Tags            []string                       `json:"tags"`
+	Date            time.Time                       `json:"date" binding:"required"`
+	Amount          float64                         `json:"amount" binding:"required,gt=0"`
+	Type            string                          `json:"type" binding:"required,oneof=income expense transfer"`
+	AccountID       string                          `json:"account_id" binding:"required"`
+	TargetAccountID *string                         `json:"target_account_id"`
+	CategoryID      *string                         `json:"category_id"`
+	Description     *string                         `json:"description"`
+	Notes           *string                         `json:"notes"`
+	Tags            []string                        `json:"tags"`
 	Splits          []CreateTransactionSplitRequest `json:"splits"`
 }
 
@@ -39,33 +39,33 @@ type UpdateTransactionRequest struct {
 }
 
 type TransactionResponse struct {
-	ID                string                        `json:"id"`
-	UserID            string                        `json:"user_id"`
-	AccountID         string                        `json:"account_id"`
-	AccountName       string                        `json:"account_name,omitempty"`
-	TargetAccountID   *string                       `json:"target_account_id,omitempty"`
-	TargetAccountName *string                       `json:"target_account_name,omitempty"`
-	CategoryID        *string                       `json:"category_id,omitempty"`
-	CategoryName      *string                       `json:"category_name,omitempty"`
-	CategoryIcon      *string                       `json:"category_icon,omitempty"`
-	CategoryColor     *string                       `json:"category_color,omitempty"`
-	Type              string                        `json:"type"` // income, expense, transfer
-	Amount            float64                       `json:"amount"`
-	FormattedAmount   string                        `json:"formatted_amount"`
-	Date              time.Time                     `json:"date"`
-	Description       *string                       `json:"description,omitempty"`
-	Notes             *string                       `json:"notes,omitempty"`
-	IsSplit           bool                          `json:"is_split"`
-	Source            string                        `json:"source"`
-	Status            string                        `json:"status"`
-	Reconciled        bool                          `json:"reconciled"`
-	Currency          string                        `json:"currency"`
-	Tags              []string                      `json:"tags,omitempty"`
-	CreatedAt         time.Time                     `json:"created_at"`
-	UpdatedAt         time.Time                     `json:"updated_at"`
-	Splits            []TransactionSplitResponse    `json:"splits,omitempty"`
+	ID                string                          `json:"id"`
+	UserID            string                          `json:"user_id"`
+	AccountID         string                          `json:"account_id"`
+	AccountName       string                          `json:"account_name,omitempty"`
+	TargetAccountID   *string                         `json:"target_account_id,omitempty"`
+	TargetAccountName *string                         `json:"target_account_name,omitempty"`
+	CategoryID        *string                         `json:"category_id,omitempty"`
+	CategoryName      *string                         `json:"category_name,omitempty"`
+	CategoryIcon      *string                         `json:"category_icon,omitempty"`
+	CategoryColor     *string                         `json:"category_color,omitempty"`
+	Type              string                          `json:"type"` // income, expense, transfer
+	Amount            float64                         `json:"amount"`
+	FormattedAmount   string                          `json:"formatted_amount"`
+	Date              time.Time                       `json:"date"`
+	Description       *string                         `json:"description,omitempty"`
+	Notes             *string                         `json:"notes,omitempty"`
+	IsSplit           bool                            `json:"is_split"`
+	Source            string                          `json:"source"`
+	Status            string                          `json:"status"`
+	Reconciled        bool                            `json:"reconciled"`
+	Currency          string                          `json:"currency"`
+	Tags              []string                        `json:"tags,omitempty"`
+	CreatedAt         time.Time                       `json:"created_at"`
+	UpdatedAt         time.Time                       `json:"updated_at"`
+	Splits            []TransactionSplitResponse      `json:"splits,omitempty"`
 	Attachments       []TransactionAttachmentResponse `json:"attachments,omitempty"`
-	AuditLogs         []AuditLogResponse            `json:"audit_logs,omitempty"`
+	AuditLogs         []AuditLogResponse              `json:"audit_logs,omitempty"`
 }
 
 type TransactionSplitResponse struct {
@@ -88,26 +88,26 @@ type TransactionAttachmentResponse struct {
 }
 
 type AuditLogResponse struct {
-	ID         string      `json:"id"`
-	UserID     string      `json:"user_id"`
-	UserName   string      `json:"user_name"`
-	UserRole   string      `json:"user_role"`
-	EntityType string      `json:"entity_type"`
-	EntityID   string      `json:"entity_id"`
-	Action     string      `json:"action"`
-	OldValue   interface{} `json:"old_value,omitempty"`
-	NewValue   interface{} `json:"new_value,omitempty"`
-	CreatedAt  time.Time   `json:"created_at"`
-	FormattedCreatedAt string `json:"formatted_created_at"`
+	ID                 string      `json:"id"`
+	UserID             string      `json:"user_id"`
+	UserName           string      `json:"user_name"`
+	UserRole           string      `json:"user_role"`
+	EntityType         string      `json:"entity_type"`
+	EntityID           string      `json:"entity_id"`
+	Action             string      `json:"action"`
+	OldValue           interface{} `json:"old_value,omitempty"`
+	NewValue           interface{} `json:"new_value,omitempty"`
+	CreatedAt          time.Time   `json:"created_at"`
+	FormattedCreatedAt string      `json:"formatted_created_at"`
 }
 
 type TransactionSummaryResponse struct {
-	TotalIncome          float64 `json:"total_income"`
-	FormattedTotalIncome string  `json:"formatted_total_income"`
-	TotalExpense         float64 `json:"total_expense"`
+	TotalIncome           float64 `json:"total_income"`
+	FormattedTotalIncome  string  `json:"formatted_total_income"`
+	TotalExpense          float64 `json:"total_expense"`
 	FormattedTotalExpense string  `json:"formatted_total_expense"`
-	Net                  float64 `json:"net"`
-	FormattedNet         string  `json:"formatted_net"`
+	Net                   float64 `json:"net"`
+	FormattedNet          string  `json:"formatted_net"`
 }
 
 type PaginationMetadata struct {
@@ -141,7 +141,7 @@ func ToTransactionResponse(t *model.Transaction) TransactionResponse {
 			ID:        a.ID,
 			FileName:  a.FileName,
 			FilePath:  a.FilePath,
-			FileURL:   fmt.Sprintf("/uploads/%s", a.FileName), // serve static files via Gin
+			FileURL:   fmt.Sprintf("/api/v1/transactions/attachments/%s/download", a.ID),
 			FileType:  a.FileType,
 			FileSize:  a.FileSize,
 			CreatedAt: a.CreatedAt,
@@ -198,12 +198,12 @@ func ToTransactionResponse(t *model.Transaction) TransactionResponse {
 
 func ToTransactionSummaryResponse(s *model.TransactionSummary) TransactionSummaryResponse {
 	return TransactionSummaryResponse{
-		TotalIncome:          s.TotalIncome,
-		FormattedTotalIncome: FormatRupiah(s.TotalIncome),
-		TotalExpense:         s.TotalExpense,
+		TotalIncome:           s.TotalIncome,
+		FormattedTotalIncome:  FormatRupiah(s.TotalIncome),
+		TotalExpense:          s.TotalExpense,
 		FormattedTotalExpense: FormatRupiah(s.TotalExpense),
-		Net:                  s.Net,
-		FormattedNet:         FormatRupiah(s.Net),
+		Net:                   s.Net,
+		FormattedNet:          FormatRupiah(s.Net),
 	}
 }
 
@@ -249,13 +249,13 @@ type PDFStatementResponse struct {
 }
 
 type DocumentUploadParseResponse struct {
-	Type               string                `json:"type"` // "ocr" or "pdf_parse"
-	DraftTransactionID string                `json:"draft_transaction_id,omitempty"`
-	ParsedOCR          *OCRResponse          `json:"parsed_ocr,omitempty"`
-	ParsedPDF          *PDFStatementResponse `json:"parsed_pdf,omitempty"`
-	SuggestedCategoryID       string  `json:"suggested_category_id,omitempty"`
-	SuggestedCategoryName     string  `json:"suggested_category_name,omitempty"`
-	SuggestedCategoryConfidence float64 `json:"suggested_category_confidence,omitempty"`
+	Type                        string                `json:"type"` // "ocr" or "pdf_parse"
+	DraftTransactionID          string                `json:"draft_transaction_id,omitempty"`
+	ParsedOCR                   *OCRResponse          `json:"parsed_ocr,omitempty"`
+	ParsedPDF                   *PDFStatementResponse `json:"parsed_pdf,omitempty"`
+	SuggestedCategoryID         string                `json:"suggested_category_id,omitempty"`
+	SuggestedCategoryName       string                `json:"suggested_category_name,omitempty"`
+	SuggestedCategoryConfidence float64               `json:"suggested_category_confidence,omitempty"`
 }
 
 type ConfirmDraftTransactionRequest struct {

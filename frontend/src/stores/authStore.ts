@@ -1,5 +1,4 @@
 import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
 
 export interface User {
   id: string;
@@ -25,44 +24,29 @@ interface AuthState {
   setLoading: (isLoading: boolean) => void;
 }
 
-export const useAuthStore = create<AuthState>()(
-  persist(
-    (set) => ({
-      user: null,
-      accessToken: null,
-      isAuthenticated: false,
-      isLoading: false,
-      setAuth: (user, token) =>
-        set({
+export const useAuthStore = create<AuthState>()((set) => ({
+  user: null,
+  accessToken: null,
+  isAuthenticated: false,
+  isLoading: true,
+  setAuth: (user, token) =>
+    set({
           user,
           accessToken: token,
           isAuthenticated: true,
           isLoading: false,
         }),
-      clearAuth: () => {
-        if (typeof window !== 'undefined') {
-          localStorage.removeItem('financial-os-refresh-token');
-        }
-        set({
+  clearAuth: () => {
+    set({
           user: null,
           accessToken: null,
           isAuthenticated: false,
           isLoading: false,
-        });
-      },
-      updateUser: (updatedFields) =>
-        set((state) => ({
-          user: state.user ? { ...state.user, ...updatedFields } : null,
-        })),
-      setLoading: (isLoading) => set({ isLoading }),
-    }),
-    {
-      name: 'financial-os-auth',
-      partialize: (state) => ({
-        user: state.user,
-        accessToken: state.accessToken,
-        isAuthenticated: state.isAuthenticated,
-      }),
-    }
-  )
-);
+    });
+  },
+  updateUser: (updatedFields) =>
+    set((state) => ({
+      user: state.user ? { ...state.user, ...updatedFields } : null,
+    })),
+  setLoading: (isLoading) => set({ isLoading }),
+}));

@@ -21,6 +21,7 @@ type TransactionRepository interface {
 	SoftDelete(ctx context.Context, id string, auditLog *model.AuditLog) error
 	GetSummary(ctx context.Context, userID string, dateFrom, dateTo time.Time) (*model.TransactionSummary, error)
 	SaveAttachment(ctx context.Context, att *model.TransactionAttachment) (*model.TransactionAttachment, error)
+	GetAttachmentByID(ctx context.Context, userID string, id string) (*model.TransactionAttachment, error)
 	DeleteAttachment(ctx context.Context, id string) error
 	CreateAuditLog(ctx context.Context, log *model.AuditLog) error
 	GetAuditLogs(ctx context.Context, entityType, entityID string) ([]model.AuditLog, error)
@@ -156,8 +157,8 @@ func (r *pgTransactionRepository) Create(ctx context.Context, t *model.Transacti
 func (r *pgTransactionRepository) GetByID(ctx context.Context, id string) (*model.Transaction, error) {
 	// Query transaction details with joined names
 	query := `
-		SELECT t.id, t.user_id, t.account_id, a.name as account_name, 
-		       t.target_account_id, ta.name as target_account_name, 
+		SELECT t.id, t.user_id, t.account_id, a.name as account_name,
+		       t.target_account_id, ta.name as target_account_name,
 		       t.category_id, c.name as category_name, c.icon as category_icon, c.color as category_color,
 		       t.type, t.amount, t.date, t.description, t.notes, t.is_split, t.source, t.source_confidence,
 		       t.status, t.reconciled, t.bill_id, t.debt_payment_id, t.currency, t.exchange_rate, t.tags,
@@ -349,8 +350,8 @@ func (r *pgTransactionRepository) GetAll(ctx context.Context, userID string, fil
 	}
 
 	dataQuery.WriteString(`
-		SELECT t.id, t.user_id, t.account_id, a.name as account_name, 
-		       t.target_account_id, ta.name as target_account_name, 
+		SELECT t.id, t.user_id, t.account_id, a.name as account_name,
+		       t.target_account_id, ta.name as target_account_name,
 		       t.category_id, c.name as category_name, c.icon as category_icon, c.color as category_color,
 		       t.type, t.amount, t.date, t.description, t.notes, t.is_split, t.source, t.source_confidence,
 		       t.status, t.reconciled, t.bill_id, t.debt_payment_id, t.currency, t.exchange_rate, t.tags,
@@ -610,7 +611,7 @@ func (r *pgTransactionRepository) SoftDelete(ctx context.Context, id string, aud
 func (r *pgTransactionRepository) GetSummary(ctx context.Context, userID string, dateFrom, dateTo time.Time) (*model.TransactionSummary, error) {
 	// Summary calculates total income and total expense for user in selected period (excluding transfers!)
 	query := `
-		SELECT 
+		SELECT
 			COALESCE(SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END), 0) as total_income,
 			COALESCE(SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END), 0) as total_expense
 		FROM transactions
@@ -643,6 +644,23 @@ func (r *pgTransactionRepository) SaveAttachment(ctx context.Context, a *model.T
 		return nil, err
 	}
 	return a, nil
+}
+
+func (r *pgTransactionRepository) GetAttachmentByID(ctx context.Context, userID string, id string) (*model.TransactionAttachment, error) {
+	query := `
+		SELECT a.id, a.transaction_id, a.file_name, a.file_path, a.file_type, a.file_size, a.created_at
+		FROM transaction_attachments a
+		JOIN transactions t ON t.id = a.transaction_id
+		WHERE a.id = $1 AND t.user_id = $2 AND t.deleted_at IS NULL
+	`
+	var attachment model.TransactionAttachment
+	if err := r.db.QueryRow(ctx, query, id, userID).Scan(
+		&attachment.ID, &attachment.TransactionID, &attachment.FileName, &attachment.FilePath,
+		&attachment.FileType, &attachment.FileSize, &attachment.CreatedAt,
+	); err != nil {
+		return nil, err
+	}
+	return &attachment, nil
 }
 
 func (r *pgTransactionRepository) DeleteAttachment(ctx context.Context, id string) error {

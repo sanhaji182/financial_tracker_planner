@@ -29,6 +29,7 @@ func (h *TransactionHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		// Both roles can read transactions
 		txGroup.GET("", h.List)
 		txGroup.GET("/summary", h.Summary)
+		txGroup.GET("/attachments/:attachmentId/download", h.DownloadAttachment)
 		txGroup.GET("/:id", h.Detail)
 
 		// Only owner can mutate transactions
@@ -224,6 +225,19 @@ func (h *TransactionHandler) Delete(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Transaction deleted successfully",
 	})
+}
+
+func (h *TransactionHandler) DownloadAttachment(c *gin.Context) {
+	userID := c.GetString("user_id")
+	attachmentID := c.Param("attachmentId")
+
+	attachment, err := h.txService.GetAttachmentForDownload(c.Request.Context(), userID, attachmentID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": gin.H{"code": "NOT_FOUND", "message": "Attachment not found"}})
+		return
+	}
+
+	c.FileAttachment(attachment.FilePath, attachment.FileName)
 }
 
 func (h *TransactionHandler) UploadAttachment(c *gin.Context) {

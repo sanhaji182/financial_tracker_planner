@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -26,7 +27,7 @@ func (h *AuthHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		authGroup.POST("/register", h.Register)
 		authGroup.POST("/login", h.Login)
 		authGroup.POST("/refresh", h.Refresh)
-		
+
 		// Protected routes
 		authGroup.POST("/logout", middleware.AuthMiddleware(), h.Logout)
 		authGroup.POST("/invite-spouse", middleware.AuthMiddleware(), middleware.RoleMiddleware("owner"), h.InviteSpouse)
@@ -57,7 +58,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "User registered successfully",
-		"data":    res,
+		"data":    authResponseData(res),
 	})
 }
 
@@ -82,7 +83,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",
-		"data":    res,
+		"data":    authResponseData(res),
 	})
 }
 
@@ -119,7 +120,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Token refreshed successfully",
-		"data":    res,
+		"data":    authResponseData(res),
 	})
 }
 
@@ -186,7 +187,7 @@ func (h *AuthHandler) InviteSpouse(c *gin.Context) {
 
 func (h *AuthHandler) RegisterSpouse(c *gin.Context) {
 	inviteToken := c.Query("token")
-	
+
 	var req struct {
 		InviteToken string `json:"invite_token"`
 		dto.RegisterRequest
@@ -227,7 +228,7 @@ func (h *AuthHandler) RegisterSpouse(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Spouse registered successfully",
-		"data":    res,
+		"data":    authResponseData(res),
 	})
 }
 
@@ -275,20 +276,28 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 }
 
 // helper to set httpOnly cookie for refresh token
+func authResponseData(res *dto.AuthResponse) gin.H {
+	return gin.H{
+		"access_token": res.AccessToken,
+		"user":         res.User,
+	}
+}
+
 func (h *AuthHandler) setRefreshTokenCookie(c *gin.Context, token string) {
-	// Expires in 7 days (168 hours)
 	maxAge := int(7 * 24 * time.Hour / time.Second)
-	c.SetCookie("refresh_token", token, maxAge, "/api/v1/auth", "", false, true)
+	secure := os.Getenv("APP_ENV") == "production"
+	c.SetCookie("refresh_token", token, maxAge, "/api/v1/auth", "", secure, true)
 }
 
 func (h *AuthHandler) clearRefreshTokenCookie(c *gin.Context) {
-	c.SetCookie("refresh_token", "", -1, "/api/v1/auth", "", false, true)
+	secure := os.Getenv("APP_ENV") == "production"
+	c.SetCookie("refresh_token", "", -1, "/api/v1/auth", "", secure, true)
 }
 
 // formats validation errors according to standard REST/API conventions
 func (h *AuthHandler) handleValidationError(c *gin.Context, err error) {
 	var details []gin.H
-	
+
 	if verrs, ok := err.(validator.ValidationErrors); ok {
 		for _, f := range verrs {
 			details = append(details, gin.H{

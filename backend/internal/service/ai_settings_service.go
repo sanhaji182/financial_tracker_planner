@@ -175,6 +175,9 @@ func (s *aiSettingsService) CallWorkerAI(ctx context.Context, userID string, end
 	}
 
 	req.Header.Set("Content-Type", "application/json")
+	if workerSecret := os.Getenv("WORKER_SECRET"); workerSecret != "" {
+		req.Header.Set("X-Worker-Secret", workerSecret)
+	}
 	req.Header.Set("X-AI-Enabled", "true")
 	req.Header.Set("X-AI-Provider", settings.AIProvider)
 	req.Header.Set("X-AI-Model", settings.AIModel)
@@ -246,7 +249,7 @@ func (s *aiSettingsService) DetectAnomalies(ctx context.Context, userID string) 
 	for _, anomaly := range workerResp.Anomalies {
 		title := "Transaksi Tidak Wajar Terdeteksi"
 		msg := "🤖 Saran AI — " + anomaly.Reason
-		
+
 		alertErr := s.repo.CreateAlert(
 			ctx,
 			ownerID,

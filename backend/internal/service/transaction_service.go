@@ -3,8 +3,8 @@ package service
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +30,7 @@ type TransactionService interface {
 	DeleteTransaction(ctx context.Context, transactionID string, userID string, ip, ua *string) error
 	GetTransactionSummary(ctx context.Context, userID string, dateFromStr, dateToStr string) (*dto.TransactionSummaryResponse, error)
 	UploadAttachment(ctx context.Context, transactionID string, userID string, fileName string, fileData []byte, fileType string, fileSize int) (*dto.TransactionAttachmentResponse, error)
+	GetAttachmentForDownload(ctx context.Context, userID string, attachmentID string) (*model.TransactionAttachment, error)
 	SplitTransaction(ctx context.Context, transactionID string, userID string, req dto.SplitTransactionRequest, ip, ua *string) (*dto.TransactionResponse, error)
 	UploadAndParse(ctx context.Context, userID string, fileName string, fileBytes []byte) (*dto.DocumentUploadParseResponse, error)
 	ConfirmParsedTransaction(ctx context.Context, userID string, draftTxID string, req dto.ConfirmDraftTransactionRequest, ip, ua *string) (*dto.TransactionResponse, error)
@@ -398,6 +399,10 @@ func (s *transactionService) UploadAttachment(ctx context.Context, transactionID
 	return res, nil
 }
 
+func (s *transactionService) GetAttachmentForDownload(ctx context.Context, userID string, attachmentID string) (*model.TransactionAttachment, error) {
+	return s.txRepo.GetAttachmentByID(ctx, userID, attachmentID)
+}
+
 func (s *transactionService) SplitTransaction(ctx context.Context, transactionID string, userID string, req dto.SplitTransactionRequest, ip, ua *string) (*dto.TransactionResponse, error) {
 	// 1. Get original transaction
 	tx, err := s.txRepo.GetByID(ctx, transactionID)
@@ -485,7 +490,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 	if workerURL == "" {
 		workerURL = "http://localhost:8081"
 	}
-	
+
 	endpoint := "/ocr/receipt"
 	if isPDF {
 		endpoint = "/parse/pdf-statement"
@@ -509,6 +514,9 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		return nil, fmt.Errorf("failed to create HTTP request to worker: %w", err)
 	}
 	req.Header.Set("Content-Type", writer.FormDataContentType())
+	if workerSecret := os.Getenv("WORKER_SECRET"); workerSecret != "" {
+		req.Header.Set("X-Worker-Secret", workerSecret)
+	}
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
@@ -559,7 +567,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 			if parseErr != nil {
 				txDate = time.Now()
 			}
-			
+
 			txType := "expense"
 			txAmount := item.Debit
 			if item.Credit > 0 {
@@ -679,7 +687,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		if suggestedCatID != "" {
 			draftTx.CategoryID = &suggestedCatID
 		}
-		
+
 		createdDraft, createErr := s.txRepo.Create(ctx, draftTx, nil, nil)
 		if createErr == nil {
 			response.DraftTransactionID = createdDraft.ID

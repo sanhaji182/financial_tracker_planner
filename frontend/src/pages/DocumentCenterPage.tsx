@@ -60,6 +60,7 @@ export const DocumentCenterPage: React.FC = () => {
   // Lightbox Preview State
   const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [lightboxName, setLightboxName] = useState('');
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
 
   const fetchDocuments = async () => {
     setIsLoading(true);
@@ -85,11 +86,36 @@ export const DocumentCenterPage: React.FC = () => {
 
   useEffect(() => {
     fetchDocuments();
-  }, [selectedEntityType, selectedTag]);
+  }, [fetchDocuments, selectedEntityType, selectedTag]);
 
   useEffect(() => {
     fetchTransactions();
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    const createdUrls: string[] = [];
+    const imageDocuments = documents.filter((doc) => doc.file_type.startsWith('image/'));
+
+    Promise.all(
+      imageDocuments.map(async (doc) => {
+        const objectUrl = await documentsService.getDocumentObjectURL(doc.id);
+        createdUrls.push(objectUrl);
+        return [doc.id, objectUrl] as const;
+      })
+    )
+      .then((entries) => {
+        if (active) setPreviewUrls(Object.fromEntries(entries));
+      })
+      .catch(() => {
+        if (active) setPreviewUrls({});
+      });
+
+    return () => {
+      active = false;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [documents]);
 
   const handleDrag = (e: React.DragEvent) => {
     e.preventDefault();
@@ -208,11 +234,7 @@ export const DocumentCenterPage: React.FC = () => {
     (doc.description && doc.description.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
-  const getFullAttachmentUrl = (urlPath: string) => {
-    const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-    const base = envUrl.replace('/api/v1', '');
-    return `${base}${urlPath}`;
-  };
+
 
   const formatBytes = (bytes: number, decimals = 2) => {
     if (bytes === 0) return '0 Bytes';
@@ -440,13 +462,13 @@ export const DocumentCenterPage: React.FC = () => {
                       {isImage(doc.file_type) ? (
                         <>
                           <img
-                            src={getFullAttachmentUrl(doc.file_url)}
+                            src={previewUrls[doc.id] || ''}
                             alt={doc.file_name}
                             className="w-full h-full object-cover group-hover:scale-105 transition-all"
                           />
                           <button
                             onClick={() => {
-                              setLightboxUrl(getFullAttachmentUrl(doc.file_url));
+                              setLightboxUrl(previewUrls[doc.id] || null);
                               setLightboxName(doc.file_name);
                             }}
                             className="absolute inset-0 bg-slate-950/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white"
@@ -504,18 +526,13 @@ export const DocumentCenterPage: React.FC = () => {
                     )}
 
                     <div className="flex gap-2">
-                      <a
-                        href={documentsService.downloadDocumentURL(doc.id)}
-                        className="flex-1"
-                        download
+                      <Button
+                        variant="ghost"
+                        onClick={() => void documentsService.downloadDocument(doc.id, doc.file_name)}
+                        className="flex-1 border border-white/10 py-1.5 text-[10px] font-bold flex items-center justify-center gap-1 hover:bg-white/5"
                       >
-                        <Button
-                          variant="ghost"
-                          className="w-full border border-white/10 py-1.5 text-[10px] font-bold flex items-center justify-center gap-1 hover:bg-white/5"
-                        >
-                          <Download className="h-3.5 w-3.5" /> Unduh
-                        </Button>
-                      </a>
+                        <Download className="h-3.5 w-3.5" /> Unduh
+                      </Button>
 
                       {user?.role === 'owner' && (
                         <>

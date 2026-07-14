@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTransactionDetail, useDeleteTransaction } from '../../hooks/useTransactions';
 import { MoneyDisplay } from '../ui/MoneyDisplay';
 import { Badge } from '../ui/Badge';
@@ -7,6 +7,7 @@ import { Modal } from '../ui/Modal';
 import { useQueryClient } from '@tanstack/react-query';
 import { SplitTransactionModal } from '../modals/SplitTransactionModal';
 import { useAuthStore } from '../../stores/authStore';
+import { transactionsService } from '../../services/transactions';
 import { 
   X, 
   Calendar, 
@@ -41,19 +42,32 @@ export const TransactionDetailDrawer: React.FC<TransactionDetailDrawerProps> = (
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [splitModalOpen, setSplitModalOpen] = useState(false);
+  const [attachmentUrls, setAttachmentUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (!transaction?.attachments?.length) return;
+    let active = true;
+    const createdUrls: string[] = [];
+
+    Promise.all(
+      transaction.attachments.map(async (att) => {
+        const objectUrl = await transactionsService.getAttachmentObjectURL(att.id);
+        createdUrls.push(objectUrl);
+        return [att.id, objectUrl] as const;
+      })
+    )
+      .then((entries) => {
+        if (active) setAttachmentUrls(Object.fromEntries(entries));
+      })
+      .catch(() => {});
+
+    return () => {
+      active = false;
+      createdUrls.forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, [transaction?.attachments]);
 
   if (!transactionId) return null;
-
-  const getApiBaseUrl = () => {
-    // Return base URL from environment or default to localhost:8080
-    const envUrl = import.meta.env.VITE_API_URL || 'http://localhost:8080/api/v1';
-    return envUrl.replace('/api/v1', '');
-  };
-
-  const getFullAttachmentUrl = (urlPath: string) => {
-    if (urlPath.startsWith('http')) return urlPath;
-    return `${getApiBaseUrl()}${urlPath}`;
-  };
 
   const confirmDelete = async () => {
     try {
@@ -294,15 +308,15 @@ export const TransactionDetailDrawer: React.FC<TransactionDetailDrawerProps> = (
                       key={att.id} 
                       className="group relative rounded-xl border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 overflow-hidden flex flex-col"
                     >
-                      <img 
-                        src={getFullAttachmentUrl(att.file_url)} 
+                      <img
+                        src={attachmentUrls[att.id] || ''}
                         alt={att.file_name} 
                         className="w-full h-24 object-cover group-hover:scale-105 transition-all"
                       />
                       <div className="p-2 flex items-center justify-between text-[10px] text-slate-500 font-semibold shrink-0">
                         <span className="truncate max-w-[120px]">{att.file_name}</span>
-                        <a 
-                          href={getFullAttachmentUrl(att.file_url)} 
+                        <a
+                          href={attachmentUrls[att.id] || ''}
                           target="_blank" 
                           rel="noreferrer"
                           className="text-primary-500 hover:text-primary-600"

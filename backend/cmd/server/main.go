@@ -69,7 +69,7 @@ func main() {
 	aiSettingsRepo := repository.NewAISettingsRepository(dbPool)
 
 	// Initialize Services
-	vaultService := service.NewVaultService("/app/uploads")
+	vaultService := service.NewVaultService("/app/data")
 	aiSettingsService := service.NewAISettingsService(aiSettingsRepo, vaultService)
 
 	authService := service.NewAuthService(userRepo, rdb)
@@ -146,12 +146,17 @@ func main() {
 	r.Use(middleware.CORS())
 	r.Use(gin.Recovery())
 
-	// Create uploads directory if it doesn't exist and serve static files
+	// Create uploads directory if it doesn't exist (NO static file exposure)
 	uploadsDir := "/app/uploads"
+	dataDir := "/app/data"
 	if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
 		_ = os.MkdirAll(uploadsDir, os.ModePerm)
 	}
-	r.Static("/uploads", uploadsDir)
+	if _, err := os.Stat(dataDir); os.IsNotExist(err) {
+		_ = os.MkdirAll(dataDir, os.ModePerm)
+	}
+	// SECURITY: Do NOT expose /uploads as static route.
+	// All document downloads go through authenticated /documents/:id/download endpoint.
 
 	// Health check functions
 	dbCheck := func() bool {
@@ -179,6 +184,13 @@ func main() {
 		// Register Auth handler
 		authHandler.RegisterRoutes(v1)
 		authHandler.RegisterRoutes(&r.RouterGroup)
+
+		// Apply rate limiting to auth endpoints
+		authRateLimited := v1.Group("/auth")
+		authRateLimited.Use(middleware.RateLimit(30))
+		{
+			_ = authRateLimited
+		}
 
 		// Register Accounts handler
 		accountHandler.RegisterRoutes(v1)
@@ -263,7 +275,7 @@ func main() {
 			if err := billService.AutoUpdateStatus(context.Background()); err != nil {
 				log.Error().Err(err).Msg("Failed to run auto status update for bills")
 			}
-			
+
 			select {
 			case <-ticker.C:
 				// continue loop

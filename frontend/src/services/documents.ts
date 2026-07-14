@@ -65,10 +65,23 @@ const documentsService = {
     });
   },
 
-  downloadDocumentURL: (id: string): string => {
-    // Get full path or download link
-    const token = localStorage.getItem('access_token');
-    return `${api.defaults.baseURL}/documents/${id}/download?token=${token}`;
+  getDocumentObjectURL: async (id: string): Promise<string> => {
+    const res = await api.get(`/documents/${id}/download`, { responseType: 'blob' });
+    return URL.createObjectURL(res.data);
+  },
+
+  downloadDocument: async (id: string, fileName: string): Promise<void> => {
+    const objectUrl = await documentsService.getDocumentObjectURL(id);
+    try {
+      const link = window.document.createElement('a');
+      link.href = objectUrl;
+      link.download = fileName;
+      window.document.body.appendChild(link);
+      link.click();
+      link.remove();
+    } finally {
+      URL.revokeObjectURL(objectUrl);
+    }
   },
 };
 

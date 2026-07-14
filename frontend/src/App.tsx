@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
+import { authService } from './services/auth';
+import { useAuthStore } from './stores/authStore';
 
 // Lazy load route pages
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -51,6 +53,26 @@ const queryClient = new QueryClient({
 });
 
 const App: React.FC = () => {
+  const setAuth = useAuthStore((state) => state.setAuth);
+  const clearAuth = useAuthStore((state) => state.clearAuth);
+
+  React.useEffect(() => {
+    let active = true;
+
+    authService
+      .restoreSession()
+      .then((data) => {
+        if (active) setAuth(data.user, data.access_token);
+      })
+      .catch(() => {
+        if (active) clearAuth();
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [clearAuth, setAuth]);
+
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>

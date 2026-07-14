@@ -131,6 +131,11 @@ export interface TransactionListResponse {
 }
 
 export const transactionsService = {
+  async getAttachmentObjectURL(id: string): Promise<string> {
+    const res = await api.get(`/transactions/attachments/${id}/download`, { responseType: 'blob' });
+    return URL.createObjectURL(res.data);
+  },
+
   async getTransactions(filters: TransactionListFilters): Promise<TransactionListResponse> {
     const params = new URLSearchParams();
     Object.entries(filters).forEach(([key, val]) => {
