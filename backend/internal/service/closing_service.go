@@ -95,64 +95,76 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	}
 
 	// Total Cash
-	var totalCash float64
+	var totalCashDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(balance), 0) FROM accounts
 		WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND deleted_at IS NULL AND is_active = true
-	`, ownerID).Scan(&totalCash)
+	`, ownerID).Scan(&totalCashDecimal)
+
+	totalCash := model.MoneyFromDecimal(totalCashDecimal)
 
 	// Total Account Balances (Cash + Invest + Deposits)
-	var totalAccounts float64
+	var totalAccountsDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(balance), 0) FROM accounts
 		WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
-	`, ownerID).Scan(&totalAccounts)
+	`, ownerID).Scan(&totalAccountsDecimal)
+
+	totalAccounts := model.MoneyFromDecimal(totalAccountsDecimal)
 
 	// Total Assets Valuation
-	var totalAssets float64
+	var totalAssetsDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(current_value), 0) FROM assets WHERE user_id = $1 AND deleted_at IS NULL
-	`, ownerID).Scan(&totalAssets)
+	`, ownerID).Scan(&totalAssetsDecimal)
+
+	totalAssets := model.MoneyFromDecimal(totalAssetsDecimal)
 
 	// Total Debts & Min Payments
-	var totalDebts, totalMinDebtPayments float64
+	var totalDebtsDecimal, totalMinDebtPaymentsDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(outstanding_balance), 0), COALESCE(SUM(minimum_payment), 0) FROM debts
 		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
-	`, ownerID).Scan(&totalDebts, &totalMinDebtPayments)
+	`, ownerID).Scan(&totalDebtsDecimal, &totalMinDebtPaymentsDecimal)
+
+	totalDebts := model.MoneyFromDecimal(totalDebtsDecimal)
+	totalMinDebtPayments := model.MoneyFromDecimal(totalMinDebtPaymentsDecimal)
 
 	// Net Worth
 	netWorth := totalAccounts + totalAssets - totalDebts
 
 	// 3. Transactions (Income & Expense)
-	var totalIncome, totalExpense float64
+	var totalIncomeDecimal, totalExpenseDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM transactions
 		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
 		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
-	`, ownerID, req.Month).Scan(&totalIncome)
+	`, ownerID, req.Month).Scan(&totalIncomeDecimal)
 
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0) FROM transactions
 		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
 		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
-	`, ownerID, req.Month).Scan(&totalExpense)
+	`, ownerID, req.Month).Scan(&totalExpenseDecimal)
+
+	totalIncome := model.MoneyFromDecimal(totalIncomeDecimal)
+	totalExpense := model.MoneyFromDecimal(totalExpenseDecimal)
 
 	// 4. Calculate DTI Ratio
 	dtiRatio := 0.0
 	if totalIncome > 0 {
-		dtiRatio = (totalMinDebtPayments / totalIncome) * 100
+		dtiRatio = (float64(totalMinDebtPayments) / float64(totalIncome)) * 100
 	}
 
 	// 5. Emergency Fund & Health Score Calculations
-	var monthlyLivingCost float64
+	var monthlyLivingCostDecimal float64
 	var targetMonths int
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(monthly_living_cost_override, 0), target_months
 		FROM emergency_fund_configs WHERE user_id = $1
-	`, ownerID).Scan(&monthlyLivingCost, &targetMonths)
+	`, ownerID).Scan(&monthlyLivingCostDecimal, &targetMonths)
 
-	if monthlyLivingCost <= 0 {
+	if monthlyLivingCostDecimal <= 0 {
 		// Fallback to 3-month average variable expenses
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(AVG(spent), 0)
@@ -163,22 +175,24 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 				GROUP BY TO_CHAR(date, 'YYYY-MM')
 				LIMIT 3
 			) tmp
-		`, ownerID).Scan(&monthlyLivingCost)
+		`, ownerID).Scan(&monthlyLivingCostDecimal)
 	}
 
 	if targetMonths <= 0 {
 		targetMonths = 12
 	}
+	monthlyLivingCost := model.MoneyFromDecimal(monthlyLivingCostDecimal)
 
-	var efTotal float64
+	var efTotalDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(balance), 0) FROM accounts
 		WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
-	`, ownerID).Scan(&efTotal)
+	`, ownerID).Scan(&efTotalDecimal)
+	efTotal := model.MoneyFromDecimal(efTotalDecimal)
 
 	efCoverageMonths := 0.0
 	if monthlyLivingCost > 0 {
-		efCoverageMonths = efTotal / monthlyLivingCost
+		efCoverageMonths = float64(efTotal) / float64(monthlyLivingCost)
 	}
 
 	// Health score components
@@ -190,7 +204,7 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	}
 
 	efScore := math.Min(100, (efCoverageMonths/float64(targetMonths))*100)
-	cashScore := math.Min(100, (totalCash/monthlyLivingCost)*50.0)
+	cashScore := math.Min(100, (float64(totalCash)/float64(monthlyLivingCost))*50.0)
 
 	savingsThisMonth := totalIncome - totalExpense
 	if savingsThisMonth < 0 {
@@ -198,7 +212,7 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	}
 	savingsRateScore := 0.0
 	if totalIncome > 0 {
-		savingsRateScore = math.Min(100, (savingsThisMonth/totalIncome)*200)
+		savingsRateScore = math.Min(100, (float64(savingsThisMonth)/float64(totalIncome))*200)
 	}
 
 	healthScoreVal := int(math.Round((0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)))
@@ -240,9 +254,9 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	goalsProgress := make([]dto.ClosingGoalProgress, 0)
 	// Add Emergency Fund as default
 	efProgress := 0.0
-	targetEfAmount := monthlyLivingCost * float64(targetMonths)
+	targetEfAmount := monthlyLivingCost * model.Money(targetMonths)
 	if targetEfAmount > 0 {
-		efProgress = math.Min(100, (efTotal/targetEfAmount)*100)
+		efProgress = math.Min(100, (float64(efTotal)/float64(targetEfAmount))*100)
 	}
 	goalsProgress = append(goalsProgress, dto.ClosingGoalProgress{
 		Name:     "Dana Darurat",
@@ -290,12 +304,12 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	snapshot := dto.ClosingSnapshot{
 		Month:            req.Month,
 		Accounts:         accounts,
-		TotalIncome:      model.MoneyFromDecimal(totalIncome),
-		TotalExpense:     model.MoneyFromDecimal(totalExpense),
-		TotalAssets:      model.MoneyFromDecimal(totalAssets),
-		TotalDebts:       model.MoneyFromDecimal(totalDebts),
-		NetWorth:         model.MoneyFromDecimal(netWorth),
-		TotalCash:        model.MoneyFromDecimal(totalCash),
+		TotalIncome:      totalIncome,
+		TotalExpense:     totalExpense,
+		TotalAssets:      totalAssets,
+		TotalDebts:       totalDebts,
+		NetWorth:         netWorth,
+		TotalCash:        totalCash,
 		DTIRatio:         dtiRatio,
 		HealthScore:      healthScoreVal,
 		EFCoverageMonths: efCoverageMonths,
@@ -319,7 +333,7 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 			user_id, month, snapshot, total_income, total_expense, net_worth, total_assets, total_debts, total_cash, dti_ratio, ef_coverage_months, is_confirmed, confirmed_at, notes
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, true, NOW(), $12)
 		RETURNING id
-	`, ownerID, req.Month, snapshotBytes, totalIncome, totalExpense, netWorth, totalAssets, totalDebts, totalCash, dtiRatio, efCoverageMonths, req.Notes).Scan(&closingID)
+	`, ownerID, req.Month, snapshotBytes, model.DecimalFromMoney(totalIncome), model.DecimalFromMoney(totalExpense), model.DecimalFromMoney(netWorth), model.DecimalFromMoney(totalAssets), model.DecimalFromMoney(totalDebts), model.DecimalFromMoney(totalCash), dtiRatio, efCoverageMonths, req.Notes).Scan(&closingID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to insert monthly closing: %w", err)
 	}

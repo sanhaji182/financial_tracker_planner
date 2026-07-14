@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -56,7 +57,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 
 	// 2. Fetch Assets Total & Breakdown (Liquid, Invested, Property)
 	// We dynamically sum current_value, syncing with linked accounts balance where applicable
-	var totalAssets, liquidAssets, investedAssets, propertyAssets float64
+	var totalAssetsDecimal, liquidAssetsDecimal, investedAssetsDecimal, propertyAssetsDecimal float64
 	assetQuery := `
 		SELECT
 			COALESCE(SUM(
@@ -101,15 +102,19 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		LEFT JOIN currencies curr_a ON a.currency = curr_a.code
 		WHERE a.user_id = $1 AND a.deleted_at IS NULL
 	`
-	err = s.dbPool.QueryRow(ctx, assetQuery, userID).Scan(&totalAssets, &liquidAssets, &investedAssets, &propertyAssets)
+	err = s.dbPool.QueryRow(ctx, assetQuery, userID).Scan(&totalAssetsDecimal, &liquidAssetsDecimal, &investedAssetsDecimal, &propertyAssetsDecimal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch assets: %w", err)
 	}
+	totalAssets := model.MoneyFromDecimal(totalAssetsDecimal)
+	liquidAssets := model.MoneyFromDecimal(liquidAssetsDecimal)
+	investedAssets := model.MoneyFromDecimal(investedAssetsDecimal)
+	propertyAssets := model.MoneyFromDecimal(propertyAssetsDecimal)
 
 	// 3. Fetch Active Debts Total Outstanding & Counts
-	var totalDebts float64
+	var totalDebtsDecimal float64
 	var activeDebtsCount int
-	var totalMinDebtPayments float64
+	var totalMinDebtPaymentsDecimal float64
 	var maxDebtInterestRate float64
 	var maxDebtName string
 
@@ -123,10 +128,12 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		LEFT JOIN currencies curr ON d.currency = curr.code
 		WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
 	`
-	err = s.dbPool.QueryRow(ctx, debtQuery, userID).Scan(&totalDebts, &activeDebtsCount, &totalMinDebtPayments, &maxDebtInterestRate)
+	err = s.dbPool.QueryRow(ctx, debtQuery, userID).Scan(&totalDebtsDecimal, &activeDebtsCount, &totalMinDebtPaymentsDecimal, &maxDebtInterestRate)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch debts: %w", err)
 	}
+	totalDebts := model.MoneyFromDecimal(totalDebtsDecimal)
+	totalMinDebtPayments := model.MoneyFromDecimal(totalMinDebtPaymentsDecimal)
 
 	if maxDebtInterestRate > 0 {
 		_ = s.dbPool.QueryRow(ctx, `
@@ -137,20 +144,21 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	}
 
 	// 4. Fetch Cash Available (accounts table bank, e_wallet, cash)
-	var cashAvailable float64
+	var cashAvailableDecimal float64
 	cashQuery := `
 		SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 		FROM accounts a
 		LEFT JOIN currencies curr ON a.currency = curr.code
 		WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash') AND a.is_active = true AND a.deleted_at IS NULL
 	`
-	err = s.dbPool.QueryRow(ctx, cashQuery, userID).Scan(&cashAvailable)
+	err = s.dbPool.QueryRow(ctx, cashQuery, userID).Scan(&cashAvailableDecimal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch cash available: %w", err)
 	}
+	cashAvailable := model.MoneyFromDecimal(cashAvailableDecimal)
 
 	// 5. Fetch Income & Expenses for Current Month
-	var incomeThisMonth, expenseThisMonth float64
+	var incomeThisMonthDecimal, expenseThisMonthDecimal float64
 	txQuery := `
 		SELECT
 			COALESCE(SUM(CASE WHEN t.type = 'income' THEN t.amount * COALESCE(curr.exchange_rate_to_idr, 1.0) ELSE 0 END), 0),
@@ -159,41 +167,44 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		LEFT JOIN currencies curr ON t.currency = curr.code
 		WHERE t.user_id = $1 AND t.date >= $2 AND t.date <= $3 AND t.status = 'confirmed' AND t.deleted_at IS NULL
 	`
-	err = s.dbPool.QueryRow(ctx, txQuery, userID, startOfMonth, endOfMonth).Scan(&incomeThisMonth, &expenseThisMonth)
+	err = s.dbPool.QueryRow(ctx, txQuery, userID, startOfMonth, endOfMonth).Scan(&incomeThisMonthDecimal, &expenseThisMonthDecimal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch current month cashflow: %w", err)
 	}
+	incomeThisMonth := model.MoneyFromDecimal(incomeThisMonthDecimal)
+	expenseThisMonth := model.MoneyFromDecimal(expenseThisMonthDecimal)
 
 	// 6. Calculate Average Monthly Living Cost (past 3 months of expenses)
-	var totalExpensesLast3Months float64
+	var totalExpensesLast3MonthsDecimal float64
 	err = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(t.amount * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 		FROM transactions t
 		LEFT JOIN currencies curr ON t.currency = curr.code
 		WHERE t.user_id = $1 AND t.type = 'expense' AND t.date >= $2 AND t.date < $3 AND t.status = 'confirmed' AND t.deleted_at IS NULL
-	`, userID, threeMonthsAgo, startOfMonth).Scan(&totalExpensesLast3Months)
+	`, userID, threeMonthsAgo, startOfMonth).Scan(&totalExpensesLast3MonthsDecimal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch past expenses: %w", err)
 	}
-
-	monthlyLivingCost := totalExpensesLast3Months / 3.0
+	totalExpensesLast3Months := model.MoneyFromDecimal(totalExpensesLast3MonthsDecimal)
+	monthlyLivingCost := totalExpensesLast3Months / 3
 
 	// 7. Calculate Emergency Fund Total
-	var efTotal float64
+	var efTotalDecimal float64
 	err = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 		FROM accounts a
 		LEFT JOIN currencies curr ON a.currency = curr.code
 		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
-	`, userID).Scan(&efTotal)
+	`, userID).Scan(&efTotalDecimal)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch emergency fund: %w", err)
 	}
+	efTotal := model.MoneyFromDecimal(efTotalDecimal)
 
 	// 8. Calculations: DTI, EF Coverage, Health Score components
 	var dtiRatio float64
 	if incomeThisMonth > 0 {
-		dtiRatio = (totalMinDebtPayments / incomeThisMonth) * 100
+		dtiRatio = (float64(totalMinDebtPayments) / float64(incomeThisMonth)) * 100
 	}
 
 	var dtiStatus string
@@ -216,14 +227,14 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	// EF Score (Weight 30%)
 	efCoverageMonths := 0.0
 	if monthlyLivingCost > 0 {
-		efCoverageMonths = efTotal / monthlyLivingCost
+		efCoverageMonths = float64(efTotal) / float64(monthlyLivingCost)
 	}
 	efScore := math.Min(100, (efCoverageMonths/6.0)*100)
 
 	// Cash Score (Weight 20%)
 	cashScore := 0.0
 	if monthlyLivingCost > 0 {
-		cashScore = math.Min(100, (cashAvailable/monthlyLivingCost)*50.0)
+		cashScore = math.Min(100, (float64(cashAvailable)/float64(monthlyLivingCost))*50.0)
 	}
 
 	// Savings Rate Score (Weight 20%)
@@ -233,7 +244,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	}
 	savingsRateScore := 0.0
 	if incomeThisMonth > 0 {
-		savingsRateScore = math.Min(100, (savingsThisMonth/incomeThisMonth)*200)
+		savingsRateScore = math.Min(100, (float64(savingsThisMonth)/float64(incomeThisMonth))*200)
 	}
 
 	healthScoreVal := int(math.Round((0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)))
@@ -261,15 +272,15 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	if daysRemaining < 0 {
 		daysRemaining = 0
 	}
-	dailyVariableExpense := monthlyLivingCost / 30.0
-	projectedRemainingExpenses := dailyVariableExpense * float64(daysRemaining)
+	dailyVariableExpense := monthlyLivingCost / 30
+	projectedRemainingExpenses := dailyVariableExpense * model.Money(daysRemaining)
 
 	forecastEndMonth := cashAvailable - projectedRemainingExpenses
 	if forecastEndMonth < 0 {
 		forecastEndMonth = 0
 	}
 
-	safeToSpend := incomeThisMonth - totalMinDebtPayments - (projectedRemainingExpenses * 0.8) - (incomeThisMonth * 0.05)
+	safeToSpend := incomeThisMonth - totalMinDebtPayments - model.Money(math.Round(float64(projectedRemainingExpenses)*0.8)) - model.Money(math.Round(float64(incomeThisMonth)*0.05))
 	if safeToSpend < 0 {
 		safeToSpend = 0
 	}
@@ -277,13 +288,13 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	// 10. Next Action Advice Rule Engine
 	var nextAction dto.NextActionDto
 	if efCoverageMonths < 6.0 {
-		needed := (6.0 * monthlyLivingCost) - efTotal
+		needed := (6 * monthlyLivingCost) - efTotal
 		if needed < 0 {
 			needed = 0
 		}
 		nextAction = dto.NextActionDto{
 			Title:       "Top Up Dana Darurat",
-			Description: fmt.Sprintf("Dana darurat Anda saat ini baru mencakup %.1f bulan pengeluaran hidup. Segera top up Rp %s lagi untuk mencapai target aman 6 bulan.", efCoverageMonths, formatNumber(needed)),
+			Description: fmt.Sprintf("Dana darurat Anda saat ini baru mencakup %.1f bulan pengeluaran hidup. Segera top up Rp %s lagi untuk mencapai target aman 6 bulan.", efCoverageMonths, strings.TrimPrefix(model.FormatRupiahMoney(needed), "Rp ")),
 			ActionLabel: "Top Up Sekarang",
 			ActionUrl:   "/accounts",
 			Priority:    1,
@@ -311,7 +322,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		}
 		nextAction = dto.NextActionDto{
 			Title:       "Alokasikan ke Investasi",
-			Description: fmt.Sprintf("Kondisi keuangan Anda prima! Alokasikan dana surplus bulan ini sekitar Rp %s ke instrumen reksa dana atau saham produktif.", formatNumber(surplus)),
+			Description: fmt.Sprintf("Kondisi keuangan Anda prima! Alokasikan dana surplus bulan ini sekitar Rp %s ke instrumen reksa dana atau saham produktif.", strings.TrimPrefix(model.FormatRupiahMoney(surplus), "Rp ")),
 			ActionLabel: "Lihat Investasi",
 			ActionUrl:   "/assets",
 			Priority:    4,
@@ -325,7 +336,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		monthEnd := t.AddDate(0, 1, 0).Add(-time.Nanosecond)
 
 		// 11a. Fetch total asset values up to that month end
-		var assetsAtMonth float64
+		var assetsAtMonthDecimal float64
 		assetTrendQuery := `
 			SELECT COALESCE(SUM(
 				CASE
@@ -339,18 +350,18 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			LEFT JOIN currencies curr_a ON a.currency = curr_a.code
 			WHERE a.user_id = $1 AND a.created_at <= $2 AND (a.deleted_at IS NULL OR a.deleted_at > $2)
 		`
-		_ = s.dbPool.QueryRow(ctx, assetTrendQuery, userID, monthEnd).Scan(&assetsAtMonth)
+		_ = s.dbPool.QueryRow(ctx, assetTrendQuery, userID, monthEnd).Scan(&assetsAtMonthDecimal)
 
 		// 11b. Account cash balances rolling back transactions occurred after that month end
-		var currentAccountsTotal float64
+		var currentAccountsTotalDecimal float64
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(a.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 			FROM accounts a
 			LEFT JOIN currencies curr ON a.currency = curr.code
 			WHERE a.user_id = $1 AND a.created_at <= $2 AND (a.deleted_at IS NULL OR a.deleted_at > $2)
-		`, userID, monthEnd).Scan(&currentAccountsTotal)
+		`, userID, monthEnd).Scan(&currentAccountsTotalDecimal)
 
-		var netTxAfterMonth float64
+		var netTxAfterMonthDecimal float64
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(
 				(CASE WHEN t.type = 'income' THEN -t.amount ELSE t.amount END) * COALESCE(curr.exchange_rate_to_idr, 1.0)
@@ -359,34 +370,34 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			LEFT JOIN accounts ac ON t.account_id = ac.id
 			LEFT JOIN currencies curr ON ac.currency = curr.code
 			WHERE t.user_id = $1 AND t.date > $2 AND t.status = 'confirmed' AND t.deleted_at IS NULL
-		`, userID, monthEnd).Scan(&netTxAfterMonth)
+		`, userID, monthEnd).Scan(&netTxAfterMonthDecimal)
 
-		accountsAtMonth := currentAccountsTotal + netTxAfterMonth
+		accountsAtMonth := model.MoneyFromDecimal(currentAccountsTotalDecimal) + model.MoneyFromDecimal(netTxAfterMonthDecimal)
 
 		// 11c. Debts rolling back payments occurred after that month end
-		var currentDebtsTotal float64
+		var currentDebtsTotalDecimal float64
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(d.outstanding_balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 			FROM debts d
 			LEFT JOIN currencies curr ON d.currency = curr.code
 			WHERE d.user_id = $1 AND d.created_at <= $2 AND (d.deleted_at IS NULL OR d.deleted_at > $2)
-		`, userID, monthEnd).Scan(&currentDebtsTotal)
+		`, userID, monthEnd).Scan(&currentDebtsTotalDecimal)
 
-		var paymentsAfterMonth float64
+		var paymentsAfterMonthDecimal float64
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(dp.amount * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
 			FROM debt_payments dp
 			JOIN debts d ON dp.debt_id = d.id
 			LEFT JOIN currencies curr ON d.currency = curr.code
 			WHERE d.user_id = $1 AND dp.payment_date > $2
-		`, userID, monthEnd).Scan(&paymentsAfterMonth)
+		`, userID, monthEnd).Scan(&paymentsAfterMonthDecimal)
 
-		debtsAtMonth := currentDebtsTotal + paymentsAfterMonth
+		debtsAtMonth := model.MoneyFromDecimal(currentDebtsTotalDecimal) + model.MoneyFromDecimal(paymentsAfterMonthDecimal)
 
-		netWorthAtMonth := assetsAtMonth + accountsAtMonth - debtsAtMonth
+		netWorthAtMonth := model.MoneyFromDecimal(assetsAtMonthDecimal) + accountsAtMonth - debtsAtMonth
 		netWorthTrend = append(netWorthTrend, dto.TrendPoint{
 			Month: t.Format("Jan"),
-			Value: model.MoneyFromDecimal(netWorthAtMonth),
+			Value: netWorthAtMonth,
 		})
 	}
 
@@ -441,22 +452,22 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	// 14. Insight Summary
 	insightSummary := "Arus kas bersih keluarga Anda bulan ini positif. "
 	if savingsThisMonth > 0 {
-		insightSummary += fmt.Sprintf("Anda telah menyisihkan surplus sebesar Rp %s (%d%% dari income) bulan ini.", formatNumber(savingsThisMonth), int(savingsThisMonth/incomeThisMonth*100))
+		insightSummary += fmt.Sprintf("Anda telah menyisihkan surplus sebesar Rp %s (%d%% dari income) bulan ini.", strings.TrimPrefix(model.FormatRupiahMoney(savingsThisMonth), "Rp "), int(float64(savingsThisMonth)/float64(incomeThisMonth)*100))
 	} else {
 		insightSummary += "Pengeluaran Anda bulan ini sama atau lebih besar dari pendapatan. Batasi pengeluaran non-primer."
 	}
 
 	// Net Worth (Total Assets - Total Debts)
 	netWorth := totalAssets - totalDebts
-	netWorthMoney := model.MoneyFromDecimal(netWorth)
-	totalAssetsMoney := model.MoneyFromDecimal(totalAssets)
-	liquidAssetsMoney := model.MoneyFromDecimal(liquidAssets)
-	investedAssetsMoney := model.MoneyFromDecimal(investedAssets)
-	propertyAssetsMoney := model.MoneyFromDecimal(propertyAssets)
-	totalDebtsMoney := model.MoneyFromDecimal(totalDebts)
-	cashAvailableMoney := model.MoneyFromDecimal(cashAvailable)
-	forecastEndMonthMoney := model.MoneyFromDecimal(forecastEndMonth)
-	safeToSpendMoney := model.MoneyFromDecimal(safeToSpend)
+	netWorthMoney := netWorth
+	totalAssetsMoney := totalAssets
+	liquidAssetsMoney := liquidAssets
+	investedAssetsMoney := investedAssets
+	propertyAssetsMoney := propertyAssets
+	totalDebtsMoney := totalDebts
+	cashAvailableMoney := cashAvailable
+	forecastEndMonthMoney := forecastEndMonth
+	safeToSpendMoney := safeToSpend
 
 	resp := dto.DashboardResponse{
 		NetWorth: dto.MoneyValue{

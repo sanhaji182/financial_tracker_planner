@@ -276,9 +276,9 @@ func (s *debtService) GetDebtSummary(ctx context.Context, userID string) (*dto.D
 type simDebt struct {
 	id             string
 	name           string
-	balance        float64
+	balance        model.Money
 	interestRate   float64
-	minimumPayment float64
+	minimumPayment model.Money
 }
 
 func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extraMonthly model.Money) (*dto.AvalancheSimulationResponse, error) {
@@ -307,7 +307,7 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 	monthsNoExtra, interestNoExtra, schedNoExtra := runSim(activeDebts, 0)
 
 	// Run Simulation 2: With Extra (Avalanche)
-	monthsWithExtra, interestWithExtra, schedWithExtra := runSim(activeDebts, float64(extraMonthly))
+	monthsWithExtra, interestWithExtra, schedWithExtra := runSim(activeDebts, extraMonthly)
 
 	savingsInterest := interestNoExtra - interestWithExtra
 	savingsMonths := monthsNoExtra - monthsWithExtra
@@ -343,18 +343,15 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 		})
 	}
 
-	interestWithExtraMoney := model.Money(math.Round(interestWithExtra))
-	interestNoExtraMoney := model.Money(math.Round(interestNoExtra))
-	savingsInterestMoney := model.Money(math.Round(savingsInterest))
 	return &dto.AvalancheSimulationResponse{
 		MonthsToPayoff:                monthsWithExtra,
-		TotalInterestPaid:             interestWithExtraMoney,
-		FormattedTotalInterest:        model.FormatRupiahMoney(interestWithExtraMoney),
+		TotalInterestPaid:             interestWithExtra,
+		FormattedTotalInterest:        model.FormatRupiahMoney(interestWithExtra),
 		MonthsToPayoffWithoutExtra:    monthsNoExtra,
-		TotalInterestPaidWithoutExtra: interestNoExtraMoney,
-		FormattedInterestWithoutExtra: model.FormatRupiahMoney(interestNoExtraMoney),
-		SavingsInterest:               savingsInterestMoney,
-		FormattedSavingsInterest:      model.FormatRupiahMoney(savingsInterestMoney),
+		TotalInterestPaidWithoutExtra: interestNoExtra,
+		FormattedInterestWithoutExtra: model.FormatRupiahMoney(interestNoExtra),
+		SavingsInterest:               savingsInterest,
+		FormattedSavingsInterest:      model.FormatRupiahMoney(savingsInterest),
 		SavingsMonths:                 savingsMonths,
 		SchedulesWithExtra:            schedulesWithExtra,
 		SchedulesWithoutExtra:         schedulesWithoutExtra,
@@ -362,7 +359,7 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 }
 
 // Simulator core function
-func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.AvalanchePaymentSchedule) {
+func runSim(debts []model.Debt, extraMonthly model.Money) (int, model.Money, []model.AvalanchePaymentSchedule) {
 	// Initialize simulation debts
 	var simDebts []*simDebt
 	for _, d := range debts {
@@ -370,14 +367,14 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 		if d.InterestRate != nil {
 			rate = *d.InterestRate
 		}
-		minPay := 0.0
+		var minPay model.Money
 		if d.MinimumPayment != nil {
-			minPay = float64(*d.MinimumPayment)
+			minPay = *d.MinimumPayment
 		}
 		simDebts = append(simDebts, &simDebt{
 			id:             d.ID,
 			name:           d.Name,
-			balance:        float64(d.OutstandingBalance),
+			balance:        d.OutstandingBalance,
 			interestRate:   rate,
 			minimumPayment: minPay,
 		})
@@ -388,7 +385,7 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 		return simDebts[i].interestRate > simDebts[j].interestRate
 	})
 
-	totalInterest := 0.0
+	var totalInterest model.Money
 	monthCount := 0
 	maxMonths := 1200 // 100 years guard
 
@@ -413,13 +410,13 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 		// 1. Apply monthly interest first
 		for _, d := range simDebts {
 			if d.balance > 0 {
-				interest := d.balance * (d.interestRate / 12 / 100)
+				interest := model.Money(math.Round(float64(d.balance) * (d.interestRate / 12 / 100)))
 				d.balance += interest
 				totalInterest += interest
 
 				// Record interest paid per debt inside payoffSchedules
 				sched := payoffSchedules[d.id]
-				sched.TotalInterestPaid += model.Money(math.Round(interest))
+				sched.TotalInterestPaid += interest
 				payoffSchedules[d.id] = sched
 			}
 		}

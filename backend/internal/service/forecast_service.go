@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -70,14 +71,14 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	now := time.Now()
 	isCurrentMonth := targetYearMonth.Year() == now.Year() && targetYearMonth.Month() == now.Month()
 
-	var startingCash float64
+	var startingCashDecimal float64
 	if isCurrentMonth {
 		// Current month: use actual account balance
 		err = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(balance), 0)
 			FROM accounts
 			WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
-		`, ownerID).Scan(&startingCash)
+		`, ownerID).Scan(&startingCashDecimal)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get starting balance: %w", err)
 		}
@@ -87,58 +88,63 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		err = s.dbPool.QueryRow(ctx, `
 			SELECT projected_end_balance FROM forecasts
 			WHERE user_id = $1 AND month = $2
-		`, ownerID, prevMonth).Scan(&startingCash)
+		`, ownerID, prevMonth).Scan(&startingCashDecimal)
 		if err != nil {
 			// No previous forecast exists — fall back to actual account balance
 			err = s.dbPool.QueryRow(ctx, `
 				SELECT COALESCE(SUM(balance), 0)
 				FROM accounts
 				WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
-			`, ownerID).Scan(&startingCash)
+			`, ownerID).Scan(&startingCashDecimal)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get starting balance: %w", err)
 			}
 		}
 	}
 
+	startingCash := model.MoneyFromDecimal(startingCashDecimal)
+
 	// 3. Query average income of last 3 months
 	startOfCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfCurrentMonth.AddDate(0, -3, 0)
 
-	var totalIncomeLast3Months float64
+	var totalIncomeLast3MonthsDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM transactions
 		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed' AND date >= $2 AND date < $3 AND deleted_at IS NULL
-	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalIncomeLast3Months)
+	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalIncomeLast3MonthsDecimal)
 
-	estimatedIncome := totalIncomeLast3Months / 3.0
+	totalIncomeLast3Months := model.MoneyFromDecimal(totalIncomeLast3MonthsDecimal)
+	estimatedIncome := totalIncomeLast3Months / 3
 	incomeInsufficient := estimatedIncome <= 0
 
 	// 4. Query average variable expenses of last 3 months
-	var totalVariableExpensesLast3Months float64
+	var totalVariableExpensesLast3MonthsDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM transactions
 		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
 		  AND notes NOT LIKE 'Pembayaran Cicilan:%' AND notes NOT LIKE 'Pembayaran Tagihan:%'
 		  AND date >= $2 AND date < $3 AND deleted_at IS NULL
-	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalVariableExpensesLast3Months)
+	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalVariableExpensesLast3MonthsDecimal)
 
-	estimatedVariableExpenses := totalVariableExpensesLast3Months / 3.0
+	totalVariableExpensesLast3Months := model.MoneyFromDecimal(totalVariableExpensesLast3MonthsDecimal)
+	estimatedVariableExpenses := totalVariableExpensesLast3Months / 3
 	variableInsufficient := estimatedVariableExpenses <= 0
 
 	// 5. Query average living cost of last 3 months (excluding extra debt payoffs)
-	var totalLivingCostLast3Months float64
+	var totalLivingCostLast3MonthsDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM transactions
 		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
 		  AND notes NOT LIKE 'Pembayaran Cicilan:% (Ekstra)%'
 		  AND date >= $2 AND date < $3 AND deleted_at IS NULL
-	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalLivingCostLast3Months)
+	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalLivingCostLast3MonthsDecimal)
 
-	monthlyLivingCostThreshold := totalLivingCostLast3Months / 3.0
+	totalLivingCostLast3Months := model.MoneyFromDecimal(totalLivingCostLast3MonthsDecimal)
+	monthlyLivingCostThreshold := totalLivingCostLast3Months / 3
 	livingCostInsufficient := monthlyLivingCostThreshold <= 0
 
 	// 6. Query expected income day (day of month of latest income)
@@ -154,22 +160,22 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	}
 
 	// 7. Calculate fixed expenses for target month (bills + active debts min payment)
-	var billsSum float64
+	var billsSumDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM bills
 		WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
 		  AND TO_CHAR(next_due_date, 'YYYY-MM') = $2
-	`, ownerID, month).Scan(&billsSum)
+	`, ownerID, month).Scan(&billsSumDecimal)
 
-	var debtsMinPaymentSum float64
+	var debtsMinPaymentSumDecimal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(minimum_payment), 0)
 		FROM debts
 		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
-	`, ownerID).Scan(&debtsMinPaymentSum)
+	`, ownerID).Scan(&debtsMinPaymentSumDecimal)
 
-	estimatedFixedExpenses := billsSum + debtsMinPaymentSum
+	estimatedFixedExpenses := model.MoneyFromDecimal(billsSumDecimal) + model.MoneyFromDecimal(debtsMinPaymentSumDecimal)
 
 	// 8. Generate Daily Projections
 	daysInMonth := time.Date(targetYearMonth.Year(), targetYearMonth.Month()+1, 0, 0, 0, 0, 0, targetYearMonth.Location()).Day()
@@ -182,7 +188,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		startDay = now.Day()
 	}
 
-	dailyVariableExpense := estimatedVariableExpenses / 30.0
+	dailyVariableExpense := estimatedVariableExpenses / 30
 
 	var projections []dto.DailyProjectionDto
 	runningBalance := startingCash
@@ -190,7 +196,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	// Fetch all bills due in this target month
 	type dbBill struct {
 		Name   string
-		Amount float64
+		Amount model.Money
 		Day    int
 	}
 	rows, err := s.dbPool.Query(ctx, `
@@ -203,7 +209,9 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	if err == nil {
 		for rows.Next() {
 			var b dbBill
-			if scanErr := rows.Scan(&b.Name, &b.Amount, &b.Day); scanErr == nil {
+			var amount float64
+			if scanErr := rows.Scan(&b.Name, &amount, &b.Day); scanErr == nil {
+				b.Amount = model.MoneyFromDecimal(amount)
 				billsList = append(billsList, b)
 			}
 		}
@@ -213,7 +221,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	// Fetch all active debts due in this month
 	type dbDebt struct {
 		Name           string
-		MinimumPayment float64
+		MinimumPayment model.Money
 		DueDay         int
 	}
 	rowsDebts, err := s.dbPool.Query(ctx, `
@@ -225,7 +233,9 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	if err == nil {
 		for rowsDebts.Next() {
 			var d dbDebt
-			if scanErr := rowsDebts.Scan(&d.Name, &d.MinimumPayment, &d.DueDay); scanErr == nil {
+			var minimumPayment float64
+			if scanErr := rowsDebts.Scan(&d.Name, &minimumPayment, &d.DueDay); scanErr == nil {
+				d.MinimumPayment = model.MoneyFromDecimal(minimumPayment)
 				debtsList = append(debtsList, d)
 			}
 		}
@@ -243,7 +253,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		dateStr := currentDate.Format("2006-01-02")
 
 		var eventName string
-		var eventAmount float64
+		var eventAmount model.Money
 
 		if d >= startDay {
 			// Apply transactions for this day
@@ -293,8 +303,8 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 			isTight = true
 		}
 
-		projectedBalanceMoney := model.MoneyFromDecimal(runningBalance)
-		eventAmountMoney := model.MoneyFromDecimal(eventAmount)
+		projectedBalanceMoney := runningBalance
+		eventAmountMoney := eventAmount
 		projections = append(projections, dto.DailyProjectionDto{
 			Date:             dateStr,
 			ProjectedBalance: projectedBalanceMoney,
@@ -309,7 +319,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	// Calculate Safe-To-Spend
 	// Formula: Safe to Spend = Estimated Income - Total Fixed Expenses - (variable * 80%) - (5% emergency reserve)
-	safeToSpend := estimatedIncome - estimatedFixedExpenses - (estimatedVariableExpenses * 0.80) - (0.05 * estimatedIncome)
+	safeToSpend := estimatedIncome - estimatedFixedExpenses - model.Money(math.Round(float64(estimatedVariableExpenses)*0.80)) - model.Money(math.Round(float64(estimatedIncome)*0.05))
 	if safeToSpend < 0 {
 		safeToSpend = 0
 	}
@@ -331,13 +341,13 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		UsesFallbackValues: false,
 	}
 
-	estimatedIncomeMoney := model.MoneyFromDecimal(estimatedIncome)
-	estimatedFixedExpensesMoney := model.MoneyFromDecimal(estimatedFixedExpenses)
-	estimatedVariableExpensesMoney := model.MoneyFromDecimal(estimatedVariableExpenses)
-	projectedEndBalanceMoney := model.MoneyFromDecimal(projectedEndBalance)
-	lowestBalanceMoney := model.MoneyFromDecimal(lowestBalance)
-	safeToSpendMoney := model.MoneyFromDecimal(safeToSpend)
-	monthlyLivingCostThresholdMoney := model.MoneyFromDecimal(monthlyLivingCostThreshold)
+	estimatedIncomeMoney := estimatedIncome
+	estimatedFixedExpensesMoney := estimatedFixedExpenses
+	estimatedVariableExpensesMoney := estimatedVariableExpenses
+	projectedEndBalanceMoney := projectedEndBalance
+	lowestBalanceMoney := lowestBalance
+	safeToSpendMoney := safeToSpend
+	monthlyLivingCostThresholdMoney := monthlyLivingCostThreshold
 	res := &dto.ForecastResponse{
 		Month: month,
 		EstimatedIncome: dto.MoneyValue{
@@ -388,16 +398,16 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 			    projected_end_balance = $4, lowest_balance = $5, lowest_balance_date = $6,
 			    safe_to_spend = $7, is_tight = $8, daily_projections = $9, calculated_at = NOW()
 			WHERE user_id = $10 AND month = $11
-		`, estimatedIncome, estimatedFixedExpenses, estimatedVariableExpenses, projectedEndBalance,
-			lowestBalance, lowestBalanceDate, safeToSpend, isTight, projBytes, ownerID, month)
+		`, model.DecimalFromMoney(estimatedIncome), model.DecimalFromMoney(estimatedFixedExpenses), model.DecimalFromMoney(estimatedVariableExpenses), model.DecimalFromMoney(projectedEndBalance),
+			model.DecimalFromMoney(lowestBalance), lowestBalanceDate, model.DecimalFromMoney(safeToSpend), isTight, projBytes, ownerID, month)
 	} else {
 		_, _ = s.dbPool.Exec(ctx, `
 			INSERT INTO forecasts (
 				user_id, month, estimated_income, estimated_fixed_expenses, estimated_variable_expenses,
 				projected_end_balance, lowest_balance, lowest_balance_date, safe_to_spend, is_tight, daily_projections
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-		`, ownerID, month, estimatedIncome, estimatedFixedExpenses, estimatedVariableExpenses,
-			projectedEndBalance, lowestBalance, lowestBalanceDate, safeToSpend, isTight, projBytes)
+		`, ownerID, month, model.DecimalFromMoney(estimatedIncome), model.DecimalFromMoney(estimatedFixedExpenses), model.DecimalFromMoney(estimatedVariableExpenses),
+			model.DecimalFromMoney(projectedEndBalance), model.DecimalFromMoney(lowestBalance), lowestBalanceDate, model.DecimalFromMoney(safeToSpend), isTight, projBytes)
 	}
 
 	// 10. Cache in Redis (TTL: 30 minutes)

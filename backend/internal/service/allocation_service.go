@@ -3,10 +3,12 @@ package service
 import (
 	"context"
 	"fmt"
+	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/model"
 )
 
 type AllocationService interface {
@@ -63,10 +65,10 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 
 	// 3. Calculate Available Surplus
 	// Surplus = Income - Variable - Bills - MinDebtPayments - Buffer(10% of Income)
-	income := float64(fc.EstimatedIncome.Value)
-	fixed := float64(fc.EstimatedFixedExpenses.Value)
-	variable := float64(fc.EstimatedVariableExpenses.Value)
-	buffer := 0.10 * income
+	income := fc.EstimatedIncome.Value
+	fixed := fc.EstimatedFixedExpenses.Value
+	variable := fc.EstimatedVariableExpenses.Value
+	buffer := model.Money(math.Round(float64(income) * 0.10))
 
 	surplus := income - fixed - variable - buffer
 	if surplus < 0 {
@@ -81,13 +83,13 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 	if efSummary.CoverageMonths < float64(efSummary.TargetMonths) {
 		efNeeded := efSummary.TargetAmount.Value - efSummary.TotalEmergencyFund.Value
 		if efNeeded > 0 && surplusRemaining > 0 {
-			suggested := minFloat(surplusRemaining, float64(efNeeded))
+			suggested := minMoney(surplusRemaining, efNeeded)
 			advices = append(advices, dto.AdviceDto{
 				Priority: 1,
 				Title:    "Top Up Dana Darurat",
 				AmountSuggested: dto.MoneyValue{
-					Value:          int64(suggested),
-					FormattedValue: dto.FormatRupiah(suggested),
+					Value:          suggested,
+					FormattedValue: model.FormatRupiahMoney(suggested),
 				},
 				Reason:     fmt.Sprintf("Dana darurat saat ini baru mencakup %.1f bulan, dari target %d bulan.", efSummary.CoverageMonths, efSummary.TargetMonths),
 				ActionType: "top_up",
@@ -103,7 +105,7 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 		ID                 string
 		Name               string
 		InterestRate       float64
-		OutstandingBalance float64
+		OutstandingBalance model.Money
 	}
 	var debts []dbDebt
 	rows, err := s.dbPool.Query(ctx, `
@@ -115,7 +117,9 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 	if err == nil {
 		for rows.Next() {
 			var d dbDebt
-			if scanErr := rows.Scan(&d.ID, &d.Name, &d.InterestRate, &d.OutstandingBalance); scanErr == nil {
+			var outstandingBalance float64
+			if scanErr := rows.Scan(&d.ID, &d.Name, &d.InterestRate, &outstandingBalance); scanErr == nil {
+				d.OutstandingBalance = model.MoneyFromDecimal(outstandingBalance)
 				debts = append(debts, d)
 			}
 		}
@@ -127,13 +131,13 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 			break
 		}
 		if debt.OutstandingBalance > 0 {
-			suggested := minFloat(surplusRemaining, float64(debt.OutstandingBalance))
+			suggested := minMoney(surplusRemaining, debt.OutstandingBalance)
 			advices = append(advices, dto.AdviceDto{
 				Priority: 2,
 				Title:    fmt.Sprintf("Bayar Ekstra Utang %s", debt.Name),
 				AmountSuggested: dto.MoneyValue{
-					Value:          int64(suggested),
-					FormattedValue: dto.FormatRupiah(suggested),
+					Value:          suggested,
+					FormattedValue: model.FormatRupiahMoney(suggested),
 				},
 				Reason:     fmt.Sprintf("Utang %s memiliki bunga tinggi (%.1f%%). Pembayaran ekstra akan meminimalkan beban bunga jangka panjang.", debt.Name, debt.InterestRate),
 				ActionType: "pay_extra",
@@ -150,8 +154,8 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 			Priority: 3,
 			Title:    "Tahan Kas Sebagai Buffer",
 			AmountSuggested: dto.MoneyValue{
-				Value:          int64(suggested),
-				FormattedValue: dto.FormatRupiah(suggested),
+				Value:          suggested,
+				FormattedValue: model.FormatRupiahMoney(suggested),
 			},
 			Reason:     "Proyeksi saldo kas Anda akan turun di bawah batas aman bulan ini. Tahan sisa dana sebagai buffer darurat jangka pendek.",
 			ActionType: "hold_buffer",
@@ -167,8 +171,8 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 			Priority: 4,
 			Title:    "Alokasikan Ke Investasi",
 			AmountSuggested: dto.MoneyValue{
-				Value:          int64(suggested),
-				FormattedValue: dto.FormatRupiah(suggested),
+				Value:          suggested,
+				FormattedValue: model.FormatRupiahMoney(suggested),
 			},
 			Reason:     "Seluruh pos keuangan utama (Dana Darurat, Utang bunga tinggi, dan Forecast) dalam kondisi aman. Alokasikan sisa kas untuk investasi produktif.",
 			ActionType: "invest",
@@ -179,14 +183,14 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 
 	return &dto.AllocationAdviceResponse{
 		Surplus: dto.MoneyValue{
-			Value:          int64(surplus),
-			FormattedValue: dto.FormatRupiah(surplus),
+			Value:          surplus,
+			FormattedValue: model.FormatRupiahMoney(surplus),
 		},
 		Advices: advices,
 	}, nil
 }
 
-func minFloat(a, b float64) float64 {
+func minMoney(a, b model.Money) model.Money {
 	if a < b {
 		return a
 	}
