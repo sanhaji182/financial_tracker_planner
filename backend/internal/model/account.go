@@ -11,8 +11,8 @@ type Account struct {
 	Type                string     `json:"type" db:"type"` // bank, e_wallet, cash, investment, deposit
 	BankProvider        *string    `json:"bank_provider,omitempty" db:"bank_provider"`
 	AccountNumberMasked *string    `json:"account_number_masked,omitempty" db:"account_number_masked"`
-	Balance             float64    `json:"balance" db:"balance"`
-	InitialBalance      float64    `json:"initial_balance" db:"initial_balance"`
+	Balance             Money      `json:"balance" db:"balance"`
+	InitialBalance      Money      `json:"initial_balance" db:"initial_balance"`
 	Currency            string     `json:"currency" db:"currency"`
 	Icon                *string    `json:"icon,omitempty" db:"icon"`
 	Color               *string    `json:"color,omitempty" db:"color"`
@@ -27,10 +27,10 @@ type Account struct {
 }
 
 type AccountSummary struct {
-	TotalBank       float64 `json:"total_bank"`
-	TotalEWallet    float64 `json:"total_e_wallet"`
-	TotalCash       float64 `json:"total_cash"`
-	TotalInvestment float64 `json:"total_investment"`
-	TotalDeposit    float64 `json:"total_deposit"`
-	GrandTotal      float64 `json:"grand_total"`
+	TotalBank       Money `json:"total_bank"`
+	TotalEWallet    Money `json:"total_e_wallet"`
+	TotalCash       Money `json:"total_cash"`
+	TotalInvestment Money `json:"total_investment"`
+	TotalDeposit    Money `json:"total_deposit"`
+	GrandTotal      Money `json:"grand_total"`
 }

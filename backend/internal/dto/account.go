@@ -13,7 +13,7 @@ type CreateAccountRequest struct {
 	Type            string  `json:"type" binding:"required,oneof=bank e_wallet cash investment deposit"`
 	BankProvider    *string `json:"bank_provider"`
 	AccountNumber   *string `json:"account_number"`
-	InitialBalance  float64 `json:"initial_balance" binding:"required,gte=0"`
+	InitialBalance  int64   `json:"initial_balance" binding:"required,gte=0"` // Changed from float64
 	Currency        string  `json:"currency" binding:"omitempty,len=3"`
 	IsShared        *bool   `json:"is_shared"`
 	IsEmergencyFund *bool   `json:"is_emergency_fund"`
@@ -40,9 +40,9 @@ type AccountResponse struct {
 	Type                string    `json:"type"`
 	BankProvider        *string   `json:"bank_provider,omitempty"`
 	AccountNumberMasked *string   `json:"account_number_masked,omitempty"`
-	Balance             float64   `json:"balance"`
+	Balance             int64     `json:"balance"` // Changed from float64
 	FormattedBalance    string    `json:"formatted_balance"`
-	InitialBalance      float64   `json:"initial_balance"`
+	InitialBalance      int64     `json:"initial_balance"` // Changed from float64
 	Currency            string    `json:"currency"`
 	Icon                *string   `json:"icon,omitempty"`
 	Color               *string   `json:"color,omitempty"`
@@ -56,18 +56,18 @@ type AccountResponse struct {
 }
 
 type AccountSummaryResponse struct {
-	TotalBank             float64 `json:"total_bank"`
-	FormattedTotalBank    string  `json:"formatted_total_bank"`
-	TotalEWallet          float64 `json:"total_e_wallet"`
-	FormattedTotalEWallet string  `json:"formatted_total_e_wallet"`
-	TotalCash             float64 `json:"total_cash"`
-	FormattedTotalCash    string  `json:"formatted_total_cash"`
-	TotalInvestment       float64 `json:"total_investment"`
+	TotalBank             int64  `json:"total_bank"` // Changed from float64
+	FormattedTotalBank    string `json:"formatted_total_bank"`
+	TotalEWallet          int64  `json:"total_e_wallet"` // Changed from float64
+	FormattedTotalEWallet string `json:"formatted_total_e_wallet"`
+	TotalCash             int64  `json:"total_cash"` // Changed from float64
+	FormattedTotalCash    string `json:"formatted_total_cash"`
+	TotalInvestment       int64  `json:"total_investment"` // Changed from float64
 	FormattedTotalInvestment string `json:"formatted_total_investment"`
-	TotalDeposit          float64 `json:"total_deposit"`
-	FormattedTotalDeposit string  `json:"formatted_total_deposit"`
-	GrandTotal            float64 `json:"grand_total"`
-	FormattedGrandTotal   string  `json:"formatted_grand_total"`
+	TotalDeposit          int64  `json:"total_deposit"` // Changed from float64
+	FormattedTotalDeposit string `json:"formatted_total_deposit"`
+	GrandTotal            int64  `json:"grand_total"` // Changed from float64
+	FormattedGrandTotal   string `json:"formatted_grand_total"`
 }
 
 func FormatRupiah(amount float64) string {
@@ -113,7 +113,7 @@ func ToAccountResponse(a *model.Account) AccountResponse {
 		BankProvider:        a.BankProvider,
 		AccountNumberMasked: a.AccountNumberMasked,
 		Balance:             a.Balance,
-		FormattedBalance:    FormatRupiah(a.Balance),
+		FormattedBalance:    model.FormatRupiahMoney(a.Balance),
 		InitialBalance:      a.InitialBalance,
 		Currency:            a.Currency,
 		Icon:                a.Icon,
@@ -131,16 +131,16 @@ func ToAccountResponse(a *model.Account) AccountResponse {
 func ToAccountSummaryResponse(s *model.AccountSummary) AccountSummaryResponse {
 	return AccountSummaryResponse{
 		TotalBank:             s.TotalBank,
-		FormattedTotalBank:    FormatRupiah(s.TotalBank),
+		FormattedTotalBank:    model.FormatRupiahMoney(s.TotalBank),
 		TotalEWallet:          s.TotalEWallet,
-		FormattedTotalEWallet: FormatRupiah(s.TotalEWallet),
+		FormattedTotalEWallet: model.FormatRupiahMoney(s.TotalEWallet),
 		TotalCash:             s.TotalCash,
-		FormattedTotalCash:    FormatRupiah(s.TotalCash),
+		FormattedTotalCash:    model.FormatRupiahMoney(s.TotalCash),
 		TotalInvestment:       s.TotalInvestment,
-		FormattedTotalInvestment: FormatRupiah(s.TotalInvestment),
+		FormattedTotalInvestment: model.FormatRupiahMoney(s.TotalInvestment),
 		TotalDeposit:          s.TotalDeposit,
-		FormattedTotalDeposit: FormatRupiah(s.TotalDeposit),
+		FormattedTotalDeposit: model.FormatRupiahMoney(s.TotalDeposit),
 		GrandTotal:            s.GrandTotal,
-		FormattedGrandTotal:   FormatRupiah(s.GrandTotal),
+		FormattedGrandTotal:   model.FormatRupiahMoney(s.GrandTotal),
 	}
 }

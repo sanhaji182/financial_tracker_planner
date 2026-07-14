@@ -193,17 +193,18 @@ func (r *pgAccountRepository) GetSummaryByUser(ctx context.Context, userID strin
 		if err := rows.Scan(&t, &val); err != nil {
 			return nil, err
 		}
+		moneyVal := model.MoneyFromDecimal(val)
 		switch t {
 		case "bank":
-			summary.TotalBank = val
+			summary.TotalBank = moneyVal
 		case "e_wallet":
-			summary.TotalEWallet = val
+			summary.TotalEWallet = moneyVal
 		case "cash":
-			summary.TotalCash = val
+			summary.TotalCash = moneyVal
 		case "investment":
-			summary.TotalInvestment = val
+			summary.TotalInvestment = moneyVal
 		case "deposit":
-			summary.TotalDeposit = val
+			summary.TotalDeposit = moneyVal
 		}
 	}
 	summary.GrandTotal = summary.TotalBank + summary.TotalEWallet + summary.TotalCash + summary.TotalInvestment + summary.TotalDeposit
@@ -211,6 +212,7 @@ func (r *pgAccountRepository) GetSummaryByUser(ctx context.Context, userID strin
 }
 
 func (r *pgAccountRepository) UpdateBalance(ctx context.Context, accountID string, delta float64) error {
+	// Convert delta from float64 (decimal) to database format
 	query := `
 		UPDATE accounts
 		SET balance = balance + $1, updated_at = NOW()
