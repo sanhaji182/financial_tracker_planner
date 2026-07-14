@@ -9,7 +9,7 @@ import (
 
 type CreateBillRequest struct {
 	Name               string     `json:"name" binding:"required"`
-	Amount             float64    `json:"amount" binding:"required,gt=0"`
+	Amount             int64      `json:"amount" binding:"required,gt=0"`
 	CategoryID         *string    `json:"category_id"`
 	AccountID          *string    `json:"account_id"`
 	Frequency          string     `json:"frequency" binding:"required,oneof=monthly yearly quarterly weekly custom"`
@@ -23,7 +23,7 @@ type CreateBillRequest struct {
 
 type UpdateBillRequest struct {
 	Name               string     `json:"name" binding:"required"`
-	Amount             float64    `json:"amount" binding:"required,gt=0"`
+	Amount             int64      `json:"amount" binding:"required,gt=0"`
 	CategoryID         *string    `json:"category_id"`
 	AccountID          *string    `json:"account_id"`
 	Frequency          string     `json:"frequency" binding:"required,oneof=monthly yearly quarterly weekly custom"`
@@ -37,31 +37,31 @@ type UpdateBillRequest struct {
 }
 
 type PayBillRequest struct {
-	Amount      float64   `json:"amount" binding:"required,gt=0"`
+	Amount      int64     `json:"amount" binding:"required,gt=0"`
 	PaymentDate time.Time `json:"payment_date" binding:"required"`
 	Notes       *string   `json:"notes"`
 	AccountID   string    `json:"account_id" binding:"required"` // source account for transaction
 }
 
 type BillPaymentResponse struct {
-	ID              string    `json:"id"`
-	BillID          string    `json:"bill_id"`
-	Amount          float64   `json:"amount"`
-	FormattedAmount string    `json:"formatted_amount"`
-	PaymentDate     time.Time `json:"payment_date"`
-	IsPartial       bool      `json:"is_partial"`
-	RemainingAmount float64   `json:"remaining_amount"`
-	FormattedRemaining string `json:"formatted_remaining"`
-	TransactionID   *string   `json:"transaction_id,omitempty"`
-	Notes           *string   `json:"notes,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	BillID             string    `json:"bill_id"`
+	Amount             int64     `json:"amount"`
+	FormattedAmount    string    `json:"formatted_amount"`
+	PaymentDate        time.Time `json:"payment_date"`
+	IsPartial          bool      `json:"is_partial"`
+	RemainingAmount    int64     `json:"remaining_amount"`
+	FormattedRemaining string    `json:"formatted_remaining"`
+	TransactionID      *string   `json:"transaction_id,omitempty"`
+	Notes              *string   `json:"notes,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type BillResponse struct {
 	ID                 string                `json:"id"`
 	UserID             string                `json:"user_id"`
 	Name               string                `json:"name"`
-	Amount             float64               `json:"amount"`
+	Amount             int64                 `json:"amount"`
 	FormattedAmount    string                `json:"formatted_amount"`
 	CategoryID         *string               `json:"category_id,omitempty"`
 	CategoryName       *string               `json:"category_name,omitempty"`
@@ -82,15 +82,15 @@ type BillResponse struct {
 }
 
 type BillMonthlyCommitmentResponse struct {
-	Month              string  `json:"month"` // YYYY-MM
-	TotalCommitment    float64 `json:"total_commitment"`
-	FormattedTotal     string  `json:"formatted_total"`
-	TotalPaid          float64 `json:"total_paid"`
-	FormattedPaid      string  `json:"formatted_paid"`
-	TotalUnpaid        float64 `json:"total_unpaid"`
-	FormattedUnpaid    string  `json:"formatted_unpaid"`
-	TotalOverdue       float64 `json:"total_overdue"`
-	FormattedOverdue   string  `json:"formatted_overdue"`
+	Month            string `json:"month"` // YYYY-MM
+	TotalCommitment  int64  `json:"total_commitment"`
+	FormattedTotal   string `json:"formatted_total"`
+	TotalPaid        int64  `json:"total_paid"`
+	FormattedPaid    string `json:"formatted_paid"`
+	TotalUnpaid      int64  `json:"total_unpaid"`
+	FormattedUnpaid  string `json:"formatted_unpaid"`
+	TotalOverdue     int64  `json:"total_overdue"`
+	FormattedOverdue string `json:"formatted_overdue"`
 }
 
 // Convert model to DTO
@@ -119,7 +119,7 @@ func ToBillResponse(b *model.Bill, payments []model.BillPayment) BillResponse {
 		UserID:             b.UserID,
 		Name:               b.Name,
 		Amount:             b.Amount,
-		FormattedAmount:    formatRupiah(b.Amount),
+		FormattedAmount:    model.FormatRupiahMoney(b.Amount),
 		CategoryID:         b.CategoryID,
 		CategoryName:       categoryName,
 		AccountID:          b.AccountID,
@@ -144,11 +144,11 @@ func ToBillPaymentResponse(p *model.BillPayment) BillPaymentResponse {
 		ID:                 p.ID,
 		BillID:             p.BillID,
 		Amount:             p.Amount,
-		FormattedAmount:    formatRupiah(p.Amount),
+		FormattedAmount:    model.FormatRupiahMoney(p.Amount),
 		PaymentDate:        p.PaymentDate,
 		IsPartial:          p.IsPartial,
 		RemainingAmount:    p.RemainingAmount,
-		FormattedRemaining: formatRupiah(p.RemainingAmount),
+		FormattedRemaining: model.FormatRupiahMoney(p.RemainingAmount),
 		TransactionID:      p.TransactionID,
 		Notes:              p.Notes,
 		CreatedAt:          p.CreatedAt,

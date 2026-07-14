@@ -6,20 +6,20 @@ type MonthlyClosingRequest struct {
 }
 
 type ClosingAccount struct {
-	ID      string  `json:"id"`
-	Name    string  `json:"name"`
-	Balance float64 `json:"balance"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Balance int64  `json:"balance"`
 }
 
 type ClosingCategoryBudget struct {
-	Name   string  `json:"name"`
-	Budget float64 `json:"budget"`
-	Actual float64 `json:"actual"`
+	Name   string `json:"name"`
+	Budget int64  `json:"budget"`
+	Actual int64  `json:"actual"`
 }
 
 type ClosingBudgetSummary struct {
-	TotalBudget float64                 `json:"total_budget"`
-	TotalSpent  float64                 `json:"total_spent"`
+	TotalBudget int64                   `json:"total_budget"`
+	TotalSpent  int64                   `json:"total_spent"`
 	Categories  []ClosingCategoryBudget `json:"categories"`
 }
 
@@ -31,24 +31,24 @@ type ClosingGoalProgress struct {
 type ClosingSnapshot struct {
 	Month            string                `json:"month"`
 	Accounts         []ClosingAccount      `json:"accounts"`
-	TotalIncome      float64               `json:"total_income"`
-	TotalExpense     float64               `json:"total_expense"`
-	TotalAssets      float64               `json:"total_assets"`
-	TotalDebts       float64               `json:"total_debts"`
-	NetWorth         float64               `json:"net_worth"`
-	TotalCash        float64               `json:"total_cash"`
+	TotalIncome      int64                 `json:"total_income"`
+	TotalExpense     int64                 `json:"total_expense"`
+	TotalAssets      int64                 `json:"total_assets"`
+	TotalDebts       int64                 `json:"total_debts"`
+	NetWorth         int64                 `json:"net_worth"`
+	TotalCash        int64                 `json:"total_cash"`
 	DTIRatio         float64               `json:"dti_ratio"`
 	HealthScore      int                   `json:"health_score"`
-	EFCoverageMonths float64               `json:"ef_coverage_months"`
+	EFCoverageMonths int64                 `json:"ef_coverage_months"`
 	BudgetSummary    ClosingBudgetSummary  `json:"budget_summary"`
 	GoalsProgress    []ClosingGoalProgress `json:"goals_progress"`
 }
 
 type DeltaValue struct {
-	AbsoluteChange          float64 `json:"absolute_change"`
-	FormattedAbsoluteChange string  `json:"formatted_absolute_change"`
-	PercentageChange        float64 `json:"percentage_change"`
-	Direction               string  `json:"direction"` // up, down, flat
+	AbsoluteChange          int64  `json:"absolute_change"`
+	FormattedAbsoluteChange string `json:"formatted_absolute_change"`
+	PercentageChange        int64  `json:"percentage_change"`
+	Direction               string `json:"direction"` // up, down, flat
 }
 
 type ClosingComparison struct {
@@ -78,7 +78,7 @@ type MonthlyClosingResponse struct {
 	TotalDebts       MoneyValue         `json:"total_debts"`
 	TotalCash        MoneyValue         `json:"total_cash"`
 	DTIRatio         float64            `json:"dti_ratio"`
-	EFCoverageMonths float64            `json:"ef_coverage_months"`
+	EFCoverageMonths int64              `json:"ef_coverage_months"`
 	IsConfirmed      bool               `json:"is_confirmed"`
 	ConfirmedAt      string             `json:"confirmed_at,omitempty"`
 	Notes            string             `json:"notes"`

@@ -63,9 +63,9 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 
 	// 3. Calculate Available Surplus
 	// Surplus = Income - Variable - Bills - MinDebtPayments - Buffer(10% of Income)
-	income := fc.EstimatedIncome.Value
-	fixed := fc.EstimatedFixedExpenses.Value
-	variable := fc.EstimatedVariableExpenses.Value
+	income := float64(fc.EstimatedIncome.Value)
+	fixed := float64(fc.EstimatedFixedExpenses.Value)
+	variable := float64(fc.EstimatedVariableExpenses.Value)
 	buffer := 0.10 * income
 
 	surplus := income - fixed - variable - buffer
@@ -81,13 +81,13 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 	if efSummary.CoverageMonths < float64(efSummary.TargetMonths) {
 		efNeeded := efSummary.TargetAmount.Value - efSummary.TotalEmergencyFund.Value
 		if efNeeded > 0 && surplusRemaining > 0 {
-			suggested := minFloat(surplusRemaining, efNeeded)
+			suggested := minFloat(surplusRemaining, float64(efNeeded))
 			advices = append(advices, dto.AdviceDto{
 				Priority: 1,
 				Title:    "Top Up Dana Darurat",
 				AmountSuggested: dto.MoneyValue{
-					Value:          suggested,
-					FormattedValue: formatRupiah(suggested),
+					Value:          int64(suggested),
+					FormattedValue: dto.FormatRupiah(suggested),
 				},
 				Reason:     fmt.Sprintf("Dana darurat saat ini baru mencakup %.1f bulan, dari target %d bulan.", efSummary.CoverageMonths, efSummary.TargetMonths),
 				ActionType: "top_up",
@@ -127,13 +127,13 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 			break
 		}
 		if debt.OutstandingBalance > 0 {
-			suggested := minFloat(surplusRemaining, debt.OutstandingBalance)
+			suggested := minFloat(surplusRemaining, float64(debt.OutstandingBalance))
 			advices = append(advices, dto.AdviceDto{
 				Priority: 2,
 				Title:    fmt.Sprintf("Bayar Ekstra Utang %s", debt.Name),
 				AmountSuggested: dto.MoneyValue{
-					Value:          suggested,
-					FormattedValue: formatRupiah(suggested),
+					Value:          int64(suggested),
+					FormattedValue: dto.FormatRupiah(suggested),
 				},
 				Reason:     fmt.Sprintf("Utang %s memiliki bunga tinggi (%.1f%%). Pembayaran ekstra akan meminimalkan beban bunga jangka panjang.", debt.Name, debt.InterestRate),
 				ActionType: "pay_extra",

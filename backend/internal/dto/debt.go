@@ -10,46 +10,46 @@ import (
 )
 
 type CreateDebtRequest struct {
-	Name            string     `json:"name" binding:"required"`
-	Type            string     `json:"type" binding:"required,oneof=kpr credit_card installment personal_loan other"`
-	Creditor        *string    `json:"creditor"`
-	OriginalAmount  float64    `json:"original_amount" binding:"required,gt=0"`
-	Outstanding     float64    `json:"outstanding_balance" binding:"required,gte=0"`
-	InterestRate    *float64   `json:"interest_rate" binding:"omitempty,gte=0"`
-	MinimumPayment  *float64   `json:"minimum_payment" binding:"omitempty,gte=0"`
-	DueDay          *int       `json:"due_day" binding:"omitempty,min=1,max=31"`
-	StartDate       *time.Time `json:"start_date"`
-	EndDate         *time.Time `json:"end_date"`
-	TenorMonths     *int       `json:"tenor_months" binding:"omitempty,gt=0"`
-	AccountID       *string    `json:"account_id"`
-	Notes           *string    `json:"notes"`
-	IsShared        bool       `json:"is_shared"`
-	Currency        string     `json:"currency"`
+	Name           string     `json:"name" binding:"required"`
+	Type           string     `json:"type" binding:"required,oneof=kpr credit_card installment personal_loan other"`
+	Creditor       *string    `json:"creditor"`
+	OriginalAmount int64      `json:"original_amount" binding:"required,gt=0"`
+	Outstanding    int64      `json:"outstanding_balance" binding:"required,gte=0"`
+	InterestRate   *float64   `json:"interest_rate" binding:"omitempty,gte=0"`
+	MinimumPayment *int64     `json:"minimum_payment" binding:"omitempty,gte=0"`
+	DueDay         *int       `json:"due_day" binding:"omitempty,min=1,max=31"`
+	StartDate      *time.Time `json:"start_date"`
+	EndDate        *time.Time `json:"end_date"`
+	TenorMonths    *int       `json:"tenor_months" binding:"omitempty,gt=0"`
+	AccountID      *string    `json:"account_id"`
+	Notes          *string    `json:"notes"`
+	IsShared       bool       `json:"is_shared"`
+	Currency       string     `json:"currency"`
 }
 
 type UpdateDebtRequest struct {
-	Name            string     `json:"name" binding:"required"`
-	Creditor        *string    `json:"creditor"`
-	Outstanding     float64    `json:"outstanding_balance" binding:"gte=0"`
-	InterestRate    *float64   `json:"interest_rate" binding:"omitempty,gte=0"`
-	MinimumPayment  *float64   `json:"minimum_payment" binding:"omitempty,gte=0"`
-	DueDay          *int       `json:"due_day" binding:"omitempty,min=1,max=31"`
-	StartDate       *time.Time `json:"start_date"`
-	EndDate         *time.Time `json:"end_date"`
-	TenorMonths     *int       `json:"tenor_months" binding:"omitempty,gt=0"`
-	AccountID       *string    `json:"account_id"`
-	Notes           *string    `json:"notes"`
-	IsShared        bool       `json:"is_shared"`
-	Status          string     `json:"status" binding:"required,oneof=active paid_off defaulted restructured"`
-	Currency        string     `json:"currency"`
+	Name           string     `json:"name" binding:"required"`
+	Creditor       *string    `json:"creditor"`
+	Outstanding    int64      `json:"outstanding_balance" binding:"gte=0"`
+	InterestRate   *float64   `json:"interest_rate" binding:"omitempty,gte=0"`
+	MinimumPayment *int64     `json:"minimum_payment" binding:"omitempty,gte=0"`
+	DueDay         *int       `json:"due_day" binding:"omitempty,min=1,max=31"`
+	StartDate      *time.Time `json:"start_date"`
+	EndDate        *time.Time `json:"end_date"`
+	TenorMonths    *int       `json:"tenor_months" binding:"omitempty,gt=0"`
+	AccountID      *string    `json:"account_id"`
+	Notes          *string    `json:"notes"`
+	IsShared       bool       `json:"is_shared"`
+	Status         string     `json:"status" binding:"required,oneof=active paid_off defaulted restructured"`
+	Currency       string     `json:"currency"`
 }
 
 type RecordDebtPaymentRequest struct {
-	Amount          float64   `json:"amount" binding:"required,gt=0"`
-	PaymentDate     time.Time `json:"payment_date" binding:"required"`
-	IsExtraPayment  bool      `json:"is_extra_payment"`
-	Notes           *string   `json:"notes"`
-	AccountID       string    `json:"account_id" binding:"required"` // source account
+	Amount         int64     `json:"amount" binding:"required,gt=0"`
+	PaymentDate    time.Time `json:"payment_date" binding:"required"`
+	IsExtraPayment bool      `json:"is_extra_payment"`
+	Notes          *string   `json:"notes"`
+	AccountID      string    `json:"account_id" binding:"required"` // source account
 }
 
 func (r *RecordDebtPaymentRequest) UnmarshalJSON(data []byte) error {
@@ -108,57 +108,57 @@ func (r *RecordDebtPaymentRequest) UnmarshalJSON(data []byte) error {
 }
 
 type DebtPaymentResponse struct {
-	ID             string    `json:"id"`
-	DebtID         string    `json:"debt_id"`
-	Amount         float64   `json:"amount"`
-	FormattedAmount string   `json:"formatted_amount"`
-	PaymentDate    time.Time `json:"payment_date"`
-	IsExtraPayment bool      `json:"is_extra_payment"`
-	PrincipalPortion *float64 `json:"principal_portion,omitempty"`
-	FormattedPrincipal *string `json:"formatted_principal,omitempty"`
-	InterestPortion  *float64 `json:"interest_portion,omitempty"`
-	FormattedInterest *string  `json:"formatted_interest,omitempty"`
-	RemainingBalance  float64   `json:"remaining_balance"`
-	FormattedRemaining string   `json:"formatted_remaining"`
-	TransactionID  *string   `json:"transaction_id,omitempty"`
-	Notes          *string   `json:"notes,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID                 string    `json:"id"`
+	DebtID             string    `json:"debt_id"`
+	Amount             int64     `json:"amount"`
+	FormattedAmount    string    `json:"formatted_amount"`
+	PaymentDate        time.Time `json:"payment_date"`
+	IsExtraPayment     bool      `json:"is_extra_payment"`
+	PrincipalPortion   *int64    `json:"principal_portion,omitempty"`
+	FormattedPrincipal *string   `json:"formatted_principal,omitempty"`
+	InterestPortion    *int64    `json:"interest_portion,omitempty"`
+	FormattedInterest  *string   `json:"formatted_interest,omitempty"`
+	RemainingBalance   int64     `json:"remaining_balance"`
+	FormattedRemaining string    `json:"formatted_remaining"`
+	TransactionID      *string   `json:"transaction_id,omitempty"`
+	Notes              *string   `json:"notes,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
 }
 
 type DebtResponse struct {
-	ID                 string                `json:"id"`
-	UserID             string                `json:"user_id"`
-	Name               string                `json:"name"`
-	Type               string                `json:"type"`
-	Creditor           *string               `json:"creditor,omitempty"`
-	OriginalAmount     float64               `json:"original_amount"`
-	FormattedOriginal  string                `json:"formatted_original"`
-	OutstandingBalance float64               `json:"outstanding_balance"`
-	FormattedOutstanding string              `json:"formatted_outstanding"`
-	InterestRate       *float64              `json:"interest_rate,omitempty"`
-	MinimumPayment     *float64              `json:"minimum_payment,omitempty"`
-	FormattedMinPayment *string              `json:"formatted_minimum_payment,omitempty"`
-	DueDay             *int                  `json:"due_day,omitempty"`
-	StartDate          *time.Time            `json:"start_date,omitempty"`
-	EndDate            *time.Time            `json:"end_date,omitempty"`
-	TenorMonths        *int                  `json:"tenor_months,omitempty"`
-	AccountID          *string               `json:"account_id,omitempty"`
-	AccountName        *string               `json:"account_name,omitempty"`
-	Currency           string                `json:"currency"`
-	Status             string                `json:"status"`
-	Notes              *string               `json:"notes,omitempty"`
-	IsShared           bool                  `json:"is_shared"`
-	CreatedAt          time.Time             `json:"created_at"`
-	UpdatedAt          time.Time             `json:"updated_at"`
-	Payments           []DebtPaymentResponse `json:"payments,omitempty"`
+	ID                   string                `json:"id"`
+	UserID               string                `json:"user_id"`
+	Name                 string                `json:"name"`
+	Type                 string                `json:"type"`
+	Creditor             *string               `json:"creditor,omitempty"`
+	OriginalAmount       int64                 `json:"original_amount"`
+	FormattedOriginal    string                `json:"formatted_original"`
+	OutstandingBalance   int64                 `json:"outstanding_balance"`
+	FormattedOutstanding string                `json:"formatted_outstanding"`
+	InterestRate         *float64              `json:"interest_rate,omitempty"`
+	MinimumPayment       *int64                `json:"minimum_payment,omitempty"`
+	FormattedMinPayment  *string               `json:"formatted_minimum_payment,omitempty"`
+	DueDay               *int                  `json:"due_day,omitempty"`
+	StartDate            *time.Time            `json:"start_date,omitempty"`
+	EndDate              *time.Time            `json:"end_date,omitempty"`
+	TenorMonths          *int                  `json:"tenor_months,omitempty"`
+	AccountID            *string               `json:"account_id,omitempty"`
+	AccountName          *string               `json:"account_name,omitempty"`
+	Currency             string                `json:"currency"`
+	Status               string                `json:"status"`
+	Notes                *string               `json:"notes,omitempty"`
+	IsShared             bool                  `json:"is_shared"`
+	CreatedAt            time.Time             `json:"created_at"`
+	UpdatedAt            time.Time             `json:"updated_at"`
+	Payments             []DebtPaymentResponse `json:"payments,omitempty"`
 }
 
 type DebtSummaryResponse struct {
-	TotalOutstanding          float64 `json:"total_outstanding"`
-	FormattedTotalOutstanding string  `json:"formatted_total_outstanding"`
-	TotalMinimumPayment       float64 `json:"total_minimum_payment"`
-	FormattedTotalMinPayment  string  `json:"formatted_total_minimum_payment"`
-	ActiveCount               int     `json:"active_count"`
+	TotalOutstanding          int64  `json:"total_outstanding"`
+	FormattedTotalOutstanding string `json:"formatted_total_outstanding"`
+	TotalMinimumPayment       int64  `json:"total_minimum_payment"`
+	FormattedTotalMinPayment  string `json:"formatted_total_minimum_payment"`
+	ActiveCount               int    `json:"active_count"`
 }
 
 type AvalanchePaymentScheduleResponse struct {
@@ -166,18 +166,18 @@ type AvalanchePaymentScheduleResponse struct {
 	DebtName               string    `json:"debt_name"`
 	PayoffMonthIndex       int       `json:"payoff_month_index"`
 	PayoffDate             time.Time `json:"payoff_date"`
-	TotalInterestPaid      float64   `json:"total_interest_paid"`
+	TotalInterestPaid      int64     `json:"total_interest_paid"`
 	FormattedTotalInterest string    `json:"formatted_total_interest"`
 }
 
 type AvalancheSimulationResponse struct {
 	MonthsToPayoff                int                                `json:"months_to_payoff"`
-	TotalInterestPaid             float64                            `json:"total_interest_paid"`
+	TotalInterestPaid             int64                              `json:"total_interest_paid"`
 	FormattedTotalInterest        string                             `json:"formatted_total_interest"`
 	MonthsToPayoffWithoutExtra    int                                `json:"months_to_payoff_without_extra"`
-	TotalInterestPaidWithoutExtra float64                            `json:"total_interest_paid_without_extra"`
+	TotalInterestPaidWithoutExtra int64                              `json:"total_interest_paid_without_extra"`
 	FormattedInterestWithoutExtra string                             `json:"formatted_interest_without_extra"`
-	SavingsInterest               float64                            `json:"savings_interest"`
+	SavingsInterest               int64                              `json:"savings_interest"`
 	FormattedSavingsInterest      string                             `json:"formatted_savings_interest"`
 	SavingsMonths                 int                                `json:"savings_months"`
 	SchedulesWithExtra            []AvalanchePaymentScheduleResponse `json:"schedules_with_extra"`
@@ -187,11 +187,11 @@ type AvalancheSimulationResponse struct {
 func ToDebtPaymentResponse(p *model.DebtPayment) DebtPaymentResponse {
 	var fmtPrincipal, fmtInterest *string
 	if p.PrincipalPortion != nil {
-		str := FormatRupiah(*p.PrincipalPortion)
+		str := model.FormatRupiahMoney(*p.PrincipalPortion)
 		fmtPrincipal = &str
 	}
 	if p.InterestPortion != nil {
-		str := FormatRupiah(*p.InterestPortion)
+		str := model.FormatRupiahMoney(*p.InterestPortion)
 		fmtInterest = &str
 	}
 
@@ -199,15 +199,15 @@ func ToDebtPaymentResponse(p *model.DebtPayment) DebtPaymentResponse {
 		ID:                 p.ID,
 		DebtID:             p.DebtID,
 		Amount:             p.Amount,
-		FormattedAmount:    FormatRupiah(p.Amount),
+		FormattedAmount:    model.FormatRupiahMoney(p.Amount),
 		PaymentDate:        p.PaymentDate,
 		IsExtraPayment:     p.IsExtraPayment,
 		PrincipalPortion:   p.PrincipalPortion,
 		FormattedPrincipal: fmtPrincipal,
 		InterestPortion:    p.InterestPortion,
 		FormattedInterest:  fmtInterest,
-		RemainingBalance:    p.RemainingBalance,
-		FormattedRemaining: FormatRupiah(p.RemainingBalance),
+		RemainingBalance:   p.RemainingBalance,
+		FormattedRemaining: model.FormatRupiahMoney(p.RemainingBalance),
 		TransactionID:      p.TransactionID,
 		Notes:              p.Notes,
 		CreatedAt:          p.CreatedAt,
@@ -222,7 +222,7 @@ func ToDebtResponse(d *model.Debt, payments []model.DebtPayment) DebtResponse {
 
 	var fmtMinPayment *string
 	if d.MinimumPayment != nil {
-		str := FormatRupiah(*d.MinimumPayment)
+		str := model.FormatRupiahMoney(*d.MinimumPayment)
 		fmtMinPayment = &str
 	}
 
@@ -233,9 +233,9 @@ func ToDebtResponse(d *model.Debt, payments []model.DebtPayment) DebtResponse {
 		Type:                 d.Type,
 		Creditor:             d.Creditor,
 		OriginalAmount:       d.OriginalAmount,
-		FormattedOriginal:    FormatRupiah(d.OriginalAmount),
+		FormattedOriginal:    model.FormatRupiahMoney(d.OriginalAmount),
 		OutstandingBalance:   d.OutstandingBalance,
-		FormattedOutstanding: FormatRupiah(d.OutstandingBalance),
+		FormattedOutstanding: model.FormatRupiahMoney(d.OutstandingBalance),
 		InterestRate:         d.InterestRate,
 		MinimumPayment:       d.MinimumPayment,
 		FormattedMinPayment:  fmtMinPayment,
@@ -258,9 +258,9 @@ func ToDebtResponse(d *model.Debt, payments []model.DebtPayment) DebtResponse {
 func ToDebtSummaryResponse(s *model.DebtSummary) DebtSummaryResponse {
 	return DebtSummaryResponse{
 		TotalOutstanding:          s.TotalOutstanding,
-		FormattedTotalOutstanding: FormatRupiah(s.TotalOutstanding),
+		FormattedTotalOutstanding: model.FormatRupiahMoney(s.TotalOutstanding),
 		TotalMinimumPayment:       s.TotalMinimumPayment,
-		FormattedTotalMinPayment:  FormatRupiah(s.TotalMinimumPayment),
+		FormattedTotalMinPayment:  model.FormatRupiahMoney(s.TotalMinimumPayment),
 		ActiveCount:               s.ActiveCount,
 	}
 }
@@ -274,7 +274,7 @@ func ToAvalancheSimulationResponse(sim *model.AvalancheSimulation) AvalancheSimu
 			PayoffMonthIndex:       s.PayoffMonthIndex,
 			PayoffDate:             s.PayoffDate,
 			TotalInterestPaid:      s.TotalInterestPaid,
-			FormattedTotalInterest: FormatRupiah(s.TotalInterestPaid),
+			FormattedTotalInterest: model.FormatRupiahMoney(s.TotalInterestPaid),
 		})
 	}
 
@@ -286,19 +286,19 @@ func ToAvalancheSimulationResponse(sim *model.AvalancheSimulation) AvalancheSimu
 			PayoffMonthIndex:       s.PayoffMonthIndex,
 			PayoffDate:             s.PayoffDate,
 			TotalInterestPaid:      s.TotalInterestPaid,
-			FormattedTotalInterest: FormatRupiah(s.TotalInterestPaid),
+			FormattedTotalInterest: model.FormatRupiahMoney(s.TotalInterestPaid),
 		})
 	}
 
 	return AvalancheSimulationResponse{
 		MonthsToPayoff:                sim.MonthsToPayoff,
 		TotalInterestPaid:             sim.TotalInterestPaid,
-		FormattedTotalInterest:        FormatRupiah(sim.TotalInterestPaid),
+		FormattedTotalInterest:        model.FormatRupiahMoney(sim.TotalInterestPaid),
 		MonthsToPayoffWithoutExtra:    sim.MonthsToPayoffWithoutExtra,
 		TotalInterestPaidWithoutExtra: sim.TotalInterestPaidWithoutExtra,
-		FormattedInterestWithoutExtra: FormatRupiah(sim.TotalInterestPaidWithoutExtra),
+		FormattedInterestWithoutExtra: model.FormatRupiahMoney(sim.TotalInterestPaidWithoutExtra),
 		SavingsInterest:               sim.SavingsInterest,
-		FormattedSavingsInterest:      FormatRupiah(sim.SavingsInterest),
+		FormattedSavingsInterest:      model.FormatRupiahMoney(sim.SavingsInterest),
 		SavingsMonths:                 sim.SavingsMonths,
 		SchedulesWithExtra:            schedulesWithExtra,
 		SchedulesWithoutExtra:         schedulesWithoutExtra,

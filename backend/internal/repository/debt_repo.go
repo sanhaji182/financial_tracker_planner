@@ -253,7 +253,7 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 		return nil, fmt.Errorf("failed to fetch debt for update: %w", err)
 	}
 
-	newOutstanding := outstanding - p.Amount
+	newOutstanding := outstanding - model.DecimalFromMoney(p.Amount)
 	status := "active"
 	if newOutstanding <= 0 {
 		newOutstanding = 0
@@ -271,7 +271,7 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 	}
 
 	// 4. Create debt_payment log
-	p.RemainingBalance = newOutstanding
+	p.RemainingBalance = model.MoneyFromDecimal(newOutstanding)
 	p.TransactionID = &expense.ID
 
 	queryPayment := `

@@ -7,8 +7,8 @@ type Goal struct {
 	UserID          string     `json:"user_id" db:"user_id"`
 	Name            string     `json:"name" db:"name"`
 	Type            string     `json:"type" db:"type"`
-	TargetAmount    float64    `json:"target_amount" db:"target_amount"`
-	CurrentAmount   float64    `json:"current_amount" db:"current_amount"`
+	TargetAmount    int64      `json:"target_amount" db:"target_amount"`
+	CurrentAmount   int64      `json:"current_amount" db:"current_amount"`
 	TargetDate      *time.Time `json:"target_date,omitempty" db:"target_date"`
 	LinkedAccountID *string    `json:"linked_account_id,omitempty" db:"linked_account_id"`
 	LinkedDebtID    *string    `json:"linked_debt_id,omitempty" db:"linked_debt_id"`

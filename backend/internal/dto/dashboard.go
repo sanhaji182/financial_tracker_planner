@@ -3,25 +3,25 @@ package dto
 import "time"
 
 type MoneyValue struct {
-	Value          float64 `json:"value"`
-	FormattedValue string  `json:"formatted_value"`
+	Value          int64  `json:"value"`
+	FormattedValue string `json:"formatted_value"`
 }
 
 type AssetBreakdown struct {
-	Total             float64 `json:"total"`
-	FormattedTotal    string  `json:"formatted_total"`
-	Liquid            float64 `json:"liquid"`
-	FormattedLiquid   string  `json:"formatted_liquid"`
-	Invested          float64 `json:"invested"`
-	FormattedInvested string  `json:"formatted_invested"`
-	Property          float64 `json:"property"`
-	FormattedProperty string  `json:"formatted_property"`
+	Total             int64  `json:"total"`
+	FormattedTotal    string `json:"formatted_total"`
+	Liquid            int64  `json:"liquid"`
+	FormattedLiquid   string `json:"formatted_liquid"`
+	Invested          int64  `json:"invested"`
+	FormattedInvested string `json:"formatted_invested"`
+	Property          int64  `json:"property"`
+	FormattedProperty string `json:"formatted_property"`
 }
 
 type DebtSummaryDto struct {
-	TotalOutstanding          float64 `json:"total_outstanding"`
-	FormattedTotalOutstanding string  `json:"formatted_total_outstanding"`
-	ActiveCount               int     `json:"active_count"`
+	TotalOutstanding          int64  `json:"total_outstanding"`
+	FormattedTotalOutstanding string `json:"formatted_total_outstanding"`
+	ActiveCount               int    `json:"active_count"`
 }
 
 type HealthScoreDto struct {
@@ -33,7 +33,7 @@ type HealthScoreDto struct {
 type UpcomingBillDto struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
-	Amount          float64   `json:"amount"`
+	Amount          int64     `json:"amount"`
 	FormattedAmount string    `json:"formatted_amount"`
 	DueDate         time.Time `json:"due_date"`
 	DaysRemaining   int       `json:"days_remaining"`
@@ -56,23 +56,23 @@ type NextActionDto struct {
 }
 
 type TrendPoint struct {
-	Month string  `json:"month"`
-	Value float64 `json:"value"`
+	Month string `json:"month"`
+	Value int64  `json:"value"`
 }
 
 type DashboardResponse struct {
-	NetWorth         MoneyValue      `json:"net_worth"`
-	TotalAssets      AssetBreakdown  `json:"total_assets"`
-	TotalDebts       DebtSummaryDto  `json:"total_debts"`
-	CashAvailable    MoneyValue      `json:"cash_available"`
-	DTIRatio         float64         `json:"dti_ratio"`
-	DTIStatus        string          `json:"dti_status"` // healthy, warning, danger
-	HealthScore      HealthScoreDto  `json:"health_score"`
+	NetWorth         MoneyValue        `json:"net_worth"`
+	TotalAssets      AssetBreakdown    `json:"total_assets"`
+	TotalDebts       DebtSummaryDto    `json:"total_debts"`
+	CashAvailable    MoneyValue        `json:"cash_available"`
+	DTIRatio         float64           `json:"dti_ratio"`
+	DTIStatus        string            `json:"dti_status"` // healthy, warning, danger
+	HealthScore      HealthScoreDto    `json:"health_score"`
 	UpcomingBills    []UpcomingBillDto `json:"upcoming_bills"`
-	ForecastEndMonth MoneyValue      `json:"forecast_end_month"`
-	SafeToSpend      MoneyValue      `json:"safe_to_spend"`
-	RecentAlerts     []AlertDto      `json:"recent_alerts"`
-	InsightSummary   string          `json:"insight_summary"`
-	NextAction       NextActionDto   `json:"next_action"`
-	NetWorthTrend    []TrendPoint    `json:"net_worth_trend"`
+	ForecastEndMonth MoneyValue        `json:"forecast_end_month"`
+	SafeToSpend      MoneyValue        `json:"safe_to_spend"`
+	RecentAlerts     []AlertDto        `json:"recent_alerts"`
+	InsightSummary   string            `json:"insight_summary"`
+	NextAction       NextActionDto     `json:"next_action"`
+	NetWorthTrend    []TrendPoint      `json:"net_worth_trend"`
 }

@@ -1,12 +1,12 @@
 package dto
 
 type DailyProjectionDto struct {
-	Date             string  `json:"date"` // YYYY-MM-DD
-	ProjectedBalance float64 `json:"projected_balance"`
-	FormattedBalance string  `json:"formatted_balance"`
-	EventName        string  `json:"event_name,omitempty"`
-	EventAmount      float64 `json:"event_amount,omitempty"`
-	FormattedAmount  string  `json:"formatted_amount,omitempty"`
+	Date             string `json:"date"` // YYYY-MM-DD
+	ProjectedBalance int64  `json:"projected_balance"`
+	FormattedBalance string `json:"formatted_balance"`
+	EventName        string `json:"event_name,omitempty"`
+	EventAmount      int64  `json:"event_amount,omitempty"`
+	FormattedAmount  string `json:"formatted_amount,omitempty"`
 }
 
 type ForecastResponse struct {

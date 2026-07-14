@@ -7,8 +7,8 @@ type GoalResponse struct {
 	UserID                     string  `json:"user_id"`
 	Name                       string  `json:"name"`
 	Type                       string  `json:"type"`
-	TargetAmount               float64 `json:"target_amount"`
-	CurrentAmount              float64 `json:"current_amount"`
+	TargetAmount               int64   `json:"target_amount"`
+	CurrentAmount              int64   `json:"current_amount"`
 	TargetDate                 *string `json:"target_date,omitempty"` // YYYY-MM-DD
 	LinkedAccountID            *string `json:"linked_account_id,omitempty"`
 	LinkedAccountName          *string `json:"linked_account_name,omitempty"`
@@ -22,9 +22,9 @@ type GoalResponse struct {
 	ProjectedCompletionDate    *string `json:"projected_completion_date"` // YYYY-MM-DD
 	AverageMonthlyContribution float64 `json:"average_monthly_contribution"`
 	// Affordability & sinking fund fields (calculated)
-	MonthlyRequired     *float64               `json:"monthly_required,omitempty"` // How much per month needed to reach target by target_date
+	MonthlyRequired     *int64                 `json:"monthly_required,omitempty"` // How much per month needed to reach target by target_date
 	IsAffordable        *bool                  `json:"is_affordable,omitempty"`    // true if monthly_required <= available surplus
-	FundingGap          *float64               `json:"funding_gap,omitempty"`      // How much per month shortfall if not affordable
+	FundingGap          *int64                 `json:"funding_gap,omitempty"`      // How much per month shortfall if not affordable
 	IsSinkingFund       bool                   `json:"is_sinking_fund"`            // true if type is sinking_fund
 	Priority            int                    `json:"priority"`                   // 1=highest, auto-assigned by type
 	MonthsRemaining     *float64               `json:"months_remaining,omitempty"` // months until target_date
@@ -33,44 +33,44 @@ type GoalResponse struct {
 }
 
 type GoalContributionItem struct {
-	ID                string  `json:"id"`
-	Amount            float64 `json:"amount"`
-	Date              string  `json:"date"`
-	Description       string  `json:"description"`
-	SourceAccountName string  `json:"source_account_name"`
-	Notes             string  `json:"notes"`
+	ID                string `json:"id"`
+	Amount            int64  `json:"amount"`
+	Date              string `json:"date"`
+	Description       string `json:"description"`
+	SourceAccountName string `json:"source_account_name"`
+	Notes             string `json:"notes"`
 }
 
 type CreateGoalRequest struct {
-	Name            string  `json:"name" binding:"required"`
-	Type            string  `json:"type" binding:"required"`
-	TargetAmount    float64 `json:"target_amount" binding:"required,min=1"`
-	CurrentAmount   float64 `json:"current_amount"`
-	TargetDate      string  `json:"target_date"` // YYYY-MM-DD
-	LinkedAccountID string  `json:"linked_account_id"`
-	LinkedDebtID    string  `json:"linked_debt_id"`
-	Icon            string  `json:"icon"`
-	Color           string  `json:"color"`
-	Notes           string  `json:"notes"`
+	Name            string `json:"name" binding:"required"`
+	Type            string `json:"type" binding:"required"`
+	TargetAmount    int64  `json:"target_amount" binding:"required,min=1"`
+	CurrentAmount   int64  `json:"current_amount"`
+	TargetDate      string `json:"target_date"` // YYYY-MM-DD
+	LinkedAccountID string `json:"linked_account_id"`
+	LinkedDebtID    string `json:"linked_debt_id"`
+	Icon            string `json:"icon"`
+	Color           string `json:"color"`
+	Notes           string `json:"notes"`
 }
 
 type UpdateGoalRequest struct {
-	Name            *string  `json:"name"`
-	Type            *string  `json:"type"`
-	TargetAmount    *float64 `json:"target_amount" binding:"omitempty,min=1"`
-	CurrentAmount   *float64 `json:"current_amount"`
-	TargetDate      *string  `json:"target_date"` // YYYY-MM-DD
-	LinkedAccountID *string  `json:"linked_account_id"`
-	LinkedDebtID    *string  `json:"linked_debt_id"`
-	Icon            *string  `json:"icon"`
-	Color           *string  `json:"color"`
-	Status          *string  `json:"status"`
-	Notes           *string  `json:"notes"`
+	Name            *string `json:"name"`
+	Type            *string `json:"type"`
+	TargetAmount    *int64  `json:"target_amount" binding:"omitempty,min=1"`
+	CurrentAmount   *int64  `json:"current_amount"`
+	TargetDate      *string `json:"target_date"` // YYYY-MM-DD
+	LinkedAccountID *string `json:"linked_account_id"`
+	LinkedDebtID    *string `json:"linked_debt_id"`
+	Icon            *string `json:"icon"`
+	Color           *string `json:"color"`
+	Status          *string `json:"status"`
+	Notes           *string `json:"notes"`
 }
 
 type GoalContributionRequest struct {
-	SourceAccountID string  `json:"source_account_id" binding:"required"`
-	Amount          float64 `json:"amount" binding:"required,min=1"`
-	Date            string  `json:"date" binding:"required"` // YYYY-MM-DD
-	Notes           string  `json:"notes"`
+	SourceAccountID string `json:"source_account_id" binding:"required"`
+	Amount          int64  `json:"amount" binding:"required,min=1"`
+	Date            string `json:"date" binding:"required"` // YYYY-MM-DD
+	Notes           string `json:"notes"`
 }
