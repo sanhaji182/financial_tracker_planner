@@ -13,11 +13,11 @@ import (
 
 type BillService interface {
 	CreateBill(ctx context.Context, userID string, req dto.CreateBillRequest) (*dto.BillResponse, error)
-	GetBillByID(ctx context.Context, id string) (*dto.BillResponse, error)
-	UpdateBill(ctx context.Context, id string, req dto.UpdateBillRequest) error
-	DeleteBill(ctx context.Context, id string) error
+	GetBillByID(ctx context.Context, userID string, id string) (*dto.BillResponse, error)
+	UpdateBill(ctx context.Context, userID string, id string, req dto.UpdateBillRequest) error
+	DeleteBill(ctx context.Context, userID string, id string) error
 	ListBills(ctx context.Context, userID string, status string, month string) ([]dto.BillResponse, error)
-	PayBill(ctx context.Context, billID string, req dto.PayBillRequest) (*dto.BillPaymentResponse, error)
+	PayBill(ctx context.Context, userID string, billID string, req dto.PayBillRequest) (*dto.BillPaymentResponse, error)
 	GetUpcomingBills(ctx context.Context, userID string, days int) ([]dto.BillResponse, error)
 	GetMonthlyCommitment(ctx context.Context, userID string, month string) (*dto.BillMonthlyCommitmentResponse, error)
 	AutoUpdateStatus(ctx context.Context) error
@@ -104,7 +104,7 @@ func (s *billService) CreateBill(ctx context.Context, userID string, req dto.Cre
 	}
 
 	// Fetch join names
-	full, _ := s.billRepo.GetBillByID(ctx, created.ID)
+	full, _ := s.billRepo.GetBillByID(ctx, userID, created.ID)
 	if full != nil {
 		created = full
 	}
@@ -113,8 +113,12 @@ func (s *billService) CreateBill(ctx context.Context, userID string, req dto.Cre
 	return &res, nil
 }
 
-func (s *billService) GetBillByID(ctx context.Context, id string) (*dto.BillResponse, error) {
-	b, err := s.billRepo.GetBillByID(ctx, id)
+func (s *billService) GetBillByID(ctx context.Context, userID string, id string) (*dto.BillResponse, error) {
+	ownerID, err := s.resolveOwnerID(ctx, userID)
+	if err != nil {
+		ownerID = userID
+	}
+	b, err := s.billRepo.GetBillByID(ctx, ownerID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -124,15 +128,19 @@ func (s *billService) GetBillByID(ctx context.Context, id string) (*dto.BillResp
 	return &res, nil
 }
 
-func (s *billService) UpdateBill(ctx context.Context, id string, req dto.UpdateBillRequest) error {
-	b, err := s.billRepo.GetBillByID(ctx, id)
+func (s *billService) UpdateBill(ctx context.Context, userID string, id string, req dto.UpdateBillRequest) error {
+	ownerID, err := s.resolveOwnerID(ctx, userID)
+	if err != nil {
+		ownerID = userID
+	}
+	b, err := s.billRepo.GetBillByID(ctx, ownerID, id)
 	if err != nil {
 		return err
 	}
 
 	// Recalculate next due date if schedule changes
 	now := time.Now()
-	scheduleChanged := b.Frequency != req.Frequency || 
+	scheduleChanged := b.Frequency != req.Frequency ||
 		(b.DueDay != nil && req.DueDay != nil && *b.DueDay != *req.DueDay) ||
 		(b.DueDay == nil && req.DueDay != nil) ||
 		(b.DueDay != nil && req.DueDay == nil)
@@ -157,8 +165,12 @@ func (s *billService) UpdateBill(ctx context.Context, id string, req dto.UpdateB
 	return s.billRepo.UpdateBill(ctx, b)
 }
 
-func (s *billService) DeleteBill(ctx context.Context, id string) error {
-	return s.billRepo.DeleteBill(ctx, id)
+func (s *billService) DeleteBill(ctx context.Context, userID string, id string) error {
+	ownerID, err := s.resolveOwnerID(ctx, userID)
+	if err != nil {
+		ownerID = userID
+	}
+	return s.billRepo.DeleteBill(ctx, ownerID, id)
 }
 
 func (s *billService) ListBills(ctx context.Context, userID string, status string, month string) ([]dto.BillResponse, error) {
@@ -179,7 +191,12 @@ func (s *billService) ListBills(ctx context.Context, userID string, status strin
 	return res, nil
 }
 
-func (s *billService) PayBill(ctx context.Context, billID string, req dto.PayBillRequest) (*dto.BillPaymentResponse, error) {
+func (s *billService) PayBill(ctx context.Context, userID string, billID string, req dto.PayBillRequest) (*dto.BillPaymentResponse, error) {
+	ownerID, err := s.resolveOwnerID(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to resolve bill owner: %w", err)
+	}
+
 	// Start Database Transaction
 	tx, err := s.dbPool.Begin(ctx)
 	if err != nil {
@@ -192,10 +209,10 @@ func (s *billService) PayBill(ctx context.Context, billID string, req dto.PayBil
 	query := `
 		SELECT id, user_id, name, amount, category_id, account_id, frequency, due_day, due_date,
 		       next_due_date, custom_interval_days, auto_remind, reminder_days_before, status, is_active, notes
-		FROM bills
-		WHERE id = $1 AND deleted_at IS NULL FOR UPDATE
+		FROM bills b
+		WHERE b.id = $1 AND b.user_id = $2 AND b.deleted_at IS NULL FOR UPDATE
 	`
-	err = tx.QueryRow(ctx, query, billID).Scan(
+	err = tx.QueryRow(ctx, query, billID, ownerID).Scan(
 		&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.AccountID, &b.Frequency, &b.DueDay, &b.DueDate,
 		&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore, &b.Status, &b.IsActive, &b.Notes,
 	)
@@ -387,8 +404,6 @@ func (s *billService) AutoUpdateStatus(ctx context.Context) error {
 	_, err := s.dbPool.Exec(ctx, query)
 	return err
 }
-
-
 
 func (s *billService) resolveOwnerID(ctx context.Context, userID string) (string, error) {
 	var role string

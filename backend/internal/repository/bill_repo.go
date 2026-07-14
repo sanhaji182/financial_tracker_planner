@@ -12,13 +12,13 @@ import (
 
 type BillRepository interface {
 	CreateBill(ctx context.Context, b *model.Bill) (*model.Bill, error)
-	GetBillByID(ctx context.Context, id string) (*model.Bill, error)
+	GetBillByID(ctx context.Context, userID string, id string) (*model.Bill, error)
 	UpdateBill(ctx context.Context, b *model.Bill) error
-	DeleteBill(ctx context.Context, id string) error
+	DeleteBill(ctx context.Context, userID string, id string) error
 	ListBills(ctx context.Context, userID string, status string, month string) ([]model.Bill, error)
 	GetUpcomingBills(ctx context.Context, userID string, days int) ([]model.Bill, error)
 	GetMonthlyBills(ctx context.Context, userID string, month string) ([]model.Bill, error)
-	
+
 	// Payments
 	CreateBillPayment(ctx context.Context, p *model.BillPayment) (*model.BillPayment, error)
 	CreateBillPaymentTx(ctx context.Context, tx pgx.Tx, p *model.BillPayment) (*model.BillPayment, error)
@@ -52,19 +52,19 @@ func (r *billRepository) CreateBill(ctx context.Context, b *model.Bill) (*model.
 	return b, nil
 }
 
-func (r *billRepository) GetBillByID(ctx context.Context, id string) (*model.Bill, error) {
+func (r *billRepository) GetBillByID(ctx context.Context, userID string, id string) (*model.Bill, error) {
 	query := `
 		SELECT b.id, b.user_id, b.name, b.amount, b.category_id, cat.name as category_name,
-		       b.account_id, acc.name as account_name, b.frequency, b.due_day, b.due_date,
-		       b.next_due_date, b.custom_interval_days, b.auto_remind, b.reminder_days_before,
-		       b.status, b.is_active, b.notes, b.created_at, b.updated_at
-		FROM bills b
-		LEFT JOIN categories cat ON b.category_id = cat.id
-		LEFT JOIN accounts acc ON b.account_id = acc.id
-		WHERE b.id = $1 AND b.deleted_at IS NULL
+	       b.account_id, acc.name as account_name, b.frequency, b.due_day, b.due_date,
+	       b.next_due_date, b.custom_interval_days, b.auto_remind, b.reminder_days_before,
+	       b.status, b.is_active, b.notes, b.created_at, b.updated_at
+	FROM bills b
+	LEFT JOIN categories cat ON b.category_id = cat.id
+	LEFT JOIN accounts acc ON b.account_id = acc.id
+	WHERE b.id = $1 AND b.user_id = $2 AND b.deleted_at IS NULL
 	`
 	var b model.Bill
-	err := r.dbPool.QueryRow(ctx, query, id).Scan(
+	err := r.dbPool.QueryRow(ctx, query, id, userID).Scan(
 		&b.ID, &b.UserID, &b.Name, &b.Amount, &b.CategoryID, &b.CategoryName,
 		&b.AccountID, &b.AccountName, &b.Frequency, &b.DueDay, &b.DueDate,
 		&b.NextDueDate, &b.CustomIntervalDays, &b.AutoRemind, &b.ReminderDaysBefore,
@@ -80,7 +80,7 @@ func (r *billRepository) GetBillByID(ctx context.Context, id string) (*model.Bil
 }
 
 func (r *billRepository) UpdateBill(ctx context.Context, b *model.Bill) error {
-	oldB, errOld := r.GetBillByID(ctx, b.ID)
+	oldB, errOld := r.GetBillByID(ctx, b.UserID, b.ID)
 
 	query := `
 		UPDATE bills
@@ -88,12 +88,12 @@ func (r *billRepository) UpdateBill(ctx context.Context, b *model.Bill) error {
 		    due_day = $6, due_date = $7, next_due_date = $8, custom_interval_days = $9,
 		    auto_remind = $10, reminder_days_before = $11, status = $12, is_active = $13,
 		    notes = $14, updated_at = NOW()
-		WHERE id = $15 AND deleted_at IS NULL
+		WHERE id = $15 AND user_id = $16 AND deleted_at IS NULL
 	`
 	_, err := r.dbPool.Exec(ctx, query,
 		b.Name, b.Amount, b.CategoryID, b.AccountID, b.Frequency, b.DueDay, b.DueDate,
 		b.NextDueDate, b.CustomIntervalDays, b.AutoRemind, b.ReminderDaysBefore, b.Status,
-		b.IsActive, b.Notes, b.ID,
+		b.IsActive, b.Notes, b.ID, b.UserID,
 	)
 	if err == nil && errOld == nil {
 		r.createAuditLog(ctx, b.UserID, "bill", b.ID, "update", oldB, b)
@@ -101,12 +101,12 @@ func (r *billRepository) UpdateBill(ctx context.Context, b *model.Bill) error {
 	return err
 }
 
-func (r *billRepository) DeleteBill(ctx context.Context, id string) error {
-	oldB, errOld := r.GetBillByID(ctx, id)
-	query := `UPDATE bills SET deleted_at = NOW() WHERE id = $1`
-	_, err := r.dbPool.Exec(ctx, query, id)
+func (r *billRepository) DeleteBill(ctx context.Context, userID string, id string) error {
+	oldB, errOld := r.GetBillByID(ctx, userID, id)
+	query := `UPDATE bills SET deleted_at = NOW() WHERE id = $1 AND user_id = $2`
+	_, err := r.dbPool.Exec(ctx, query, id, userID)
 	if err == nil && errOld == nil {
-		r.createAuditLog(ctx, oldB.UserID, "bill", id, "delete", oldB, nil)
+		r.createAuditLog(ctx, userID, "bill", id, "delete", oldB, nil)
 	}
 	return err
 }

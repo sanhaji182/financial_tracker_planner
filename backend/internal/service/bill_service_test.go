@@ -11,7 +11,7 @@ import (
 )
 
 func TestBillService(t *testing.T) {
-	setupTestEnv()
+	setupTestEnv(t)
 
 	userRepo := repository.NewUserRepository(testDB)
 	accountRepo := repository.NewAccountRepository(testDB)
@@ -105,7 +105,7 @@ func TestBillService(t *testing.T) {
 	})
 
 	t.Run("Get bill by ID", func(t *testing.T) {
-		resp, err := billServ.GetBillByID(ctx, billID)
+		resp, err := billServ.GetBillByID(ctx, testUser.ID, billID)
 		if err != nil {
 			t.Fatalf("failed to get bill: %v", err)
 		}
@@ -123,7 +123,7 @@ func TestBillService(t *testing.T) {
 			AccountID:   account.ID,
 		}
 
-		resp, err := billServ.PayBill(ctx, billID, req)
+		resp, err := billServ.PayBill(ctx, testUser.ID, billID, req)
 		if err != nil {
 			t.Fatalf("failed to pay bill: %v", err)
 		}
@@ -143,7 +143,7 @@ func TestBillService(t *testing.T) {
 		}
 
 		// Check bill status updated to paid
-		b, err := billServ.GetBillByID(ctx, billID)
+		b, err := billServ.GetBillByID(ctx, testUser.ID, billID)
 		if err != nil {
 			t.Fatalf("failed to get bill: %v", err)
 		}

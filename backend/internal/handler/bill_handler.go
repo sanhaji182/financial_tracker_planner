@@ -70,6 +70,7 @@ func (h *BillHandler) CreateBill(c *gin.Context) {
 
 func (h *BillHandler) UpdateBill(c *gin.Context) {
 	id := c.Param("id")
+	userID := c.GetString("user_id")
 
 	var req dto.UpdateBillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -82,7 +83,7 @@ func (h *BillHandler) UpdateBill(c *gin.Context) {
 		return
 	}
 
-	err := h.billService.UpdateBill(c.Request.Context(), id, req)
+	err := h.billService.UpdateBill(c.Request.Context(), userID, id, req)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -100,8 +101,9 @@ func (h *BillHandler) UpdateBill(c *gin.Context) {
 
 func (h *BillHandler) DeleteBill(c *gin.Context) {
 	id := c.Param("id")
+	userID := c.GetString("user_id")
 
-	err := h.billService.DeleteBill(c.Request.Context(), id)
+	err := h.billService.DeleteBill(c.Request.Context(), userID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -122,8 +124,6 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 	status := c.Query("status")
 	month := c.Query("month") // YYYY-MM
 
-
-
 	res, err := h.billService.ListBills(c.Request.Context(), userID, status, month)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
@@ -142,8 +142,9 @@ func (h *BillHandler) ListBills(c *gin.Context) {
 
 func (h *BillHandler) GetBillByID(c *gin.Context) {
 	id := c.Param("id")
+	userID := c.GetString("user_id")
 
-	res, err := h.billService.GetBillByID(c.Request.Context(), id)
+	res, err := h.billService.GetBillByID(c.Request.Context(), userID, id)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": gin.H{
@@ -161,6 +162,7 @@ func (h *BillHandler) GetBillByID(c *gin.Context) {
 
 func (h *BillHandler) PayBill(c *gin.Context) {
 	id := c.Param("id")
+	userID := c.GetString("user_id")
 
 	var req dto.PayBillRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -173,7 +175,7 @@ func (h *BillHandler) PayBill(c *gin.Context) {
 		return
 	}
 
-	res, err := h.billService.PayBill(c.Request.Context(), id, req)
+	res, err := h.billService.PayBill(c.Request.Context(), userID, id, req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": gin.H{
