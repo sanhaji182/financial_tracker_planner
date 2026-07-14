@@ -103,6 +103,7 @@ func main() {
 	insightService := service.NewInsightService(dbPool)
 	scenarioService := service.NewScenarioService(dbPool)
 	currencyService := service.NewCurrencyService(dbPool)
+	protectionService := service.NewProtectionService(dbPool, "/app/data")
 	ruleService := service.NewAutomationRuleService(dbPool, telegramService)
 
 	// Initialize Handlers
@@ -136,6 +137,7 @@ func main() {
 	scenarioHandler := handler.NewScenarioHandler(scenarioService)
 	currencyHandler := handler.NewCurrencyHandler(currencyService)
 	ruleHandler := handler.NewAutomationRuleHandler(ruleService)
+	protectionHandler := handler.NewProtectionHandler(protectionService)
 	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService)
 
 	// Initialize Gin engine
@@ -256,6 +258,7 @@ func main() {
 		scenarioHandler.RegisterRoutes(v1)
 		currencyHandler.RegisterRoutes(v1)
 		ruleHandler.RegisterRoutes(v1)
+		protectionHandler.RegisterRoutes(v1)
 		aiSettingsHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
