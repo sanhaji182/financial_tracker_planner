@@ -65,6 +65,8 @@ type DataSufficiency struct {
 	IsSufficient       bool     `json:"is_sufficient"`
 	MissingFields      []string `json:"missing_fields,omitempty"`
 	UsesFallbackValues bool     `json:"uses_fallback_values"`
+	// Confidence is high|medium|low from the calculation kernel.
+	Confidence string `json:"confidence,omitempty"`
 }
 
 type MonthlyClosingResponse struct {

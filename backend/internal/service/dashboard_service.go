@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type DashboardService interface {
@@ -281,33 +282,35 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		healthColor = "Red"
 	}
 
-	// 9. Forecast & Safe to Spend Calculations
+	// 9. Forecast & Safe to Spend — shared calculation kernel.
 	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
 	daysRemaining := daysInMonth - now.Day()
 	if daysRemaining < 0 {
 		daysRemaining = 0
 	}
-	dailyVariableExpense := monthlyLivingCost / 30.0
-	projectedRemainingExpenses := dailyVariableExpense * float64(daysRemaining)
-
-	forecastEndMonth := cashAvailable - projectedRemainingExpenses
+	cf := kernel.ComputeCashflow(kernel.CashflowInputs{
+		AsOf:                      now,
+		CashAvailable:             cashAvailable,
+		IncomeMTD:                 incomeThisMonth,
+		ExpenseMTD:                expenseThisMonth,
+		EstimatedIncome:           incomeThisMonth, // dashboard has MTD only; treat as current-month signal
+		EstimatedFixedExpenses:    totalMinDebtPayments,
+		EstimatedVariableExpenses: monthlyLivingCost,
+		MonthlyLivingCost:         monthlyLivingCost,
+		MinDebtPayments:           totalMinDebtPayments,
+		IsCurrentMonth:            true,
+		DaysRemaining:             daysRemaining,
+		DaysInMonth:               daysInMonth,
+	})
+	conservativeSTS := cf.SafeToSpendScenarios.Conservative
+	expectedSTS := cf.SafeToSpendScenarios.Expected
+	optimisticSTS := cf.SafeToSpendScenarios.Optimistic
+	safeToSpend := cf.SafeToSpend
+	forecastEndMonth := cf.ProjectedEndBalance
 	if forecastEndMonth < 0 {
 		forecastEndMonth = 0
 	}
-
-	// Safe-to-spend uses cash on hand, confirmed cash flow, obligations and a
-	// living-cost buffer. The conservative value remains the backward-compatible
-	// primary field; clients can also explain expected/optimistic scenarios.
-	conservativeSTS := cashAvailable + incomeThisMonth - expenseThisMonth - totalMinDebtPayments - projectedRemainingExpenses - monthlyLivingCost
-	expectedSTS := cashAvailable + incomeThisMonth - expenseThisMonth - totalMinDebtPayments - projectedRemainingExpenses - monthlyLivingCost*0.5
-	optimisticSTS := cashAvailable + incomeThisMonth - expenseThisMonth - totalMinDebtPayments - projectedRemainingExpenses*0.8
-	for _, value := range []*float64{&conservativeSTS, &expectedSTS, &optimisticSTS} {
-		if *value < 0 {
-			*value = 0
-		}
-	}
-	safeToSpend := conservativeSTS
-	dataSufficient := incomeThisMonth > 0 && monthlyLivingCost > 0
+	dataSufficient := cf.DataQuality.IsSufficient
 
 	// 10. Next Action Advice Rule Engine
 	var nextAction dto.NextActionDto
@@ -342,10 +345,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			Priority:    3,
 		}
 	} else {
-		surplus := incomeThisMonth - expenseThisMonth - totalMinDebtPayments
-		if surplus < 0 {
-			surplus = 0
-		}
+		surplus := cf.Surplus
 		nextAction = dto.NextActionDto{
 			Title: "Tinjau Alokasi Surplus",
 			Description: fmt.Sprintf(
@@ -551,22 +551,19 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			Expected:     dto.MoneyValue{Value: expectedSTS, FormattedValue: formatRupiah(expectedSTS)},
 			Optimistic:   dto.MoneyValue{Value: optimisticSTS, FormattedValue: formatRupiah(optimisticSTS)},
 		},
-		DataSufficiency: &dto.DataSufficiency{IsSufficient: dataSufficient, MissingFields: func() []string {
-			var fields []string
-			if incomeThisMonth <= 0 {
-				fields = append(fields, "income")
-			}
-			if monthlyLivingCost <= 0 {
-				fields = append(fields, "expense_history")
-			}
-			return fields
-		}()},
+		DataSufficiency: &dto.DataSufficiency{
+			IsSufficient:       cf.DataQuality.IsSufficient,
+			MissingFields:      cf.DataQuality.MissingFields,
+			UsesFallbackValues: cf.DataQuality.UsesFallbackValues,
+			Confidence:         cf.DataQuality.Confidence,
+		},
 		RecentAlerts:   recentAlerts,
 		InsightSummary: insightSummary,
 		NextAction:     nextAction,
 		NetWorthTrend:  netWorthTrend,
-		AsOf:           time.Now().UTC().Format(time.RFC3339),
-		FormulaVersion: "dashboard-v1-trust-freeze",
+		AsOf:           cf.AsOf.Format(time.RFC3339),
+		FormulaVersion: cf.FormulaVersion,
+		Assumptions:    cf.Assumptions,
 	}
 
 	// Cache to Redis with 5 minutes TTL

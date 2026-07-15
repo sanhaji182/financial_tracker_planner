@@ -15,4 +15,8 @@ type AllocationAdviceResponse struct {
 	DataSufficiency *DataSufficiency `json:"data_sufficiency,omitempty"`
 	// Hierarchy documents the decision order used for this response.
 	Hierarchy []string `json:"hierarchy"`
+	// Provenance from calculation kernel.
+	AsOf           string   `json:"as_of,omitempty"`
+	FormulaVersion string   `json:"formula_version,omitempty"`
+	Assumptions    []string `json:"assumptions,omitempty"`
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type AllocationService interface {
@@ -76,20 +77,26 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 	income := fc.EstimatedIncome.Value
 	fixed := fc.EstimatedFixedExpenses.Value
 	variable := fc.EstimatedVariableExpenses.Value
-	buffer := 0.10 * income
+
+	cf := kernel.ComputeCashflow(kernel.CashflowInputs{
+		AsOf:                      time.Now(),
+		CashAvailable:             0, // allocation cares about monthly surplus, not cash level
+		EstimatedIncome:           income,
+		EstimatedFixedExpenses:    fixed,
+		EstimatedVariableExpenses: variable,
+		MonthlyLivingCost:         variable,
+		MinDebtPayments:           0,
+		IsCurrentMonth:            false,
+		DaysRemaining:             30,
+		DaysInMonth:               30,
+	})
 
 	// Data sufficiency gate — refuse advice when core inputs are missing.
-	var missing []string
-	if income <= 0 {
-		missing = append(missing, "income")
-	}
-	if variable <= 0 && fixed <= 0 {
-		missing = append(missing, "expense_history")
-	}
 	ds := &dto.DataSufficiency{
-		IsSufficient:       len(missing) == 0,
-		MissingFields:      missing,
-		UsesFallbackValues: false,
+		IsSufficient:       cf.DataQuality.IsSufficient,
+		MissingFields:      cf.DataQuality.MissingFields,
+		UsesFallbackValues: cf.DataQuality.UsesFallbackValues,
+		Confidence:         cf.DataQuality.Confidence,
 	}
 
 	empty := &dto.AllocationAdviceResponse{
@@ -100,16 +107,16 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 		Advices:         []dto.AdviceDto{},
 		DataSufficiency: ds,
 		Hierarchy:       allocationHierarchy,
+		AsOf:            cf.AsOf.Format(time.RFC3339),
+		FormulaVersion:  cf.FormulaVersion,
+		Assumptions:     cf.Assumptions,
 	}
 	if !ds.IsSufficient {
 		return empty, nil
 	}
 
-	// Surplus = Income - Fixed - Variable - 10% buffer. Floor at 0.
-	surplus := income - fixed - variable - buffer
-	if surplus < 0 {
-		surplus = 0
-	}
+	// Surplus from shared kernel (Income - Fixed - Variable - 10% buffer, floored).
+	surplus := cf.Surplus
 	surplusRemaining := surplus
 	var advices []dto.AdviceDto
 
@@ -321,6 +328,9 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 		Advices:         advices,
 		DataSufficiency: ds,
 		Hierarchy:       allocationHierarchy,
+		AsOf:            cf.AsOf.Format(time.RFC3339),
+		FormulaVersion:  cf.FormulaVersion,
+		Assumptions:     cf.Assumptions,
 	}, nil
 }
 

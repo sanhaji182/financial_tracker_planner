@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type ForecastService interface {
@@ -304,32 +305,51 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	projectedEndBalance := runningBalance
 
-	// Explain safe-to-spend as scenarios instead of false precision.
-	conservativeSTS := startingCash + estimatedIncome - estimatedFixedExpenses - estimatedVariableExpenses - monthlyLivingCostThreshold
-	expectedSTS := startingCash + estimatedIncome - estimatedFixedExpenses - estimatedVariableExpenses - monthlyLivingCostThreshold*0.5
-	optimisticSTS := startingCash + estimatedIncome - estimatedFixedExpenses - estimatedVariableExpenses*0.8
-	for _, value := range []*float64{&conservativeSTS, &expectedSTS, &optimisticSTS} {
-		if *value < 0 {
-			*value = 0
-		}
+	// Safe-to-spend + projected end via shared calculation kernel.
+	// Ladder already computed; pass lowest balance so STS is capped by it.
+	daysRemaining := daysInMonth - startDay + 1
+	if daysRemaining < 0 {
+		daysRemaining = 0
 	}
-	safeToSpend := conservativeSTS
+	cf := kernel.ComputeCashflow(kernel.CashflowInputs{
+		AsOf:                      now,
+		CashAvailable:             startingCash,
+		EstimatedIncome:           estimatedIncome,
+		EstimatedFixedExpenses:    estimatedFixedExpenses,
+		EstimatedVariableExpenses: estimatedVariableExpenses,
+		MonthlyLivingCost:         monthlyLivingCostThreshold,
+		MinDebtPayments:           debtsMinPaymentSum,
+		IsCurrentMonth:            isCurrentMonth,
+		DaysRemaining:             daysRemaining,
+		DaysInMonth:               daysInMonth,
+		HasLowestBalance:          true,
+		LowestProjectedBalance:    lowestBalance,
+	})
+	// Prefer ladder end balance (day-by-day events) over simple projection.
+	// Kernel STS scenarios replace the previous ad-hoc formulas.
+	conservativeSTS := cf.SafeToSpendScenarios.Conservative
+	expectedSTS := cf.SafeToSpendScenarios.Expected
+	optimisticSTS := cf.SafeToSpendScenarios.Optimistic
+	safeToSpend := cf.SafeToSpend
+	// Keep ladder projected end (more accurate with bills/debts day events).
+	_ = cf.ProjectedEndBalance
 
-	// Track data sufficiency
-	var missingFields []string
-	if incomeInsufficient {
+	// Track data sufficiency from kernel + local flags.
+	missingFields := append([]string{}, cf.DataQuality.MissingFields...)
+	if incomeInsufficient && !containsStr(missingFields, "income") {
 		missingFields = append(missingFields, "income")
 	}
-	if variableInsufficient {
+	if variableInsufficient && !containsStr(missingFields, "variable_expenses") {
 		missingFields = append(missingFields, "variable_expenses")
 	}
-	if livingCostInsufficient {
+	if livingCostInsufficient && !containsStr(missingFields, "living_cost") {
 		missingFields = append(missingFields, "living_cost")
 	}
 	ds := &dto.DataSufficiency{
 		IsSufficient:       len(missingFields) == 0,
 		MissingFields:      missingFields,
-		UsesFallbackValues: false,
+		UsesFallbackValues: cf.DataQuality.UsesFallbackValues,
+		Confidence:         cf.DataQuality.Confidence,
 	}
 
 	res := &dto.ForecastResponse{
@@ -371,6 +391,9 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		},
 		DailyProjections: projections,
 		DataSufficiency:  ds,
+		AsOf:             cf.AsOf.Format(time.RFC3339),
+		FormulaVersion:   cf.FormulaVersion,
+		Assumptions:      cf.Assumptions,
 	}
 
 	// 9. Save to Database (forecasts table)
@@ -412,4 +435,13 @@ func (s *forecastService) GetDailyProjections(ctx context.Context, userID string
 		return nil, err
 	}
 	return res.DailyProjections, nil
+}
+
+func containsStr(ss []string, target string) bool {
+	for _, s := range ss {
+		if s == target {
+			return true
+		}
+	}
+	return false
 }

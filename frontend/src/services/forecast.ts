@@ -24,6 +24,9 @@ export interface ForecastResponse {
   threshold_limit: MoneyValue;
   daily_projections: DailyProjection[];
   data_sufficiency?: DataSufficiency;
+  as_of?: string;
+  formula_version?: string;
+  assumptions?: string[];
 }
 
 export const forecastService = {

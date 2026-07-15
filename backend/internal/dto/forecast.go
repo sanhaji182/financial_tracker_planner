@@ -23,4 +23,8 @@ type ForecastResponse struct {
 	ThresholdLimit            MoneyValue           `json:"threshold_limit"`
 	DailyProjections          []DailyProjectionDto `json:"daily_projections"`
 	DataSufficiency           *DataSufficiency     `json:"data_sufficiency,omitempty"`
+	// Provenance from calculation kernel.
+	AsOf           string   `json:"as_of,omitempty"`
+	FormulaVersion string   `json:"formula_version,omitempty"`
+	Assumptions    []string `json:"assumptions,omitempty"`
 }

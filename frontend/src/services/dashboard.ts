@@ -40,6 +40,7 @@ export interface DataSufficiency {
   is_sufficient: boolean;
   missing_fields?: string[];
   uses_fallback_values?: boolean;
+  confidence?: 'high' | 'medium' | 'low' | string;
 }
 
 export interface UpcomingBill {
@@ -91,6 +92,7 @@ export interface DashboardResponse {
   net_worth_trend: TrendPoint[];
   as_of?: string;
   formula_version?: string;
+  assumptions?: string[];
 }
 
 export const dashboardService = {

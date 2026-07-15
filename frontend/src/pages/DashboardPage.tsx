@@ -175,8 +175,22 @@ export const DashboardPage: React.FC = () => {
           <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 flex items-center gap-1">
             <Info className="h-3 w-3" />
             Estimasi berdasarkan data hingga {dash.as_of ? new Date(dash.as_of).toLocaleString('id-ID') : 'sekarang'}
-            {dash.formula_version ? ` · formula ${dash.formula_version}` : ''}. Bukan nasihat investasi.
+            {dash.formula_version ? ` · formula ${dash.formula_version}` : ''}
+            {dash.data_sufficiency?.confidence ? ` · keyakinan ${dash.data_sufficiency.confidence}` : ''}.
+            Bukan nasihat investasi.
           </p>
+        )}
+        {dash.assumptions && dash.assumptions.length > 0 && (
+          <details className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+            <summary className="cursor-pointer font-semibold hover:text-slate-600 dark:hover:text-slate-300">
+              Asumsi kalkulasi
+            </summary>
+            <ul className="mt-1 list-disc pl-4 space-y-0.5">
+              {dash.assumptions.map((a) => (
+                <li key={a}>{a}</li>
+              ))}
+            </ul>
+          </details>
         )}
       </div>
 

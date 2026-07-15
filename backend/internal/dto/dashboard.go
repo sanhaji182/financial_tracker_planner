@@ -87,7 +87,8 @@ type DashboardResponse struct {
 	InsightSummary       string               `json:"insight_summary"`
 	NextAction           NextActionDto        `json:"next_action"`
 	NetWorthTrend        []TrendPoint         `json:"net_worth_trend"`
-	// Provenance for decision-support numbers (trust freeze).
-	AsOf           string `json:"as_of"`
-	FormulaVersion string `json:"formula_version"`
+	// Provenance for decision-support numbers (calculation kernel).
+	AsOf           string   `json:"as_of"`
+	FormulaVersion string   `json:"formula_version"`
+	Assumptions    []string `json:"assumptions,omitempty"`
 }

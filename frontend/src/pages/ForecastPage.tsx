@@ -121,6 +121,13 @@ export const ForecastPage: React.FC = () => {
           <p className="text-xs text-text-secondary">
             Simulasi saldo kas harian sepanjang bulan berdasarkan data pengeluaran historis dan tagihan wajib.
           </p>
+          {(fc.as_of || fc.formula_version) && (
+            <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+              Data hingga {fc.as_of ? new Date(fc.as_of).toLocaleString('id-ID') : 'sekarang'}
+              {fc.formula_version ? ` · formula ${fc.formula_version}` : ''}
+              {fc.data_sufficiency?.confidence ? ` · keyakinan ${fc.data_sufficiency.confidence}` : ''}.
+            </p>
+          )}
         </div>
 
         {/* Month Picker */}

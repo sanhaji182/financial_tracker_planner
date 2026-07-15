@@ -136,8 +136,15 @@ export const AllocationPage: React.FC = () => {
           💡 Saran Alokasi Uang Sisa
         </h1>
         <p className="text-xs text-text-secondary">
-          Algoritma optimasi keuangan kami menganalisis surplus kas Anda berdasarkan skala prioritas keuangan keluarga secara cerdas.
+          Estimasi surplus setelah kewajiban + buffer 10%. Bukan rekomendasi produk investasi.
         </p>
+        {(advice.as_of || advice.formula_version) && (
+          <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+            Data hingga {advice.as_of ? new Date(advice.as_of).toLocaleString('id-ID') : 'sekarang'}
+            {advice.formula_version ? ` · formula ${advice.formula_version}` : ''}
+            {advice.data_sufficiency?.confidence ? ` · keyakinan ${advice.data_sufficiency.confidence}` : ''}.
+          </p>
+        )}
       </div>
 
       {/* Prominent Surplus Banner */}
