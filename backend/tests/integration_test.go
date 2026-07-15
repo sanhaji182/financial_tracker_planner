@@ -398,14 +398,13 @@ func TestE2EFlowIntegration(t *testing.T) {
 		_ = json.Unmarshal(w.Body.Bytes(), &resp)
 		data := resp["data"].(map[string]interface{})
 		netWorth := data["net_worth"].(map[string]interface{})
-		_ = netWorth["value"].(float64)
+		netWorthVal := netWorth["value"].(float64)
 
-		// Expected net worth: initial balance 5,000,000 + income 1,000,000 = 6,000,000
-		// Wait! Cash is cashAvailable. Is cashAvailable added to NetWorth?
-		// Wait, as we saw earlier: NetWorth = totalAssets - totalDebts.
-		// Since Salary Account is not linked to any asset in the `assets` table,
-		// totalAssets is 0, so netWorth is 0!
-		// But let's check cash_available:
+		// Canonical net worth includes unlinked cash accounts.
+		if netWorthVal != 6000000 {
+			t.Errorf("expected net worth 6000000, got %f", netWorthVal)
+		}
+
 		cashAvailable := data["cash_available"].(map[string]interface{})
 		cashVal := cashAvailable["value"].(float64)
 

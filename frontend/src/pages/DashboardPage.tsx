@@ -34,10 +34,6 @@ export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
 
-  if (user?.role === 'spouse_viewer') {
-    return <Navigate to="/spouse" replace />;
-  }
-
   const { data: dash, isLoading, isError, refetch } = useDashboardData();
   const [alertsOpen, setAlertsOpen] = useState(true);
   const [topInsights, setTopInsights] = useState<MonthlyInsight[]>([]);
@@ -119,6 +115,10 @@ export const DashboardPage: React.FC = () => {
       default: return 'text-rose-500 border-rose-200 bg-rose-50 dark:bg-rose-950/20';
     }
   };
+
+  if (user?.role === 'spouse_viewer') {
+    return <Navigate to="/spouse" replace />;
+  }
 
   if (isError) {
     return (

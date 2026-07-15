@@ -78,19 +78,23 @@ func TestForecastService(t *testing.T) {
 	ip := "127.0.0.1"
 	ua := "Go-Test-Agent"
 
-	// Create a transaction in the current month to seed forecasting input
+	// Forecast estimates from the three completed months, not the incomplete
+	// current month. Seed each historical month so the fixture matches production.
 	desc := "Income Seed"
-	txReq := dto.CreateTransactionRequest{
-		Date:        time.Now(),
-		Amount:      500000,
-		Type:        "income",
-		AccountID:   account.ID,
-		CategoryID:  &incomeCatID,
-		Description: &desc,
-	}
-	_, err = txServ.CreateTransaction(ctx, testUser.ID, txReq, &ip, &ua)
-	if err != nil {
-		t.Fatalf("failed to create transaction: %v", err)
+	startOfMonth := time.Date(time.Now().Year(), time.Now().Month(), 1, 12, 0, 0, 0, time.Local)
+	for monthsAgo := 1; monthsAgo <= 3; monthsAgo++ {
+		txReq := dto.CreateTransactionRequest{
+			Date:        startOfMonth.AddDate(0, -monthsAgo, 0),
+			Amount:      500000,
+			Type:        "income",
+			AccountID:   account.ID,
+			CategoryID:  &incomeCatID,
+			Description: &desc,
+		}
+		_, err = txServ.CreateTransaction(ctx, testUser.ID, txReq, &ip, &ua)
+		if err != nil {
+			t.Fatalf("failed to create historical transaction: %v", err)
+		}
 	}
 
 	t.Run("Calculate forecast", func(t *testing.T) {
