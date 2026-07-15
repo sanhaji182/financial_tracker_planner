@@ -253,7 +253,11 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 		return nil, fmt.Errorf("failed to fetch debt for update: %w", err)
 	}
 
-	newOutstanding := outstanding - p.Amount
+	principalReduction := p.Amount
+	if p.PrincipalPortion != nil {
+		principalReduction = *p.PrincipalPortion
+	}
+	newOutstanding := outstanding - principalReduction
 	status := "active"
 	if newOutstanding <= 0 {
 		newOutstanding = 0

@@ -443,8 +443,24 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		insightSummary += "Pengeluaran Anda bulan ini sama atau lebih besar dari pendapatan. Batasi pengeluaran non-primer."
 	}
 
-	// Net Worth (Total Assets - Total Debts)
-	netWorth := totalAssets - totalDebts
+	// Canonical net worth includes independently valued assets plus account
+	// balances, less liabilities. Assets linked to an account already source their
+	// value from that account, so exclude the linked account from the second sum.
+	var netWorthAccounts float64
+	err = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(ac.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts ac
+		LEFT JOIN currencies curr ON ac.currency = curr.code
+		WHERE ac.user_id = $1 AND ac.is_active = true AND ac.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM assets a
+			WHERE a.linked_account_id = ac.id AND a.deleted_at IS NULL
+		  )
+	`, userID).Scan(&netWorthAccounts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch net-worth accounts: %w", err)
+	}
+	netWorth := totalAssets + netWorthAccounts - totalDebts
 
 	resp := dto.DashboardResponse{
 		NetWorth: dto.MoneyValue{

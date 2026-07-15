@@ -10,6 +10,40 @@ import (
 	"github.com/user/financial-os/internal/repository"
 )
 
+func TestRunSimRollsPaidOffMinimumIntoNextDebt(t *testing.T) {
+	zeroRate := 0.0
+	firstMinimum := 50.0
+	secondMinimum := 50.0
+	debts := []model.Debt{
+		{ID: "first", Name: "First", OutstandingBalance: 50, InterestRate: &zeroRate, MinimumPayment: &firstMinimum, Status: "active"},
+		{ID: "second", Name: "Second", OutstandingBalance: 200, InterestRate: &zeroRate, MinimumPayment: &secondMinimum, Status: "active"},
+	}
+
+	months, _, schedules := runSim(debts, 0)
+	if months != 3 {
+		t.Fatalf("expected fixed payment budget to clear debts in 3 months, got %d", months)
+	}
+	if schedules[1].PayoffMonthIndex != 3 {
+		t.Fatalf("expected second debt payoff in month 3 after rollover, got %d", schedules[1].PayoffMonthIndex)
+	}
+}
+
+func TestRunSimDetectsNegativeAmortization(t *testing.T) {
+	rate := 120.0 // 10% monthly
+	minimum := 50.0
+	debts := []model.Debt{
+		{ID: "toxic", Name: "Toxic Debt", OutstandingBalance: 1000, InterestRate: &rate, MinimumPayment: &minimum, Status: "active"},
+	}
+
+	months, _, schedules := runSim(debts, 0)
+	if months == 1200 {
+		t.Fatal("negative-amortizing debt must not masquerade as a 100-year payoff schedule")
+	}
+	if schedules[0].PayoffMonthIndex != 0 {
+		t.Fatalf("unpayable debt must have payoff month 0, got %d", schedules[0].PayoffMonthIndex)
+	}
+}
+
 func TestDebtService(t *testing.T) {
 	setupTestEnv(t)
 
@@ -121,10 +155,24 @@ func TestDebtService(t *testing.T) {
 			t.Fatalf("failed to get debt: %v", err)
 		}
 
-		// Balance is: 15,000,000 - p.Amount (1,000,000) = 14,000,000
-		expectedBalance := 14000000.0
+		// At 12% p.a., this month's interest is 150,000 and principal is
+		// 850,000. Only principal reduces the liability.
+		expectedBalance := 14150000.0
 		if d.OutstandingBalance != expectedBalance {
 			t.Errorf("expected outstanding balance %f, got %f", expectedBalance, d.OutstandingBalance)
+		}
+
+		var expenseAmount float64
+		err = testDB.QueryRow(ctx, `
+			SELECT amount FROM transactions
+			WHERE user_id = $1 AND description = 'Pembayaran Utang: Car Loan'
+			ORDER BY created_at DESC LIMIT 1
+		`, testUser.ID).Scan(&expenseAmount)
+		if err != nil {
+			t.Fatalf("failed to fetch debt interest expense: %v", err)
+		}
+		if expenseAmount != 150000 {
+			t.Errorf("expected only interest 150000 to be expense, got %f", expenseAmount)
 		}
 	})
 

@@ -104,9 +104,9 @@ func TestDashboardService(t *testing.T) {
 			t.Fatalf("failed to get dashboard data: %v", err)
 		}
 
-		// NetWorth calculation is:
-		// Assets (12,000,000 in Gold) - Debts (2,000,000 in Gadget Installment) = 10,000,000
-		expectedNetWorth := 10000000.0
+		// Canonical net worth includes cash accounts plus independently valued
+		// assets, less liabilities: 5m cash + 12m gold - 2m debt = 15m.
+		expectedNetWorth := 15000000.0
 		if resp.NetWorth.Value != expectedNetWorth {
 			t.Errorf("expected net worth %f, got %f", expectedNetWorth, resp.NetWorth.Value)
 		}

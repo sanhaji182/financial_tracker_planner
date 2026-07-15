@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"sort"
 	"time"
 
@@ -62,10 +63,15 @@ func (s *debtService) CreateDebt(ctx context.Context, userID string, req dto.Cre
 		EndDate:            req.EndDate,
 		TenorMonths:        req.TenorMonths,
 		AccountID:          req.AccountID,
-		Currency:           func() string { if req.Currency != "" { return req.Currency }; return "IDR" }(),
-		Status:             "active",
-		Notes:              req.Notes,
-		IsShared:           req.IsShared,
+		Currency: func() string {
+			if req.Currency != "" {
+				return req.Currency
+			}
+			return "IDR"
+		}(),
+		Status:   "active",
+		Notes:    req.Notes,
+		IsShared: req.IsShared,
 	}
 
 	created, err := s.debtRepo.Create(ctx, d)
@@ -235,12 +241,14 @@ func (s *debtService) RecordPayment(ctx context.Context, debtID string, userID s
 		categoryPtr = &categoryID
 	}
 
+	// Only financing cost is an expense. Principal is a balance-sheet movement:
+	// cash decreases while the liability decreases by the same amount.
 	expense := &model.Transaction{
 		UserID:      userID,
 		AccountID:   req.AccountID,
 		CategoryID:  categoryPtr,
 		Type:        "expense",
-		Amount:      req.Amount,
+		Amount:      interestPortion,
 		Date:        req.PaymentDate,
 		Description: &txDesc,
 		Notes:       req.Notes,
@@ -383,6 +391,14 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 	totalInterest := 0.0
 	monthCount := 0
 	maxMonths := 1200 // 100 years guard
+	stalled := false
+
+	// Avalanche keeps the original monthly debt-payment budget constant. When one
+	// debt is paid off, its former minimum payment rolls into the next target.
+	monthlyBudget := extraMonthly
+	for _, d := range simDebts {
+		monthlyBudget += d.minimumPayment
+	}
 
 	// Map to record schedules
 	payoffSchedules := make(map[string]model.AvalanchePaymentSchedule)
@@ -416,52 +432,53 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 			}
 		}
 
-		// 2. Pay minimums on all active debts
+		// 2. Pay minimums on all active debts, then roll every unused rupiah
+		// (including paid-off minimums) into the highest-interest active debt.
+		remainingBudget := monthlyBudget
 		for _, d := range simDebts {
-			if d.balance > 0 {
-				payment := d.minimumPayment
-				if payment > d.balance {
-					payment = d.balance
-				}
-				d.balance -= payment
+			if d.balance <= 0 {
+				continue
+			}
+			payment := math.Min(d.minimumPayment, d.balance)
+			d.balance -= payment
+			remainingBudget -= payment
+		}
+		for _, d := range simDebts {
+			if d.balance <= 0 || remainingBudget <= 0 {
+				continue
+			}
+			payment := math.Min(remainingBudget, d.balance)
+			d.balance -= payment
+			remainingBudget -= payment
+		}
 
-				if d.balance <= 0 {
-					d.balance = 0
-					sched := payoffSchedules[d.id]
-					if sched.PayoffMonthIndex == 0 {
-						sched.DebtID = d.id
-						sched.DebtName = d.name
-						sched.PayoffMonthIndex = monthCount
-						sched.PayoffDate = currentDate
-						payoffSchedules[d.id] = sched
-					}
+		// Record payoffs after the complete monthly budget has been applied.
+		for _, d := range simDebts {
+			if d.balance <= 0 {
+				d.balance = 0
+				sched := payoffSchedules[d.id]
+				if sched.PayoffMonthIndex == 0 {
+					sched.DebtID = d.id
+					sched.DebtName = d.name
+					sched.PayoffMonthIndex = monthCount
+					sched.PayoffDate = currentDate
+					payoffSchedules[d.id] = sched
 				}
 			}
 		}
 
-		// 3. Apply extra payment to highest interest debt
-		remainingExtra := extraMonthly
+		// If the fixed budget cannot cover this month's interest, balances can
+		// never amortize under these assumptions. Stop instead of returning a
+		// misleading 100-year payoff date.
+		monthlyInterest := 0.0
 		for _, d := range simDebts {
-			if d.balance > 0 && remainingExtra > 0 {
-				payment := remainingExtra
-				if payment > d.balance {
-					payment = d.balance
-				}
-				d.balance -= payment
-				remainingExtra -= payment
-
-				if d.balance <= 0 {
-					d.balance = 0
-					sched := payoffSchedules[d.id]
-					if sched.PayoffMonthIndex == 0 {
-						sched.DebtID = d.id
-						sched.DebtName = d.name
-						sched.PayoffMonthIndex = monthCount
-						sched.PayoffDate = currentDate
-						payoffSchedules[d.id] = sched
-					}
-				}
+			if d.balance > 0 {
+				monthlyInterest += d.balance * (d.interestRate / 12 / 100)
 			}
+		}
+		if monthlyBudget <= monthlyInterest && monthlyInterest > 0 {
+			stalled = true
+			break
 		}
 	}
 
@@ -469,13 +486,17 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 	var schedules []model.AvalanchePaymentSchedule
 	for _, d := range debts {
 		sched, found := payoffSchedules[d.ID]
-		if !found {
+		if !found && !stalled {
 			sched = model.AvalanchePaymentSchedule{
 				DebtID:           d.ID,
 				DebtName:         d.Name,
 				PayoffMonthIndex: monthCount,
 				PayoffDate:       time.Now().AddDate(0, monthCount, 0),
 			}
+		} else if !found {
+			// A zero payoff index/date explicitly means the payment budget does
+			// not amortize this debt under the supplied assumptions.
+			sched = model.AvalanchePaymentSchedule{DebtID: d.ID, DebtName: d.Name}
 		}
 		schedules = append(schedules, sched)
 	}
