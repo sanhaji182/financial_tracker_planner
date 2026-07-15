@@ -243,7 +243,8 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 		return nil, fmt.Errorf("failed to create ledger transaction: %w", err)
 	}
 
-	// 3. Update debt outstanding balance & status
+	// 3. Update debt outstanding balance & status using principal portion only
+	// (interest is financing cost; principal reduces liability — ledger-v1).
 	var outstanding float64
 	queryDebtLock := `
 		SELECT outstanding_balance FROM debts WHERE id = $1 FOR UPDATE
@@ -257,11 +258,21 @@ func (r *pgDebtRepository) CreatePayment(ctx context.Context, p *model.DebtPayme
 	if p.PrincipalPortion != nil {
 		principalReduction = *p.PrincipalPortion
 	}
+	// Floor at 0 — never store negative outstanding (matches kernel.SplitDebtPayment).
 	newOutstanding := outstanding - principalReduction
 	status := "active"
 	if newOutstanding <= 0 {
 		newOutstanding = 0
 		status = "paid_off"
+	}
+	// Defensive: principal must not exceed outstanding even if caller mis-set portion.
+	if principalReduction > outstanding {
+		principalReduction = outstanding
+		newOutstanding = 0
+		status = "paid_off"
+		if p.PrincipalPortion != nil {
+			p.PrincipalPortion = &principalReduction
+		}
 	}
 
 	queryDebtUpdate := `

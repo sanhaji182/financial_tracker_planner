@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"mime/multipart"
 	"net/http"
 	"os"
@@ -18,6 +17,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 	"github.com/user/financial-os/internal/model"
 	"github.com/user/financial-os/internal/repository"
 )
@@ -93,21 +93,22 @@ func (s *transactionService) CreateTransaction(ctx context.Context, userID strin
 		}
 	}
 
-	// 3. Validation for split transaction amounts
+	// 3. Validation for split transaction amounts (ledger-v1 + money-v1)
 	isSplit := len(req.Splits) > 0
 	var modelSplits []model.TransactionSplit
 	if isSplit {
-		var sumSplit float64
-		for _, sp := range req.Splits {
-			sumSplit += sp.Amount
+		lines := make([]kernel.SplitLine, len(req.Splits))
+		for i, sp := range req.Splits {
+			rounded := kernel.RoundIDR(sp.Amount)
+			lines[i] = kernel.SplitLine{Amount: rounded}
 			modelSplits = append(modelSplits, model.TransactionSplit{
 				CategoryID:  sp.CategoryID,
-				Amount:      sp.Amount,
+				Amount:      rounded,
 				Description: sp.Description,
 			})
 		}
-		if math.Abs(sumSplit-req.Amount) > 0.01 {
-			return nil, errors.New("sum of split amounts must equal transaction total amount")
+		if err := kernel.ValidateSplitSum(req.Amount, lines, kernel.DefaultMoneyScale); err != nil {
+			return nil, err
 		}
 	}
 
@@ -418,15 +419,13 @@ func (s *transactionService) SplitTransaction(ctx context.Context, transactionID
 		return nil, errors.New("transfer transactions cannot be split")
 	}
 
-	// 2. Validate sum of split amounts equals transaction amount
-	var splitSum float64
-	for _, split := range req.Splits {
-		splitSum += split.Amount
+	// 2. Validate sum of split amounts equals transaction amount (ledger-v1 + money-v1).
+	lines := make([]kernel.SplitLine, len(req.Splits))
+	for i, split := range req.Splits {
+		lines[i] = kernel.SplitLine{Amount: kernel.RoundIDR(split.Amount)}
 	}
-
-	// Deal with float precision issues within 0.01 tolerance
-	if math.Abs(splitSum-tx.Amount) > 0.01 {
-		return nil, fmt.Errorf("total split amount (%f) must equal transaction amount (%f)", splitSum, tx.Amount)
+	if err := kernel.ValidateSplitSum(tx.Amount, lines, kernel.DefaultMoneyScale); err != nil {
+		return nil, err
 	}
 
 	// 3. Validate categories exist

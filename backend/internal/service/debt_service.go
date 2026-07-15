@@ -206,26 +206,28 @@ func (s *debtService) RecordPayment(ctx context.Context, debtID string, userID s
 		}
 	}
 
-	// Calculate interest portion via shared debt-v1 monthly accrual.
-	var interestPortion, principalPortion float64
+	// Calculate interest/principal via shared ledger-v1 + debt-v1 money policy.
 	rate := 0.0
 	if d.InterestRate != nil {
 		rate = *d.InterestRate
 	}
-	if rate > 0 {
-		interestPortion = kernel.MonthlyInterest(d.OutstandingBalance, rate)
-		if interestPortion > req.Amount {
-			interestPortion = req.Amount
-		}
-		principalPortion = req.Amount - interestPortion
-	} else {
-		principalPortion = req.Amount
+	split, err := kernel.SplitDebtPayment(kernel.DebtPaymentSplit{
+		PaymentAmount:     req.Amount,
+		OutstandingBefore: d.OutstandingBalance,
+		AnnualInterestPct: rate,
+	}, kernel.DefaultMoneyScale)
+	if err != nil {
+		return nil, err
 	}
+	interestPortion := split.Interest
+	principalPortion := split.Principal
+	// Cash leaving the account is the full payment (rounded).
+	paymentAmount := kernel.RoundIDR(req.Amount)
 
 	// Construct payment log
 	p := &model.DebtPayment{
 		DebtID:           debtID,
-		Amount:           req.Amount,
+		Amount:           paymentAmount,
 		PaymentDate:      req.PaymentDate,
 		IsExtraPayment:   req.IsExtraPayment,
 		PrincipalPortion: &principalPortion,
@@ -246,6 +248,8 @@ func (s *debtService) RecordPayment(ctx context.Context, debtID string, userID s
 
 	// Only financing cost is an expense. Principal is a balance-sheet movement:
 	// cash decreases while the liability decreases by the same amount.
+	// When interest is 0, skip zero-amount expense row (repo still deducts cash
+	// by payment amount and reduces outstanding by principal).
 	expense := &model.Transaction{
 		UserID:      userID,
 		AccountID:   req.AccountID,

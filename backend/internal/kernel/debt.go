@@ -58,12 +58,13 @@ type AvalancheResult struct {
 	Assumptions []string
 }
 
-// MonthlyInterest applies simple APR/12 accrual used by debt-v1.
+// MonthlyInterest applies simple APR/12 accrual used by debt-v1,
+// rounded to money-v1 scale so payment splits and sim stay on DECIMAL(15,2).
 func MonthlyInterest(balance, annualPct float64) float64 {
 	if balance <= 0 || annualPct <= 0 {
 		return 0
 	}
-	return balance * (annualPct / 12.0 / 100.0)
+	return RoundIDR(balance * (annualPct / 12.0 / 100.0))
 }
 
 // SimulateAvalanche runs fixed-budget avalanche (highest APR first) with and without extra.

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type TransferService interface {
@@ -64,8 +65,14 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 	if req.SourceAccountID == req.TargetAccountID {
 		return nil, errors.New("source and target accounts must be different")
 	}
-	if req.Amount <= 0 {
-		return nil, errors.New("transfer amount must be greater than zero")
+	// money-v1: round to DECIMAL(15,2) scale before balance checks / writes.
+	amount := kernel.RoundIDR(req.Amount)
+	if err := kernel.ValidateTransfer(kernel.TransferParts{
+		Debit:  amount,
+		Credit: amount,
+		Fee:    0, // fee field not yet on TransferRequest; identity is debit==credit
+	}, kernel.DefaultMoneyScale); err != nil {
+		return nil, err
 	}
 
 	// 1. Verify source account exists and has sufficient balance
@@ -81,7 +88,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 		return nil, err
 	}
 
-	if sourceBalance < req.Amount {
+	if sourceBalance < amount {
 		return nil, fmt.Errorf("insufficient balance in source account %s (available: %s)", sourceName, formatRupiah(sourceBalance))
 	}
 
@@ -114,7 +121,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 		UPDATE accounts
 		SET balance = balance - $1, updated_at = NOW()
 		WHERE id = $2 AND user_id = $3
-	`, req.Amount, req.SourceAccountID, ownerID)
+	`, amount, req.SourceAccountID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -124,7 +131,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 		UPDATE accounts
 		SET balance = balance + $1, updated_at = NOW()
 		WHERE id = $2 AND user_id = $3
-	`, req.Amount, req.TargetAccountID, ownerID)
+	`, amount, req.TargetAccountID, ownerID)
 	if err != nil {
 		return nil, err
 	}
@@ -141,7 +148,7 @@ func (s *transferService) CreateTransfer(ctx context.Context, userID string, req
 			user_id, account_id, target_account_id, type, amount, date, notes, status, created_at, updated_at
 		) VALUES ($1, $2, $3, 'transfer', $4, $5, $6, 'confirmed', NOW(), NOW())
 		RETURNING id
-	`, ownerID, req.SourceAccountID, req.TargetAccountID, req.Amount, parsedDate, notesText).Scan(&txID)
+	`, ownerID, req.SourceAccountID, req.TargetAccountID, amount, parsedDate, notesText).Scan(&txID)
 	if err != nil {
 		return nil, err
 	}
