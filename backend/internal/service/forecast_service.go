@@ -72,7 +72,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	var startingCash float64
 	if isCurrentMonth {
-		// Current month: use actual account balance
+		// Current month: use actual account balance (as-of liquid cash).
 		err = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
 			FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
@@ -89,11 +89,11 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 			WHERE user_id = $1 AND month = $2
 		`, ownerID, prevMonth).Scan(&startingCash)
 		if err != nil {
-			// No previous forecast exists — fall back to actual account balance
+			// No previous forecast exists — fall back to actual account balance (FX-aware)
 			err = s.dbPool.QueryRow(ctx, `
-				SELECT COALESCE(SUM(balance), 0)
-				FROM accounts
-				WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
+				SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
+				FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
+				WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash') AND a.is_active = true AND a.deleted_at IS NULL
 			`, ownerID).Scan(&startingCash)
 			if err != nil {
 				return nil, fmt.Errorf("failed to get starting balance: %w", err)
@@ -101,7 +101,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		}
 	}
 
-	// 3. Query average income of last 3 months
+	// 3. Query average income of last 3 completed months
 	startOfCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfCurrentMonth.AddDate(0, -3, 0)
 
@@ -114,6 +114,19 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	estimatedIncome := totalIncomeLast3Months / 3.0
 	incomeInsufficient := estimatedIncome <= 0
+
+	// 3b. Income MTD in target month (current-month only) — avoids double-count.
+	var incomeMTD float64
+	if isCurrentMonth {
+		monthStart := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), 1, 0, 0, 0, 0, now.Location())
+		// Up to now (as-of); transactions dated after today are not posted yet.
+		_ = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0)
+			FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+			WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed'
+			  AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		`, ownerID, monthStart, now).Scan(&incomeMTD)
+	}
 
 	// 4. Query average variable expenses of last 3 months
 	var totalVariableExpensesLast3Months float64
@@ -141,6 +154,18 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	monthlyLivingCostThreshold := totalLivingCostLast3Months / 3.0
 	livingCostInsufficient := monthlyLivingCostThreshold <= 0
 
+	// 5b. Expense MTD (current month) for kernel data quality.
+	var expenseMTD float64
+	if isCurrentMonth {
+		monthStart := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), 1, 0, 0, 0, 0, now.Location())
+		_ = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0)
+			FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+			WHERE t.user_id = $1 AND t.type = 'expense' AND t.status = 'confirmed'
+			  AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		`, ownerID, monthStart, now).Scan(&expenseMTD)
+	}
+
 	// 6. Query expected income day (day of month of latest income)
 	var expectedIncomeDay int = 25
 	_ = s.dbPool.QueryRow(ctx, `
@@ -153,41 +178,88 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		expectedIncomeDay = 25
 	}
 
-	// 7. Calculate fixed expenses for target month (bills + active debts min payment)
+	// 7. Fixed expenses for summary cards: unpaid bills due this month + active debt mins.
+	// Bills already paid are excluded so fixed expense = remaining commitment, not full-month estimate.
 	var billsSum float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM bills
 		WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
+		  AND status IN ('unpaid', 'overdue')
 		  AND TO_CHAR(next_due_date, 'YYYY-MM') = $2
 	`, ownerID, month).Scan(&billsSum)
 
+	// Debt mins still due this month: exclude debts that already received a non-extra payment in target month.
 	var debtsMinPaymentSum float64
-	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(minimum_payment), 0)
-		FROM debts
-		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
-	`, ownerID).Scan(&debtsMinPaymentSum)
+	if isCurrentMonth {
+		monthStart := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), 1, 0, 0, 0, 0, now.Location())
+		nextMonthStart := monthStart.AddDate(0, 1, 0)
+		_ = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(d.minimum_payment), 0)
+			FROM debts d
+			WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
+			  AND NOT EXISTS (
+			    SELECT 1 FROM debt_payments dp
+			    WHERE dp.debt_id = d.id
+			      AND dp.payment_date >= $2 AND dp.payment_date < $3
+			      AND COALESCE(dp.is_extra_payment, false) = false
+			  )
+		`, ownerID, monthStart, nextMonthStart).Scan(&debtsMinPaymentSum)
+	} else {
+		_ = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(minimum_payment), 0)
+			FROM debts
+			WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		`, ownerID).Scan(&debtsMinPaymentSum)
+	}
 
 	estimatedFixedExpenses := billsSum + debtsMinPaymentSum
 
-	// 8. Generate Daily Projections
+	// 8. Build discrete ladder events (future only for current month).
 	daysInMonth := time.Date(targetYearMonth.Year(), targetYearMonth.Month()+1, 0, 0, 0, 0, 0, targetYearMonth.Location()).Day()
-
-	// Determine start projection date.
-	// If forecasting current month: start simulation from today onwards.
-	// If forecasting future month: start simulation from day 1.
-	startDay := 1
+	asOfDay := 1
 	if isCurrentMonth {
-		startDay = now.Day()
+		asOfDay = now.Day()
+		if asOfDay < 1 {
+			asOfDay = 1
+		}
+		if asOfDay > daysInMonth {
+			asOfDay = daysInMonth
+		}
 	}
 
-	dailyVariableExpense := estimatedVariableExpenses / 30.0
+	var ladderEvents []kernel.LadderEvent
 
-	var projections []dto.DailyProjectionDto
-	runningBalance := startingCash
+	// Remaining income = max(0, estimate − MTD). Never re-add income already in cash.
+	remainingIncome := estimatedIncome
+	if isCurrentMonth {
+		remainingIncome = estimatedIncome - incomeMTD
+		if remainingIncome < 0 {
+			remainingIncome = 0
+		}
+		if estimatedIncome <= 0 {
+			remainingIncome = 0
+		}
+	}
+	if remainingIncome > 0 {
+		incomeDay := expectedIncomeDay
+		if incomeDay > daysInMonth {
+			incomeDay = daysInMonth
+		}
+		// If payday already passed in current month, place remaining on as-of day
+		// (late/partial receipt still expected, not re-sim of past cash).
+		if isCurrentMonth && incomeDay < asOfDay {
+			incomeDay = asOfDay
+		}
+		ladderEvents = append(ladderEvents, kernel.LadderEvent{
+			Day:    incomeDay,
+			Name:   "Gaji Masuk (Est.)",
+			Amount: remainingIncome,
+			Kind:   "income",
+		})
+	}
 
-	// Fetch all bills due in this target month
+	// Unpaid bills due in this target month (status filter = not yet paid).
 	type dbBill struct {
 		Name   string
 		Amount float64
@@ -209,130 +281,163 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		}
 		rows.Close()
 	}
+	for _, b := range billsList {
+		day := b.Day
+		if day < 1 {
+			day = 1
+		}
+		if day > daysInMonth {
+			day = daysInMonth
+		}
+		// Past-due unpaid bills still outstanding: apply on as-of day for current month.
+		if isCurrentMonth && day < asOfDay {
+			day = asOfDay
+		}
+		ladderEvents = append(ladderEvents, kernel.LadderEvent{
+			Day:    day,
+			Name:   b.Name,
+			Amount: -b.Amount,
+			Kind:   "bill",
+		})
+	}
 
-	// Fetch all active debts due in this month
+	// Active debts whose minimum has not yet been paid this month.
 	type dbDebt struct {
 		Name           string
 		MinimumPayment float64
 		DueDay         int
 	}
-	rowsDebts, err := s.dbPool.Query(ctx, `
-		SELECT name, COALESCE(minimum_payment, 0), COALESCE(due_day, 10)
-		FROM debts
-		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
-	`, ownerID)
 	var debtsList []dbDebt
-	if err == nil {
-		for rowsDebts.Next() {
-			var d dbDebt
-			if scanErr := rowsDebts.Scan(&d.Name, &d.MinimumPayment, &d.DueDay); scanErr == nil {
-				debtsList = append(debtsList, d)
+	if isCurrentMonth {
+		monthStart := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), 1, 0, 0, 0, 0, now.Location())
+		nextMonthStart := monthStart.AddDate(0, 1, 0)
+		rowsDebts, dErr := s.dbPool.Query(ctx, `
+			SELECT d.name, COALESCE(d.minimum_payment, 0), COALESCE(d.due_day, 10)
+			FROM debts d
+			WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
+			  AND NOT EXISTS (
+			    SELECT 1 FROM debt_payments dp
+			    WHERE dp.debt_id = d.id
+			      AND dp.payment_date >= $2 AND dp.payment_date < $3
+			      AND COALESCE(dp.is_extra_payment, false) = false
+			  )
+		`, ownerID, monthStart, nextMonthStart)
+		if dErr == nil {
+			for rowsDebts.Next() {
+				var d dbDebt
+				if scanErr := rowsDebts.Scan(&d.Name, &d.MinimumPayment, &d.DueDay); scanErr == nil {
+					debtsList = append(debtsList, d)
+				}
 			}
+			rowsDebts.Close()
 		}
-		rowsDebts.Close()
+	} else {
+		rowsDebts, dErr := s.dbPool.Query(ctx, `
+			SELECT name, COALESCE(minimum_payment, 0), COALESCE(due_day, 10)
+			FROM debts
+			WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		`, ownerID)
+		if dErr == nil {
+			for rowsDebts.Next() {
+				var d dbDebt
+				if scanErr := rowsDebts.Scan(&d.Name, &d.MinimumPayment, &d.DueDay); scanErr == nil {
+					debtsList = append(debtsList, d)
+				}
+			}
+			rowsDebts.Close()
+		}
 	}
-
-	lowestBalance := startingCash
-	lowestBalanceDate := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), startDay, 0, 0, 0, 0, targetYearMonth.Location())
-	isTight := false
-
-	// Build projection for all days in target month
-	// For days before startDay: keep runningBalance static as starting balance or back-filled
-	for d := 1; d <= daysInMonth; d++ {
-		currentDate := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), d, 0, 0, 0, 0, targetYearMonth.Location())
-		dateStr := currentDate.Format("2006-01-02")
-
-		var eventName string
-		var eventAmount float64
-
-		if d >= startDay {
-			// Apply transactions for this day
-			// 1. Expected Income
-			if d == expectedIncomeDay {
-				runningBalance += estimatedIncome
-				eventName = "Gaji Masuk (Est.)"
-				eventAmount = estimatedIncome
-			}
-
-			// 2. Bills due on this day
-			for _, b := range billsList {
-				if b.Day == d {
-					runningBalance -= b.Amount
-					if eventName != "" {
-						eventName += " & " + b.Name
-					} else {
-						eventName = b.Name
-					}
-					eventAmount -= b.Amount
-				}
-			}
-
-			// 3. Debts due on this day
-			for _, debt := range debtsList {
-				if debt.DueDay == d {
-					runningBalance -= debt.MinimumPayment
-					if eventName != "" {
-						eventName += " & Cicilan " + debt.Name
-					} else {
-						eventName = "Cicilan " + debt.Name
-					}
-					eventAmount -= debt.MinimumPayment
-				}
-			}
-
-			// 4. Daily variable expense
-			runningBalance -= dailyVariableExpense
-
-			if runningBalance < lowestBalance {
-				lowestBalance = runningBalance
-				lowestBalanceDate = currentDate
-			}
+	for _, debt := range debtsList {
+		if debt.MinimumPayment <= 0 {
+			continue
 		}
-
-		if runningBalance < monthlyLivingCostThreshold {
-			isTight = true
+		day := debt.DueDay
+		if day < 1 {
+			day = 1
 		}
-
-		projections = append(projections, dto.DailyProjectionDto{
-			Date:             dateStr,
-			ProjectedBalance: runningBalance,
-			FormattedBalance: formatRupiah(runningBalance),
-			EventName:        eventName,
-			EventAmount:      eventAmount,
-			FormattedAmount:  formatRupiah(eventAmount),
+		if day > daysInMonth {
+			day = daysInMonth
+		}
+		if isCurrentMonth && day < asOfDay {
+			day = asOfDay
+		}
+		ladderEvents = append(ladderEvents, kernel.LadderEvent{
+			Day:    day,
+			Name:   "Cicilan " + debt.Name,
+			Amount: -debt.MinimumPayment,
+			Kind:   "debt",
 		})
 	}
 
-	projectedEndBalance := runningBalance
+	dailyVariableExpense := estimatedVariableExpenses / 30.0
 
-	// Safe-to-spend + projected end via shared calculation kernel.
-	// Ladder already computed; pass lowest balance so STS is capped by it.
-	daysRemaining := daysInMonth - startDay + 1
+	ladder := kernel.BuildCashLadder(kernel.LadderInputs{
+		AsOfDay:              asOfDay,
+		DaysInMonth:          daysInMonth,
+		IsCurrentMonth:       isCurrentMonth,
+		StartingCash:         startingCash,
+		Events:               ladderEvents,
+		DailyVariableExpense: dailyVariableExpense,
+		LivingCostThreshold:  monthlyLivingCostThreshold,
+	})
+
+	// Map pure ladder → DTO daily projections with formatted values.
+	projections := make([]dto.DailyProjectionDto, 0, len(ladder.Days))
+	for _, d := range ladder.Days {
+		currentDate := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), d.Day, 0, 0, 0, 0, targetYearMonth.Location())
+		dateStr := currentDate.Format("2006-01-02")
+		projections = append(projections, dto.DailyProjectionDto{
+			Date:             dateStr,
+			ProjectedBalance: d.ProjectedBalance,
+			FormattedBalance: formatRupiah(d.ProjectedBalance),
+			EventName:        d.EventName,
+			EventAmount:      d.EventAmount,
+			FormattedAmount:  formatRupiah(d.EventAmount),
+			Included:         d.Included,
+		})
+	}
+
+	projectedEndBalance := ladder.ProjectedEndBalance
+	lowestBalance := ladder.LowestBalance
+	lowestBalanceDate := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), ladder.LowestBalanceDay, 0, 0, 0, 0, targetYearMonth.Location())
+	isTight := ladder.IsTight
+
+	// Safe-to-spend via shared calculation kernel, capped by ladder lowest.
+	daysRemaining := daysInMonth - asOfDay + 1
+	if !isCurrentMonth {
+		daysRemaining = daysInMonth
+	}
 	if daysRemaining < 0 {
 		daysRemaining = 0
+	}
+	// Prefer ladder-measured remaining fixed (unpaid only) for current month.
+	minDebtForKernel := debtsMinPaymentSum
+	if isCurrentMonth && ladder.RemainingFixed > 0 {
+		// Remaining fixed already includes unpaid bills + unpaid debt mins.
+		// Kernel remainingFixed for current month uses MinDebtPayments only;
+		// pass full remaining fixed so STS subtracts unpaid bills too.
+		minDebtForKernel = ladder.RemainingFixed
 	}
 	cf := kernel.ComputeCashflow(kernel.CashflowInputs{
 		AsOf:                      now,
 		CashAvailable:             startingCash,
+		IncomeMTD:                 incomeMTD,
+		ExpenseMTD:                expenseMTD,
 		EstimatedIncome:           estimatedIncome,
 		EstimatedFixedExpenses:    estimatedFixedExpenses,
 		EstimatedVariableExpenses: estimatedVariableExpenses,
 		MonthlyLivingCost:         monthlyLivingCostThreshold,
-		MinDebtPayments:           debtsMinPaymentSum,
+		MinDebtPayments:           minDebtForKernel,
 		IsCurrentMonth:            isCurrentMonth,
 		DaysRemaining:             daysRemaining,
 		DaysInMonth:               daysInMonth,
 		HasLowestBalance:          true,
 		LowestProjectedBalance:    lowestBalance,
 	})
-	// Prefer ladder end balance (day-by-day events) over simple projection.
-	// Kernel STS scenarios replace the previous ad-hoc formulas.
 	conservativeSTS := cf.SafeToSpendScenarios.Conservative
 	expectedSTS := cf.SafeToSpendScenarios.Expected
 	optimisticSTS := cf.SafeToSpendScenarios.Optimistic
 	safeToSpend := cf.SafeToSpend
-	// Keep ladder projected end (more accurate with bills/debts day events).
-	_ = cf.ProjectedEndBalance
 
 	// Track data sufficiency from kernel + local flags.
 	missingFields := append([]string{}, cf.DataQuality.MissingFields...)
@@ -345,12 +450,37 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	if livingCostInsufficient && !containsStr(missingFields, "living_cost") {
 		missingFields = append(missingFields, "living_cost")
 	}
+	confidence := cf.DataQuality.Confidence
+	if len(missingFields) > 0 {
+		confidence = "low"
+	}
 	ds := &dto.DataSufficiency{
 		IsSufficient:       len(missingFields) == 0,
 		MissingFields:      missingFields,
 		UsesFallbackValues: cf.DataQuality.UsesFallbackValues,
-		Confidence:         cf.DataQuality.Confidence,
+		Confidence:         confidence,
 	}
+
+	// Merge assumptions: ladder (as-of semantics) + cashflow kernel.
+	assumptions := append([]string{}, ladder.Assumptions...)
+	for _, a := range cf.Assumptions {
+		if !containsStr(assumptions, a) {
+			assumptions = append(assumptions, a)
+		}
+	}
+	// Explicit included/excluded summary for UI.
+	includedCount := len(ladder.IncludedEvents)
+	excludedBillsNote := ""
+	if isCurrentMonth {
+		excludedBillsNote = fmt.Sprintf(
+			"As-of day %d: %d future event(s) projected; %d pre-as-of day(s) held as opening-cash stubs; income remaining %.0f of estimate %.0f",
+			asOfDay, includedCount, ladder.ExcludedDaysBefore, remainingIncome, estimatedIncome,
+		)
+		assumptions = append(assumptions, excludedBillsNote)
+	}
+
+	// Formula version combines ladder + cashflow for provenance.
+	formulaVersion := ladder.FormulaVersion + "+" + cf.FormulaVersion
 
 	res := &dto.ForecastResponse{
 		Month: month,
@@ -391,9 +521,23 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		},
 		DailyProjections: projections,
 		DataSufficiency:  ds,
-		AsOf:             cf.AsOf.Format(time.RFC3339),
-		FormulaVersion:   cf.FormulaVersion,
-		Assumptions:      cf.Assumptions,
+		AsOf:             now.UTC().Format(time.RFC3339),
+		FormulaVersion:   formulaVersion,
+		Assumptions:      assumptions,
+		OpeningBalance: &dto.MoneyValue{
+			Value:          startingCash,
+			FormattedValue: formatRupiah(startingCash),
+		},
+		IncomeMTD: &dto.MoneyValue{
+			Value:          incomeMTD,
+			FormattedValue: formatRupiah(incomeMTD),
+		},
+		RemainingIncome: &dto.MoneyValue{
+			Value:          remainingIncome,
+			FormattedValue: formatRupiah(remainingIncome),
+		},
+		IncludedEventCount: includedCount,
+		ExcludedDaysBefore: ladder.ExcludedDaysBefore,
 	}
 
 	// 9. Save to Database (forecasts table)

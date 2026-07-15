@@ -7,6 +7,8 @@ type DailyProjectionDto struct {
 	EventName        string  `json:"event_name,omitempty"`
 	EventAmount      float64 `json:"event_amount,omitempty"`
 	FormattedAmount  string  `json:"formatted_amount,omitempty"`
+	// Included is false for pre-as-of stub days on current-month forecasts.
+	Included bool `json:"included"`
 }
 
 type ForecastResponse struct {
@@ -23,8 +25,14 @@ type ForecastResponse struct {
 	ThresholdLimit            MoneyValue           `json:"threshold_limit"`
 	DailyProjections          []DailyProjectionDto `json:"daily_projections"`
 	DataSufficiency           *DataSufficiency     `json:"data_sufficiency,omitempty"`
-	// Provenance from calculation kernel.
+	// Provenance from calculation kernel + ladder.
 	AsOf           string   `json:"as_of,omitempty"`
 	FormulaVersion string   `json:"formula_version,omitempty"`
 	Assumptions    []string `json:"assumptions,omitempty"`
+	// As-of event model (forecast-v1).
+	OpeningBalance     *MoneyValue `json:"opening_balance,omitempty"`
+	IncomeMTD          *MoneyValue `json:"income_mtd,omitempty"`
+	RemainingIncome    *MoneyValue `json:"remaining_income,omitempty"`
+	IncludedEventCount int         `json:"included_event_count,omitempty"`
+	ExcludedDaysBefore int         `json:"excluded_days_before,omitempty"`
 }

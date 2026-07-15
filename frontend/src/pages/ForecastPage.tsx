@@ -128,6 +128,19 @@ export const ForecastPage: React.FC = () => {
               {fc.data_sufficiency?.confidence ? ` · keyakinan ${fc.data_sufficiency.confidence}` : ''}.
             </p>
           )}
+          {(fc.opening_balance || fc.remaining_income || typeof fc.excluded_days_before === 'number') && (
+            <p className="mt-0.5 text-[11px] font-medium text-slate-400 dark:text-slate-500">
+              {fc.opening_balance ? `Saldo buka ${fc.opening_balance.formatted_value}` : ''}
+              {fc.income_mtd ? ` · income MTD ${fc.income_mtd.formatted_value}` : ''}
+              {fc.remaining_income ? ` · sisa income proyeksi ${fc.remaining_income.formatted_value}` : ''}
+              {typeof fc.excluded_days_before === 'number' && fc.excluded_days_before > 0
+                ? ` · ${fc.excluded_days_before} hari pra-as-of (stub)`
+                : ''}
+              {typeof fc.included_event_count === 'number'
+                ? ` · ${fc.included_event_count} event masa depan`
+                : ''}
+            </p>
+          )}
         </div>
 
         {/* Month Picker */}
@@ -243,6 +256,24 @@ export const ForecastPage: React.FC = () => {
         </div>
       )}
 
+      {fc.assumptions && fc.assumptions.length > 0 && (
+        <details className="group rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900/40 p-4">
+          <summary className="cursor-pointer text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider list-none flex items-center justify-between">
+            <span>Asumsi &amp; model proyeksi</span>
+            <span className="text-[10px] font-semibold normal-case text-slate-400 group-open:hidden">tampilkan</span>
+            <span className="text-[10px] font-semibold normal-case text-slate-400 hidden group-open:inline">sembunyikan</span>
+          </summary>
+          <ul className="mt-3 space-y-1.5 text-[11px] font-medium text-slate-600 dark:text-slate-300 list-disc pl-4">
+            {fc.assumptions.map((a, i) => (
+              <li key={i}>{a}</li>
+            ))}
+          </ul>
+          <p className="mt-3 text-[10px] text-slate-400 font-semibold">
+            Estimasi berdasarkan data hingga as-of; event yang sudah dibayar/diterima tidak dihitung ulang.
+          </p>
+        </details>
+      )}
+
       {/* Main Chart */}
       <Card className="p-6">
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
@@ -333,7 +364,12 @@ export const ForecastPage: React.FC = () => {
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {fc.daily_projections.map((dp, idx) => (
-                <tr key={idx} className={`hover:bg-slate-50/40 ${dp.date === lowestDateStr ? 'bg-rose-500/5 hover:bg-rose-500/10' : ''}`}>
+                <tr
+                  key={idx}
+                  className={`hover:bg-slate-50/40 ${
+                    dp.date === lowestDateStr ? 'bg-rose-500/5 hover:bg-rose-500/10' : ''
+                  } ${dp.included === false ? 'opacity-50' : ''}`}
+                >
                   <td className="p-3 font-semibold font-mono text-slate-700 dark:text-slate-300">
                     {new Date(dp.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
                     {dp.date === lowestDateStr && (
@@ -341,14 +377,21 @@ export const ForecastPage: React.FC = () => {
                         Lowest Balance 🚨
                       </span>
                     )}
+                    {dp.included === false && (
+                      <span className="ml-2 bg-slate-200 dark:bg-slate-700 text-slate-600 dark:text-slate-300 text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
+                        Pra as-of
+                      </span>
+                    )}
                   </td>
                   <td className="p-3 font-bold text-slate-900 dark:text-white">
-                    {dp.event_name || '-'}
+                    {dp.included === false
+                      ? 'Stub saldo buka (tidak di-sim ulang)'
+                      : dp.event_name || '-'}
                   </td>
                   <td className={`p-3 text-right font-mono font-bold ${
                     (dp.event_amount || 0) > 0 ? 'text-emerald-500' : (dp.event_amount || 0) < 0 ? 'text-rose-500' : 'text-slate-400'
                   }`}>
-                    {dp.event_amount && dp.event_amount !== 0 ? dp.formatted_amount : '-'}
+                    {dp.included !== false && dp.event_amount && dp.event_amount !== 0 ? dp.formatted_amount : '-'}
                   </td>
                   <td className="p-3 text-right font-mono font-bold text-slate-900 dark:text-white">
                     {dp.formatted_balance}

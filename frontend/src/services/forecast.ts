@@ -8,6 +8,8 @@ export interface DailyProjection {
   event_name?: string;
   event_amount?: number;
   formatted_amount?: string;
+  /** false = pre-as-of chart stub (opening cash, not re-simulated) */
+  included?: boolean;
 }
 
 export interface ForecastResponse {
@@ -27,6 +29,11 @@ export interface ForecastResponse {
   as_of?: string;
   formula_version?: string;
   assumptions?: string[];
+  opening_balance?: MoneyValue;
+  income_mtd?: MoneyValue;
+  remaining_income?: MoneyValue;
+  included_event_count?: number;
+  excluded_days_before?: number;
 }
 
 export const forecastService = {
