@@ -358,6 +358,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			FROM accounts a
 			LEFT JOIN currencies curr ON a.currency = curr.code
 			WHERE a.user_id = $1 AND a.created_at <= $2 AND (a.deleted_at IS NULL OR a.deleted_at > $2)
+			  AND NOT EXISTS (SELECT 1 FROM assets linked WHERE linked.linked_account_id = a.id AND linked.deleted_at IS NULL)
 		`, userID, monthEnd).Scan(&currentAccountsTotal)
 
 		var netTxAfterMonth float64
