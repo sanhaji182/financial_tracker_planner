@@ -104,15 +104,15 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 	// Emergency fund
 	var efTotal float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0) FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
+		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&efTotal)
 
 	// Monthly expenses (last 3 months average)
 	var totalExpenses float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions
-		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0) FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id = $1 AND t.type = 'expense' AND t.status = 'confirmed'
 		AND date >= $2 AND date < $3 AND deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExpenses)
 	monthlyExpenses := totalExpenses / 3.0
@@ -120,8 +120,8 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 	// Monthly income (last 3 months average)
 	var totalIncome float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions
-		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0) FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed'
 		AND date >= $2 AND date < $3 AND deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalIncome)
 	monthlyIncome := totalIncome / 3.0
@@ -129,8 +129,8 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 	// Total debt payments
 	var totalDebtPayments float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(minimum_payment), 0) FROM debts
-		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		SELECT COALESCE(SUM(d.minimum_payment * COALESCE(c.exchange_rate_to_idr,1)), 0) FROM debts d LEFT JOIN currencies c ON c.code=d.currency
+		WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
 	`, ownerID).Scan(&totalDebtPayments)
 
 	// Calculate metrics

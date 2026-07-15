@@ -30,6 +30,12 @@ type HealthScoreDto struct {
 	StatusColor string `json:"status_color"` // Green, Yellow, Orange, Red
 }
 
+type SafeToSpendScenarios struct {
+	Conservative MoneyValue `json:"conservative"`
+	Expected     MoneyValue `json:"expected"`
+	Optimistic   MoneyValue `json:"optimistic"`
+}
+
 type UpcomingBillDto struct {
 	ID              string    `json:"id"`
 	Name            string    `json:"name"`
@@ -61,18 +67,20 @@ type TrendPoint struct {
 }
 
 type DashboardResponse struct {
-	NetWorth         MoneyValue      `json:"net_worth"`
-	TotalAssets      AssetBreakdown  `json:"total_assets"`
-	TotalDebts       DebtSummaryDto  `json:"total_debts"`
-	CashAvailable    MoneyValue      `json:"cash_available"`
-	DTIRatio         float64         `json:"dti_ratio"`
-	DTIStatus        string          `json:"dti_status"` // healthy, warning, danger
-	HealthScore      HealthScoreDto  `json:"health_score"`
-	UpcomingBills    []UpcomingBillDto `json:"upcoming_bills"`
-	ForecastEndMonth MoneyValue      `json:"forecast_end_month"`
-	SafeToSpend      MoneyValue      `json:"safe_to_spend"`
-	RecentAlerts     []AlertDto      `json:"recent_alerts"`
-	InsightSummary   string          `json:"insight_summary"`
-	NextAction       NextActionDto   `json:"next_action"`
-	NetWorthTrend    []TrendPoint    `json:"net_worth_trend"`
+	NetWorth             MoneyValue           `json:"net_worth"`
+	TotalAssets          AssetBreakdown       `json:"total_assets"`
+	TotalDebts           DebtSummaryDto       `json:"total_debts"`
+	CashAvailable        MoneyValue           `json:"cash_available"`
+	DTIRatio             float64              `json:"dti_ratio"`
+	DTIStatus            string               `json:"dti_status"` // healthy, warning, danger
+	HealthScore          HealthScoreDto       `json:"health_score"`
+	UpcomingBills        []UpcomingBillDto    `json:"upcoming_bills"`
+	ForecastEndMonth     MoneyValue           `json:"forecast_end_month"`
+	SafeToSpend          MoneyValue           `json:"safe_to_spend"`
+	SafeToSpendScenarios SafeToSpendScenarios `json:"safe_to_spend_scenarios"`
+	DataSufficiency      *DataSufficiency     `json:"data_sufficiency,omitempty"`
+	RecentAlerts         []AlertDto           `json:"recent_alerts"`
+	InsightSummary       string               `json:"insight_summary"`
+	NextAction           NextActionDto        `json:"next_action"`
+	NetWorthTrend        []TrendPoint         `json:"net_worth_trend"`
 }

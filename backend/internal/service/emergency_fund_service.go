@@ -72,9 +72,9 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 	// 2. Sum accounts where is_emergency_fund = true
 	var totalEmergencyFund float64
 	err = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0)
-		FROM accounts
-		WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM accounts a LEFT JOIN currencies c ON c.code = a.currency
+		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&totalEmergencyFund)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get emergency fund total: %w", err)
@@ -92,11 +92,11 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 
 		var totalLivingCost float64
 		err = s.dbPool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(amount), 0)
-			FROM transactions
-			WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
-			  AND notes NOT LIKE 'Pembayaran Cicilan:% (Ekstra)%'
-			  AND date >= $2 AND date < $3 AND deleted_at IS NULL
+			SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr, t.exchange_rate, 1)), 0)
+			FROM transactions t LEFT JOIN currencies c ON c.code = t.currency
+			WHERE t.user_id = $1 AND t.type = 'expense' AND t.status = 'confirmed'
+			  AND COALESCE(t.notes, '') NOT LIKE 'Pembayaran Cicilan:% (Ekstra)%'
+			  AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
 		`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalLivingCost)
 		if err != nil {
 			return nil, fmt.Errorf("failed to calculate avg living cost: %w", err)
@@ -108,6 +108,27 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 	}
 
 	// 4. Calculate metrics
+	assessmentMonth := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Local)
+	assessmentStart := assessmentMonth.AddDate(0, -3, 0)
+	targetRationale := "Target manual pengguna"
+	if monthlyOverride == nil && targetMonths == 6 {
+		var minIncome, maxIncome float64
+		_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
+			SELECT SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)) monthly
+			FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+			WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+			GROUP BY DATE_TRUNC('month',t.date)) x`, ownerID, assessmentStart, assessmentMonth).Scan(&minIncome, &maxIncome)
+		switch {
+		case maxIncome == 0:
+			targetRationale = "6 bulan: histori pendapatan belum cukup"
+		case minIncome/maxIncome < .7:
+			targetMonths = 9
+			targetRationale = "9 bulan: pendapatan berfluktuasi"
+		default:
+			targetMonths = 4
+			targetRationale = "4 bulan: pendapatan historis relatif stabil"
+		}
+	}
 	targetAmount := monthlyLivingCost * float64(targetMonths)
 
 	var coverageMonths float64
@@ -147,6 +168,16 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 		CoverageMonths:     coverageMonths,
 		ProgressPercentage: progressPercentage,
 		Status:             status,
+		TargetRationale:    targetRationale,
+		DataSufficiency: &dto.DataSufficiency{
+			IsSufficient: monthlyLivingCost > 0,
+			MissingFields: func() []string {
+				if monthlyLivingCost <= 0 {
+					return []string{"living_cost_history"}
+				}
+				return nil
+			}(),
+		},
 	}, nil
 }
 

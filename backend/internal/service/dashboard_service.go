@@ -268,14 +268,25 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		forecastEndMonth = 0
 	}
 
-	safeToSpend := incomeThisMonth - totalMinDebtPayments - (projectedRemainingExpenses * 0.8) - (incomeThisMonth * 0.05)
-	if safeToSpend < 0 {
-		safeToSpend = 0
+	// Safe-to-spend uses cash on hand, confirmed cash flow, obligations and a
+	// living-cost buffer. The conservative value remains the backward-compatible
+	// primary field; clients can also explain expected/optimistic scenarios.
+	conservativeSTS := cashAvailable + incomeThisMonth - expenseThisMonth - totalMinDebtPayments - projectedRemainingExpenses - monthlyLivingCost
+	expectedSTS := cashAvailable + incomeThisMonth - expenseThisMonth - totalMinDebtPayments - projectedRemainingExpenses - monthlyLivingCost*0.5
+	optimisticSTS := cashAvailable + incomeThisMonth - expenseThisMonth - totalMinDebtPayments - projectedRemainingExpenses*0.8
+	for _, value := range []*float64{&conservativeSTS, &expectedSTS, &optimisticSTS} {
+		if *value < 0 {
+			*value = 0
+		}
 	}
+	safeToSpend := conservativeSTS
+	dataSufficient := incomeThisMonth > 0 && monthlyLivingCost > 0
 
 	// 10. Next Action Advice Rule Engine
 	var nextAction dto.NextActionDto
-	if efCoverageMonths < 6.0 {
+	if !dataSufficient {
+		nextAction = dto.NextActionDto{Title: "Lengkapi Data Keuangan", Description: "Belum cukup histori pendapatan dan pengeluaran untuk memberi rekomendasi yang aman.", ActionLabel: "Catat Transaksi", ActionUrl: "/transactions", Priority: 0}
+	} else if efCoverageMonths < 6.0 {
 		needed := (6.0 * monthlyLivingCost) - efTotal
 		if needed < 0 {
 			needed = 0
@@ -502,6 +513,21 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			Value:          safeToSpend,
 			FormattedValue: formatRupiah(safeToSpend),
 		},
+		SafeToSpendScenarios: dto.SafeToSpendScenarios{
+			Conservative: dto.MoneyValue{Value: conservativeSTS, FormattedValue: formatRupiah(conservativeSTS)},
+			Expected:     dto.MoneyValue{Value: expectedSTS, FormattedValue: formatRupiah(expectedSTS)},
+			Optimistic:   dto.MoneyValue{Value: optimisticSTS, FormattedValue: formatRupiah(optimisticSTS)},
+		},
+		DataSufficiency: &dto.DataSufficiency{IsSufficient: dataSufficient, MissingFields: func() []string {
+			var fields []string
+			if incomeThisMonth <= 0 {
+				fields = append(fields, "income")
+			}
+			if monthlyLivingCost <= 0 {
+				fields = append(fields, "expense_history")
+			}
+			return fields
+		}()},
 		RecentAlerts:   recentAlerts,
 		InsightSummary: insightSummary,
 		NextAction:     nextAction,

@@ -137,7 +137,7 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 
 	// 1. Gather dashboard, ef and budget context for the AI
 	ctx := c.Request.Context()
-	
+
 	// Fetch dashboard summary
 	dashboard, err := h.dashboardService.GetDashboardData(ctx, userID)
 	if err != nil {
@@ -162,6 +162,12 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 		"dashboard":      dashboard,
 		"emergency_fund": efSummary,
 		"budget":         budgetSummary,
+		"financial_guidance_policy": map[string]interface{}{
+			"purpose":      "education_and_decision_support_only",
+			"must_explain": []string{"data_used", "assumptions", "missing_data", "confidence", "alternatives"},
+			"must_not":     []string{"guarantee_returns", "recommend_specific_security", "claim_safety_from_incomplete_data"},
+			"disclaimer":   "Bukan nasihat investasi personal teregulasi; verifikasi keputusan material dengan profesional berizin.",
+		},
 	}
 
 	// 2. Prepare worker payload

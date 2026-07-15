@@ -18,6 +18,7 @@ type ForecastResponse struct {
 	LowestBalance             MoneyValue           `json:"lowest_balance"`
 	LowestBalanceDate         string               `json:"lowest_balance_date"`
 	SafeToSpend               MoneyValue           `json:"safe_to_spend"`
+	SafeToSpendScenarios      SafeToSpendScenarios `json:"safe_to_spend_scenarios"`
 	IsTight                   bool                 `json:"is_tight"`
 	ThresholdLimit            MoneyValue           `json:"threshold_limit"`
 	DailyProjections          []DailyProjectionDto `json:"daily_projections"`

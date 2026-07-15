@@ -73,9 +73,9 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 	if isCurrentMonth {
 		// Current month: use actual account balance
 		err = s.dbPool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(balance), 0)
-			FROM accounts
-			WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
+			SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
+			FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
+			WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash') AND a.is_active = true AND a.deleted_at IS NULL
 		`, ownerID).Scan(&startingCash)
 		if err != nil {
 			return nil, fmt.Errorf("failed to get starting balance: %w", err)
@@ -106,9 +106,9 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	var totalIncomeLast3Months float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0)
-		FROM transactions
-		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed' AND date >= $2 AND date < $3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0)
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalIncomeLast3Months)
 
 	estimatedIncome := totalIncomeLast3Months / 3.0
@@ -304,12 +304,16 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	projectedEndBalance := runningBalance
 
-	// Calculate Safe-To-Spend
-	// Formula: Safe to Spend = Estimated Income - Total Fixed Expenses - (variable * 80%) - (5% emergency reserve)
-	safeToSpend := estimatedIncome - estimatedFixedExpenses - (estimatedVariableExpenses * 0.80) - (0.05 * estimatedIncome)
-	if safeToSpend < 0 {
-		safeToSpend = 0
+	// Explain safe-to-spend as scenarios instead of false precision.
+	conservativeSTS := startingCash + estimatedIncome - estimatedFixedExpenses - estimatedVariableExpenses - monthlyLivingCostThreshold
+	expectedSTS := startingCash + estimatedIncome - estimatedFixedExpenses - estimatedVariableExpenses - monthlyLivingCostThreshold*0.5
+	optimisticSTS := startingCash + estimatedIncome - estimatedFixedExpenses - estimatedVariableExpenses*0.8
+	for _, value := range []*float64{&conservativeSTS, &expectedSTS, &optimisticSTS} {
+		if *value < 0 {
+			*value = 0
+		}
 	}
+	safeToSpend := conservativeSTS
 
 	// Track data sufficiency
 	var missingFields []string
@@ -354,6 +358,11 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		SafeToSpend: dto.MoneyValue{
 			Value:          safeToSpend,
 			FormattedValue: formatRupiah(safeToSpend),
+		},
+		SafeToSpendScenarios: dto.SafeToSpendScenarios{
+			Conservative: dto.MoneyValue{Value: conservativeSTS, FormattedValue: formatRupiah(conservativeSTS)},
+			Expected:     dto.MoneyValue{Value: expectedSTS, FormattedValue: formatRupiah(expectedSTS)},
+			Optimistic:   dto.MoneyValue{Value: optimisticSTS, FormattedValue: formatRupiah(optimisticSTS)},
 		},
 		IsTight: isTight,
 		ThresholdLimit: dto.MoneyValue{
