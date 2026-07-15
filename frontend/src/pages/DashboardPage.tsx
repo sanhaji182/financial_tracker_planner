@@ -238,6 +238,11 @@ export const DashboardPage: React.FC = () => {
               <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-500 block mt-1 leading-none">
                 {dash.health_score.rating}
               </span>
+              {typeof dash.health_score.reconciliation_rate === 'number' && (
+                <span className="text-[9px] font-semibold text-slate-400 block mt-1">
+                  Rekonsiliasi {(dash.health_score.reconciliation_rate * 100).toFixed(0)}%
+                </span>
+              )}
             </div>
             <div className={`p-2 rounded-full border ${getHealthScoreColor(dash.health_score.status_color)}`}>
               <Heart className="h-5 w-5 fill-current" />
@@ -245,6 +250,22 @@ export const DashboardPage: React.FC = () => {
           </div>
         </Card>
       </div>
+
+      {/* Data sufficiency banner */}
+      {dash.data_sufficiency && !dash.data_sufficiency.is_sufficient && (
+        <Card className="p-4 border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+              Data belum cukup untuk rekomendasi penuh
+            </p>
+            <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+              Lengkapi: {(dash.data_sufficiency.missing_fields || []).join(', ') || 'histori keuangan'}.
+              Angka safe-to-spend & health score bersifat sementara.
+            </p>
+          </div>
+        </Card>
+      )}
 
       {/* Row 2 — Action Row */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -336,16 +357,40 @@ export const DashboardPage: React.FC = () => {
               </span>
             </div>
             <div className="bg-indigo-50/50 dark:bg-indigo-950/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-950 space-y-1">
-              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Safe-to-Spend</span>
+              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Safe-to-Spend (Konservatif)</span>
               <span className="text-lg font-black font-mono text-indigo-700 dark:text-indigo-400">
                 {dash.safe_to_spend.formatted_value}
               </span>
             </div>
           </div>
+
+          {dash.safe_to_spend_scenarios && (
+            <div className="grid grid-cols-3 gap-2">
+              <div className="rounded-lg border border-slate-100 dark:border-slate-800 p-2.5 bg-white dark:bg-slate-950">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block">Konservatif</span>
+                <span className="text-xs font-black font-mono text-slate-800 dark:text-slate-200">
+                  {dash.safe_to_spend_scenarios.conservative.formatted_value}
+                </span>
+              </div>
+              <div className="rounded-lg border border-indigo-100 dark:border-indigo-900 p-2.5 bg-indigo-50/40 dark:bg-indigo-950/20">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-indigo-500 block">Expected</span>
+                <span className="text-xs font-black font-mono text-indigo-700 dark:text-indigo-300">
+                  {dash.safe_to_spend_scenarios.expected.formatted_value}
+                </span>
+              </div>
+              <div className="rounded-lg border border-emerald-100 dark:border-emerald-900 p-2.5 bg-emerald-50/40 dark:bg-emerald-950/20">
+                <span className="text-[9px] font-bold uppercase tracking-wider text-emerald-600 block">Optimis</span>
+                <span className="text-xs font-black font-mono text-emerald-700 dark:text-emerald-300">
+                  {dash.safe_to_spend_scenarios.optimistic.formatted_value}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="flex gap-2 p-3 bg-amber-50/60 dark:bg-amber-950/10 border border-amber-100 dark:border-amber-950 rounded-lg text-xs leading-relaxed font-semibold text-amber-800 dark:text-amber-400">
             <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5" />
             <span>
-              Proyeksi saldo dihitung berdasarkan pengeluaran harian rata-rata. Gunakan sisa kas Safe-to-Spend untuk pengeluaran sekunder tanpa mengorbankan tagihan bulanan.
+              Safe-to-spend utama memakai skenario konservatif (buffer 1 bulan living cost). Gunakan expected/optimis hanya jika rekonsiliasi dan histori sudah solid.
             </span>
           </div>
         </Card>

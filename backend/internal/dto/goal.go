@@ -28,7 +28,12 @@ type GoalResponse struct {
 	IsSinkingFund       bool                   `json:"is_sinking_fund"`            // true if type is sinking_fund
 	Priority            int                    `json:"priority"`                   // 1=highest, auto-assigned by type
 	MonthsRemaining     *float64               `json:"months_remaining,omitempty"` // months until target_date
-	CreatedAt           time.Time              `json:"created_at"`
+	// Feasibility / on-track metrics
+	IsOnTrack          *bool    `json:"is_on_track,omitempty"`         // projected completion on or before target_date
+	FeasibilityStatus  string   `json:"feasibility_status,omitempty"`  // on_track | at_risk | off_track | achieved | no_deadline | unknown
+	FeasibilityNote    string   `json:"feasibility_note,omitempty"`    // human-readable explanation
+	RequiredVsActual   *float64 `json:"required_vs_actual,omitempty"`  // average_monthly / monthly_required ratio (1.0 = exact pace)
+	CreatedAt          time.Time              `json:"created_at"`
 	ContributionHistory []GoalContributionItem `json:"contribution_history"`
 }
 

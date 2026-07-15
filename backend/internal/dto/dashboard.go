@@ -28,6 +28,10 @@ type HealthScoreDto struct {
 	Score       int    `json:"score"`
 	Rating      string `json:"rating"`       // Excellent, Good, Fair, Poor, Critical
 	StatusColor string `json:"status_color"` // Green, Yellow, Orange, Red
+	// Reconciliation confidence: % of confirmed txs in last 90d that are reconciled.
+	// Factor (0-1) multiplies raw score so unreconciled books cap the health grade.
+	ReconciliationRate       float64 `json:"reconciliation_rate"`
+	ReconciliationConfidence float64 `json:"reconciliation_confidence"` // 0.7–1.0 multiplier applied
 }
 
 type SafeToSpendScenarios struct {

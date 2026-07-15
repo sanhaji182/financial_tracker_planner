@@ -45,5 +45,14 @@ func TestAllocationService(t *testing.T) {
 		if resp.Surplus.Value != 0 {
 			t.Errorf("expected zero surplus without income history, got %f", resp.Surplus.Value)
 		}
+		if resp.DataSufficiency == nil {
+			t.Fatal("expected data_sufficiency on allocation response")
+		}
+		if resp.DataSufficiency.IsSufficient {
+			t.Error("expected insufficient data without income history")
+		}
+		if len(resp.Hierarchy) == 0 {
+			t.Error("expected hierarchy documentation")
+		}
 	})
 }

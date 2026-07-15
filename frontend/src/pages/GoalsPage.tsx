@@ -354,7 +354,7 @@ export const GoalsPage: React.FC = () => {
 					{goals.map(goal => (
 						<Card 
 							key={goal.id} 
-							className="p-5 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer flex flex-col justify-between h-[200px]"
+							className="p-5 hover:border-slate-300 dark:hover:border-slate-700 transition-all cursor-pointer flex flex-col justify-between min-h-[220px]"
 							onClick={() => { setSelectedGoal(goal); setIsDetailOpen(true); }}
 						>
 							<div className="flex justify-between items-start gap-4">
@@ -366,8 +366,22 @@ export const GoalsPage: React.FC = () => {
 										</h3>
 									</div>
 									<div className="flex flex-wrap gap-1.5">
-										{getGoalTypeBadge(goal.type)}
-									</div>
+																		{getGoalTypeBadge(goal.type)}
+																		{goal.feasibility_status && goal.feasibility_status !== 'no_deadline' && goal.feasibility_status !== 'unknown' && (
+																			<span className={`text-[9px] font-black uppercase tracking-wider px-1.5 py-0.5 rounded ${
+																				goal.feasibility_status === 'on_track' || goal.feasibility_status === 'achieved'
+																					? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-400'
+																					: goal.feasibility_status === 'at_risk'
+																						? 'bg-amber-50 text-amber-700 dark:bg-amber-950/30 dark:text-amber-400'
+																						: 'bg-rose-50 text-rose-700 dark:bg-rose-950/30 dark:text-rose-400'
+																			}`}>
+																				{goal.feasibility_status === 'on_track' ? 'On Track'
+																					: goal.feasibility_status === 'at_risk' ? 'At Risk'
+																					: goal.feasibility_status === 'achieved' ? 'Tercapai'
+																					: 'Off Track'}
+																			</span>
+																		)}
+																	</div>
 								</div>
 								{renderProgressRing(goal.progress, 50, 5, goal.color || '#4f46e5')}
 							</div>
@@ -403,6 +417,19 @@ export const GoalsPage: React.FC = () => {
 										</span>
 									)}
 								</div>
+								{goal.feasibility_note && (
+									<p className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 line-clamp-2 leading-snug">
+										{goal.feasibility_note}
+									</p>
+								)}
+								{typeof goal.monthly_required === 'number' && goal.monthly_required > 0 && (
+									<p className="text-[10px] font-bold text-slate-400">
+										Butuh ~Rp {Math.round(goal.monthly_required).toLocaleString('id-ID')}/bulan
+										{goal.is_affordable === false && typeof goal.funding_gap === 'number' && (
+											<span className="text-rose-500"> · gap Rp {Math.round(goal.funding_gap).toLocaleString('id-ID')}</span>
+										)}
+									</p>
+								)}
 							</div>
 						</Card>
 					))}

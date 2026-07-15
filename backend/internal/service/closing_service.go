@@ -76,10 +76,13 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		return nil, fmt.Errorf("monthly closing for month %s already generated", req.Month)
 	}
 
-	// 2. Fetch Accounts
+	// 2. Fetch Accounts (balances converted to IDR for display consistency)
 	accounts := make([]dto.ClosingAccount, 0)
 	rows, err := s.dbPool.Query(ctx, `
-		SELECT id, name, balance FROM accounts WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
+		SELECT a.id, a.name, a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL AND a.is_active = true
 	`, ownerID)
 	if err == nil {
 		for rows.Next() {
@@ -91,48 +94,76 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		rows.Close()
 	}
 
-	// Total Cash
+	// Total Cash (IDR-normalized)
 	var totalCash float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND deleted_at IS NULL AND is_active = true
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash')
+		  AND a.deleted_at IS NULL AND a.is_active = true
 	`, ownerID).Scan(&totalCash)
 
-	// Total Account Balances (Cash + Invest + Deposits)
+	// Total Account Balances (Cash + Invest + Deposits), IDR-normalized
+	// Exclude accounts already linked to an asset to avoid double-counting.
 	var totalAccounts float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL AND a.is_active = true
+		  AND NOT EXISTS (
+			SELECT 1 FROM assets linked
+			WHERE linked.linked_account_id = a.id AND linked.deleted_at IS NULL
+		  )
 	`, ownerID).Scan(&totalAccounts)
 
-	// Total Assets Valuation
+	// Total Assets Valuation (IDR-normalized; linked-account assets use account balance)
 	var totalAssets float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(current_value), 0) FROM assets WHERE user_id = $1 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
+				ELSE a.current_value * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
+			END
+		), 0)
+		FROM assets a
+		LEFT JOIN accounts ac ON a.linked_account_id = ac.id
+		LEFT JOIN currencies curr_ac ON ac.currency = curr_ac.code
+		LEFT JOIN currencies curr_a ON a.currency = curr_a.code
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL
 	`, ownerID).Scan(&totalAssets)
 
-	// Total Debts & Min Payments
+	// Total Debts & Min Payments (IDR-normalized)
 	var totalDebts, totalMinDebtPayments float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(outstanding_balance), 0), COALESCE(SUM(minimum_payment), 0) FROM debts
-		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		SELECT
+			COALESCE(SUM(d.outstanding_balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0),
+			COALESCE(SUM(d.minimum_payment * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM debts d
+		LEFT JOIN currencies c ON d.currency = c.code
+		WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
 	`, ownerID).Scan(&totalDebts, &totalMinDebtPayments)
 
-	// Net Worth
+	// Net Worth (canonical: independent assets + unlinked accounts − debts)
 	netWorth := totalAccounts + totalAssets - totalDebts
 
-	// 3. Transactions (Income & Expense)
+	// 3. Transactions (Income & Expense) — IDR-normalized
 	var totalIncome, totalExpense float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions
-		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
-		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr, t.exchange_rate, 1.0)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON t.currency = c.code
+		WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed'
+		  AND TO_CHAR(t.date, 'YYYY-MM') = $2 AND t.deleted_at IS NULL
 	`, ownerID, req.Month).Scan(&totalIncome)
 
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions
-		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
-		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr, t.exchange_rate, 1.0)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON t.currency = c.code
+		WHERE t.user_id = $1 AND t.type = 'expense' AND t.status = 'confirmed'
+		  AND TO_CHAR(t.date, 'YYYY-MM') = $2 AND t.deleted_at IS NULL
 	`, ownerID, req.Month).Scan(&totalExpense)
 
 	// 4. Calculate DTI Ratio
@@ -169,8 +200,10 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 
 	var efTotal float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&efTotal)
 
 	efCoverageMonths := 0.0

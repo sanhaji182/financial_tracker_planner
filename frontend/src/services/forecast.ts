@@ -1,5 +1,5 @@
 import api from '../utils/api';
-import type { MoneyValue } from './dashboard';
+import type { MoneyValue, SafeToSpendScenarios, DataSufficiency } from './dashboard';
 
 export interface DailyProjection {
   date: string;
@@ -19,9 +19,11 @@ export interface ForecastResponse {
   lowest_balance: MoneyValue;
   lowest_balance_date: string;
   safe_to_spend: MoneyValue;
+  safe_to_spend_scenarios?: SafeToSpendScenarios;
   is_tight: boolean;
   threshold_limit: MoneyValue;
   daily_projections: DailyProjection[];
+  data_sufficiency?: DataSufficiency;
 }
 
 export const forecastService = {

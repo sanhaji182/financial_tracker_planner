@@ -159,9 +159,10 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 
 	if g.Type == "emergency_fund" {
 		_ = s.dbPool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(balance), 0)
-			FROM accounts
-			WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
+			SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+			FROM accounts a
+			LEFT JOIN currencies c ON a.currency = c.code
+			WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 		`, ownerID).Scan(&currentAmt)
 	} else if g.Type == "debt_payoff" && g.LinkedDebtID != nil {
 		var originalAmt, outstandingAmt float64
@@ -286,7 +287,7 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		notesVal = *g.Notes
 	}
 
-	return &dto.GoalResponse{
+	resp := &dto.GoalResponse{
 		ID:                         g.ID,
 		UserID:                     g.UserID,
 		Name:                       g.Name,
@@ -309,7 +310,9 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		Priority:                   goalPriority(g.Type),
 		CreatedAt:                  g.CreatedAt,
 		ContributionHistory:        contribHistory,
-	}, nil
+	}
+	enrichGoalAffordability(resp, ctx, s.dbPool, ownerID)
+	return resp, nil
 }
 
 func (s *goalService) ListGoals(ctx context.Context, userID string) ([]dto.GoalResponse, error) {
@@ -587,12 +590,26 @@ func goalPriority(goalType string) int {
 }
 
 func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *pgxpool.Pool, ownerID string) {
-	if g.TargetDate == nil || g.Progress >= 100 {
+	// Already achieved
+	if g.Progress >= 100 {
+		onTrack := true
+		g.IsOnTrack = &onTrack
+		g.FeasibilityStatus = "achieved"
+		g.FeasibilityNote = "Target sudah tercapai."
+		return
+	}
+
+	// No deadline → feasibility is unknown (open-ended goal)
+	if g.TargetDate == nil {
+		g.FeasibilityStatus = "no_deadline"
+		g.FeasibilityNote = "Belum ada target tanggal; progress dipantau tanpa tenggat."
 		return
 	}
 
 	targetDate, err := time.Parse("2006-01-02", *g.TargetDate)
 	if err != nil {
+		g.FeasibilityStatus = "unknown"
+		g.FeasibilityNote = "Format target tanggal tidak valid."
 		return
 	}
 
@@ -601,29 +618,105 @@ func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *p
 
 	remaining := g.TargetAmount - g.CurrentAmount
 	if remaining <= 0 {
+		onTrack := true
+		g.IsOnTrack = &onTrack
+		g.FeasibilityStatus = "achieved"
+		g.FeasibilityNote = "Target sudah tercapai."
 		return
 	}
 
-	var monthlyReq float64
-	if monthsRemaining > 0 {
-		monthlyReq = remaining / monthsRemaining
+	// Past deadline with remaining balance → off track
+	if monthsRemaining <= 0 {
+		onTrack := false
+		g.IsOnTrack = &onTrack
+		g.FeasibilityStatus = "off_track"
+		g.FeasibilityNote = fmt.Sprintf(
+			"Tenggat sudah lewat dengan sisa Rp %s belum terkumpul.",
+			formatNumber(remaining),
+		)
+		// Still compute monthly required as remaining (treat as immediate need)
+		monthlyReq := remaining
+		g.MonthlyRequired = &monthlyReq
+		return
 	}
+
+	monthlyReq := remaining / monthsRemaining
 	g.MonthlyRequired = &monthlyReq
 
+	// Pace ratio: actual average monthly contribution vs required
+	if monthlyReq > 0 && g.AverageMonthlyContribution > 0 {
+		ratio := g.AverageMonthlyContribution / monthlyReq
+		g.RequiredVsActual = &ratio
+		onTrack := ratio >= 0.9
+		g.IsOnTrack = &onTrack
+		switch {
+		case ratio >= 1.0:
+			g.FeasibilityStatus = "on_track"
+			g.FeasibilityNote = fmt.Sprintf(
+				"On-track: kontribusi rata-rata %s/bulan ≥ kebutuhan %s/bulan.",
+				formatRupiah(g.AverageMonthlyContribution), formatRupiah(monthlyReq),
+			)
+		case ratio >= 0.7:
+			g.FeasibilityStatus = "at_risk"
+			g.FeasibilityNote = fmt.Sprintf(
+				"Berisiko: laju kontribusi %.0f%% dari kebutuhan. Naikkan ~%s/bulan agar tepat waktu.",
+				ratio*100, formatRupiah(monthlyReq-g.AverageMonthlyContribution),
+			)
+		default:
+			g.FeasibilityStatus = "off_track"
+			g.FeasibilityNote = fmt.Sprintf(
+				"Off-track: laju kontribusi hanya %.0f%% dari kebutuhan. Butuh %s/bulan, aktual %s/bulan.",
+				ratio*100, formatRupiah(monthlyReq), formatRupiah(g.AverageMonthlyContribution),
+			)
+		}
+	} else if g.ProjectedCompletionDate != nil {
+		// Fall back to projected completion vs target date when no contribution history yet
+		projDate, perr := time.Parse("2006-01-02", *g.ProjectedCompletionDate)
+		if perr == nil {
+			onTrack := !projDate.After(targetDate)
+			g.IsOnTrack = &onTrack
+			if onTrack {
+				g.FeasibilityStatus = "on_track"
+				g.FeasibilityNote = "Proyeksi penyelesaian masih di dalam tenggat."
+			} else {
+				g.FeasibilityStatus = "off_track"
+				g.FeasibilityNote = fmt.Sprintf(
+					"Proyeksi selesai %s — melewati tenggat %s.",
+					projDate.Format("2006-01-02"), targetDate.Format("2006-01-02"),
+				)
+			}
+		} else {
+			g.FeasibilityStatus = "unknown"
+			g.FeasibilityNote = "Belum ada histori kontribusi untuk menilai kelayakan."
+		}
+	} else {
+		// Brand-new goal without contributions — mark unknown, still surface monthly need
+		g.FeasibilityStatus = "unknown"
+		g.FeasibilityNote = fmt.Sprintf(
+			"Belum ada kontribusi. Mulai sisihkan ~%s/bulan agar on-track.",
+			formatRupiah(monthlyReq),
+		)
+	}
+
+	// Affordability vs 3-month average surplus
 	now := time.Now()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
 
 	var totalIncome, totalExp float64
 	_ = dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount),0) FROM transactions
-		WHERE user_id=$1 AND type='income' AND status='confirmed'
-		AND date>=$2 AND date<$3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON c.code = t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalIncome)
 	_ = dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount),0) FROM transactions
-		WHERE user_id=$1 AND type='expense' AND status='confirmed'
-		AND date>=$2 AND date<$3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON c.code = t.currency
+		WHERE t.user_id=$1 AND t.type='expense' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExp)
 
 	surplus := (totalIncome / 3.0) - (totalExp / 3.0)
@@ -634,6 +727,16 @@ func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *p
 		gap := monthlyReq - surplus
 		if gap > 0 {
 			g.FundingGap = &gap
+		}
+		// Downgrade feasibility note if not affordable even when pace looks fine
+		if g.FeasibilityStatus == "on_track" || g.FeasibilityStatus == "unknown" {
+			g.FeasibilityStatus = "at_risk"
+			g.FeasibilityNote = fmt.Sprintf(
+				"Kebutuhan bulanan %s melebihi surplus rata-rata %s. Kurangi target atau perpanjang tenggat.",
+				formatRupiah(monthlyReq), formatRupiah(math.Max(0, surplus)),
+			)
+			onTrack := false
+			g.IsOnTrack = &onTrack
 		}
 	}
 }

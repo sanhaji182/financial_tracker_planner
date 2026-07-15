@@ -26,6 +26,20 @@ export interface HealthScore {
   score: number;
   rating: string;
   status_color: string;
+  reconciliation_rate?: number;
+  reconciliation_confidence?: number;
+}
+
+export interface SafeToSpendScenarios {
+  conservative: MoneyValue;
+  expected: MoneyValue;
+  optimistic: MoneyValue;
+}
+
+export interface DataSufficiency {
+  is_sufficient: boolean;
+  missing_fields?: string[];
+  uses_fallback_values?: boolean;
 }
 
 export interface UpcomingBill {
@@ -69,6 +83,8 @@ export interface DashboardResponse {
   upcoming_bills: UpcomingBill[];
   forecast_end_month: MoneyValue;
   safe_to_spend: MoneyValue;
+  safe_to_spend_scenarios?: SafeToSpendScenarios;
+  data_sufficiency?: DataSufficiency;
   recent_alerts: Alert[];
   insight_summary: string;
   next_action: NextAction;

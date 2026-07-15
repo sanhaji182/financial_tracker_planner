@@ -235,7 +235,34 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		savingsRateScore = math.Min(100, (savingsThisMonth/incomeThisMonth)*200)
 	}
 
-	healthScoreVal := int(math.Round((0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)))
+	// Reconciliation confidence (last 90 days).
+	// Unreconciled books lower the final health grade so users can't look "Excellent"
+	// while half their ledger is unconfirmed against bank statements.
+	var totalTx90, reconciledTx90 float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT
+			COUNT(*)::float,
+			COUNT(*) FILTER (WHERE reconciled = true)::float
+		FROM transactions
+		WHERE user_id = $1
+		  AND status = 'confirmed'
+		  AND deleted_at IS NULL
+		  AND date >= CURRENT_DATE - INTERVAL '90 days'
+	`, userID).Scan(&totalTx90, &reconciledTx90)
+
+	reconciliationRate := 1.0
+	if totalTx90 > 0 {
+		reconciliationRate = reconciledTx90 / totalTx90
+	}
+	// Confidence multiplies raw score. Floor at 0.70 so sparse books don't nuke the grade.
+	// Fully reconciled → 1.0; 0% reconciled → 0.70.
+	reconciliationConfidence := 0.70 + 0.30*reconciliationRate
+
+	rawHealth := (0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)
+	healthScoreVal := int(math.Round(rawHealth * reconciliationConfidence))
+	if healthScoreVal > 100 {
+		healthScoreVal = 100
+	}
 	var healthRating, healthColor string
 	if healthScoreVal >= 80 {
 		healthRating = "Excellent"
@@ -501,9 +528,11 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		DTIRatio:  dtiRatio,
 		DTIStatus: dtiStatus,
 		HealthScore: dto.HealthScoreDto{
-			Score:       healthScoreVal,
-			Rating:      healthRating,
-			StatusColor: healthColor,
+			Score:                    healthScoreVal,
+			Rating:                   healthRating,
+			StatusColor:              healthColor,
+			ReconciliationRate:       reconciliationRate,
+			ReconciliationConfidence: reconciliationConfidence,
 		},
 		UpcomingBills: dbBills,
 		ForecastEndMonth: dto.MoneyValue{

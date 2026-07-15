@@ -191,8 +191,50 @@ export const ForecastPage: React.FC = () => {
           <span className="block text-lg font-black mt-1 font-mono text-emerald-700 dark:text-emerald-400">
             {fc.safe_to_spend.formatted_value}
           </span>
+          <span className="text-[9px] font-semibold text-emerald-600/80 mt-1">Skenario konservatif</span>
         </Card>
       </div>
+
+      {fc.data_sufficiency && !fc.data_sufficiency.is_sufficient && (
+        <Card className="p-4 border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
+              Data forecast belum cukup
+            </p>
+            <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+              Lengkapi: {(fc.data_sufficiency.missing_fields || []).join(', ') || 'histori income/expense'}.
+              Proyeksi memakai fallback dan bisa meleset.
+            </p>
+          </div>
+        </Card>
+      )}
+
+      {fc.safe_to_spend_scenarios && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Card className="p-4 space-y-1">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Konservatif</span>
+            <span className="text-base font-black font-mono text-slate-800 dark:text-slate-200 block">
+              {fc.safe_to_spend_scenarios.conservative.formatted_value}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Buffer living cost penuh</span>
+          </Card>
+          <Card className="p-4 space-y-1 border-indigo-100 dark:border-indigo-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Expected</span>
+            <span className="text-base font-black font-mono text-indigo-700 dark:text-indigo-300 block">
+              {fc.safe_to_spend_scenarios.expected.formatted_value}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Buffer 50% living cost</span>
+          </Card>
+          <Card className="p-4 space-y-1 border-emerald-100 dark:border-emerald-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Optimis</span>
+            <span className="text-base font-black font-mono text-emerald-700 dark:text-emerald-300 block">
+              {fc.safe_to_spend_scenarios.optimistic.formatted_value}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Expense sisa × 0.8</span>
+          </Card>
+        </div>
+      )}
 
       {/* Main Chart */}
       <Card className="p-6">
