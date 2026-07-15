@@ -159,7 +159,14 @@ export const EmergencyFundPage: React.FC = () => {
           </h1>
           <p className="text-xs text-text-secondary">
             Pantau ketahanan finansial keluarga dan alokasi pertumbuhan portofolio investasi Anda.
+            {ef.formula_version ? ` · formula ${ef.formula_version}` : ''}
+            {ef.as_of ? ` · as of ${new Date(ef.as_of).toLocaleString('id-ID')}` : ''}
           </p>
+          {ef.target_rationale && (
+            <p className="text-[11px] text-slate-400 mt-1 font-medium">
+              Target: {ef.target_rationale}
+            </p>
+          )}
         </div>
         
         {isOwner && (

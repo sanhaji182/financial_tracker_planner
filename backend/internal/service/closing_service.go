@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type ClosingService interface {
@@ -172,15 +173,18 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		dtiRatio = (totalMinDebtPayments / totalIncome) * 100
 	}
 
-	// 5. Emergency Fund & Health Score Calculations
-	var monthlyLivingCost float64
-	var targetMonths int
+	// 5. Emergency Fund & Health Score — kernel ef-v1 for target/coverage.
+	var livingCostOverride float64
+	var configuredTargetMonths int
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(monthly_living_cost_override, 0), target_months
+		SELECT COALESCE(monthly_living_cost_override, 0), COALESCE(target_months, 6)
 		FROM emergency_fund_configs WHERE user_id = $1
-	`, ownerID).Scan(&monthlyLivingCost, &targetMonths)
+	`, ownerID).Scan(&livingCostOverride, &configuredTargetMonths)
 
-	if monthlyLivingCost <= 0 {
+	var monthlyLivingCost float64
+	if livingCostOverride > 0 {
+		monthlyLivingCost = livingCostOverride
+	} else {
 		// Fallback to 3-month average variable expenses
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(AVG(spent), 0)
@@ -194,8 +198,8 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		`, ownerID).Scan(&monthlyLivingCost)
 	}
 
-	if targetMonths <= 0 {
-		targetMonths = 12
+	if configuredTargetMonths <= 0 {
+		configuredTargetMonths = kernel.EFDefaultTargetMonths
 	}
 
 	var efTotal float64
@@ -206,9 +210,30 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&efTotal)
 
-	efCoverageMonths := 0.0
-	if monthlyLivingCost > 0 {
-		efCoverageMonths = efTotal / monthlyLivingCost
+	// Income stability for adaptive target (last 3 calendar months).
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
+	var minIncome, maxIncome float64
+	_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
+		SELECT SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)) monthly
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		GROUP BY DATE_TRUNC('month',t.date)) x`, ownerID, threeMonthsAgo, startOfMonth).Scan(&minIncome, &maxIncome)
+
+	efRes := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   now,
+		EFBalance:              efTotal,
+		MonthlyLivingCost:      monthlyLivingCost,
+		ConfiguredTargetMonths: configuredTargetMonths,
+		UseAdaptive:            livingCostOverride <= 0,
+		MinMonthlyIncome:       minIncome,
+		MaxMonthlyIncome:       maxIncome,
+	})
+	efCoverageMonths := efRes.CoverageMonths
+	targetMonths := efRes.TargetMonths
+	if targetMonths <= 0 {
+		targetMonths = kernel.EFDefaultTargetMonths
 	}
 
 	// Health score components
@@ -220,7 +245,10 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 	}
 
 	efScore := math.Min(100, (efCoverageMonths/float64(targetMonths))*100)
-	cashScore := math.Min(100, (totalCash/monthlyLivingCost)*50.0)
+	cashScore := 0.0
+	if monthlyLivingCost > 0 {
+		cashScore = math.Min(100, (totalCash/monthlyLivingCost)*50.0)
+	}
 
 	savingsThisMonth := totalIncome - totalExpense
 	if savingsThisMonth < 0 {

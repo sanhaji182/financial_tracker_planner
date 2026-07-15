@@ -182,6 +182,12 @@ type AvalancheSimulationResponse struct {
 	SavingsMonths                 int                                `json:"savings_months"`
 	SchedulesWithExtra            []AvalanchePaymentScheduleResponse `json:"schedules_with_extra"`
 	SchedulesWithoutExtra         []AvalanchePaymentScheduleResponse `json:"schedules_without_extra"`
+	// Provenance + model limitations (debt-v1).
+	AsOf                 string   `json:"as_of,omitempty"`
+	FormulaVersion       string   `json:"formula_version,omitempty"`
+	Assumptions          []string `json:"assumptions,omitempty"`
+	NegativeAmortization bool     `json:"negative_amortization"`
+	IsEstimate           bool     `json:"is_estimate"`
 }
 
 func ToDebtPaymentResponse(p *model.DebtPayment) DebtPaymentResponse {

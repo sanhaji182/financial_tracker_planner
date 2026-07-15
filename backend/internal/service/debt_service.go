@@ -3,11 +3,10 @@ package service
 import (
 	"context"
 	"errors"
-	"math"
-	"sort"
 	"time"
 
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 	"github.com/user/financial-os/internal/model"
 	"github.com/user/financial-os/internal/repository"
 )
@@ -207,10 +206,14 @@ func (s *debtService) RecordPayment(ctx context.Context, debtID string, userID s
 		}
 	}
 
-	// Calculate interest portion: interest_rate / 12 months / 100%
+	// Calculate interest portion via shared debt-v1 monthly accrual.
 	var interestPortion, principalPortion float64
-	if d.InterestRate != nil && *d.InterestRate > 0 {
-		interestPortion = d.OutstandingBalance * ((*d.InterestRate) / 12 / 100)
+	rate := 0.0
+	if d.InterestRate != nil {
+		rate = *d.InterestRate
+	}
+	if rate > 0 {
+		interestPortion = kernel.MonthlyInterest(d.OutstandingBalance, rate)
 		if interestPortion > req.Amount {
 			interestPortion = req.Amount
 		}
@@ -275,96 +278,85 @@ func (s *debtService) GetDebtSummary(ctx context.Context, userID string) (*dto.D
 	return &res, nil
 }
 
-// Struct for internal simulation
-type simDebt struct {
-	id             string
-	name           string
-	balance        float64
-	interestRate   float64
-	minimumPayment float64
-}
-
 func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extraMonthly float64) (*dto.AvalancheSimulationResponse, error) {
 	list, err := s.debtRepo.GetAllByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
 
-	// Filter active debts only
-	var activeDebts []model.Debt
+	var inputs []kernel.DebtInput
 	for _, d := range list {
-		if d.Status == "active" && d.OutstandingBalance > 0 {
-			activeDebts = append(activeDebts, d)
+		if d.Status != "active" || d.OutstandingBalance <= 0 {
+			continue
 		}
+		rate := 0.0
+		if d.InterestRate != nil {
+			rate = *d.InterestRate
+		}
+		minPay := 0.0
+		if d.MinimumPayment != nil {
+			minPay = *d.MinimumPayment
+		}
+		inputs = append(inputs, kernel.DebtInput{
+			ID:                d.ID,
+			Name:              d.Name,
+			Type:              d.Type,
+			Balance:           d.OutstandingBalance,
+			AnnualInterestPct: rate,
+			MinimumPayment:    minPay,
+		})
 	}
 
-	// If no active debts, return empty result
-	if len(activeDebts) == 0 {
+	if len(inputs) == 0 {
 		return &dto.AvalancheSimulationResponse{
 			SchedulesWithExtra:    []dto.AvalanchePaymentScheduleResponse{},
 			SchedulesWithoutExtra: []dto.AvalanchePaymentScheduleResponse{},
+			IsEstimate:            true,
+			FormulaVersion:        kernel.DebtFormulaVersion,
 		}, nil
 	}
 
-	// Run Simulation 1: Without Extra
-	monthsNoExtra, interestNoExtra, schedNoExtra := runSim(activeDebts, 0)
+	asOf := time.Now()
+	sim := kernel.SimulateAvalanche(inputs, extraMonthly, asOf)
 
-	// Run Simulation 2: With Extra (Avalanche)
-	monthsWithExtra, interestWithExtra, schedWithExtra := runSim(activeDebts, extraMonthly)
-
-	savingsInterest := interestNoExtra - interestWithExtra
-	savingsMonths := monthsNoExtra - monthsWithExtra
-	if savingsMonths < 0 {
-		savingsMonths = 0
-	}
-	if savingsInterest < 0 {
-		savingsInterest = 0
-	}
-
-	// Build response DTOs
-	var schedulesWithExtra []dto.AvalanchePaymentScheduleResponse
-	for _, sc := range schedWithExtra {
-		schedulesWithExtra = append(schedulesWithExtra, dto.AvalanchePaymentScheduleResponse{
-			DebtID:                 sc.DebtID,
-			DebtName:               sc.DebtName,
-			PayoffMonthIndex:       sc.PayoffMonthIndex,
-			PayoffDate:             sc.PayoffDate,
-			TotalInterestPaid:      sc.TotalInterestPaid,
-			FormattedTotalInterest: dto.FormatRupiah(sc.TotalInterestPaid),
-		})
-	}
-
-	var schedulesWithoutExtra []dto.AvalanchePaymentScheduleResponse
-	for _, sc := range schedNoExtra {
-		schedulesWithoutExtra = append(schedulesWithoutExtra, dto.AvalanchePaymentScheduleResponse{
-			DebtID:                 sc.DebtID,
-			DebtName:               sc.DebtName,
-			PayoffMonthIndex:       sc.PayoffMonthIndex,
-			PayoffDate:             sc.PayoffDate,
-			TotalInterestPaid:      sc.TotalInterestPaid,
-			FormattedTotalInterest: dto.FormatRupiah(sc.TotalInterestPaid),
-		})
+	toSchedules := func(in []kernel.DebtPayoffSchedule) []dto.AvalanchePaymentScheduleResponse {
+		out := make([]dto.AvalanchePaymentScheduleResponse, 0, len(in))
+		for _, sc := range in {
+			out = append(out, dto.AvalanchePaymentScheduleResponse{
+				DebtID:                 sc.DebtID,
+				DebtName:               sc.DebtName,
+				PayoffMonthIndex:       sc.PayoffMonthIndex,
+				PayoffDate:             sc.PayoffDate,
+				TotalInterestPaid:      sc.TotalInterestPaid,
+				FormattedTotalInterest: dto.FormatRupiah(sc.TotalInterestPaid),
+			})
+		}
+		return out
 	}
 
 	return &dto.AvalancheSimulationResponse{
-		MonthsToPayoff:                monthsWithExtra,
-		TotalInterestPaid:             interestWithExtra,
-		FormattedTotalInterest:        dto.FormatRupiah(interestWithExtra),
-		MonthsToPayoffWithoutExtra:    monthsNoExtra,
-		TotalInterestPaidWithoutExtra: interestNoExtra,
-		FormattedInterestWithoutExtra: dto.FormatRupiah(interestNoExtra),
-		SavingsInterest:               savingsInterest,
-		FormattedSavingsInterest:      dto.FormatRupiah(savingsInterest),
-		SavingsMonths:                 savingsMonths,
-		SchedulesWithExtra:            schedulesWithExtra,
-		SchedulesWithoutExtra:         schedulesWithoutExtra,
+		MonthsToPayoff:                sim.WithExtra.MonthsToPayoff,
+		TotalInterestPaid:             sim.WithExtra.TotalInterestPaid,
+		FormattedTotalInterest:        dto.FormatRupiah(sim.WithExtra.TotalInterestPaid),
+		MonthsToPayoffWithoutExtra:    sim.WithoutExtra.MonthsToPayoff,
+		TotalInterestPaidWithoutExtra: sim.WithoutExtra.TotalInterestPaid,
+		FormattedInterestWithoutExtra: dto.FormatRupiah(sim.WithoutExtra.TotalInterestPaid),
+		SavingsInterest:               sim.SavingsInterest,
+		FormattedSavingsInterest:      dto.FormatRupiah(sim.SavingsInterest),
+		SavingsMonths:                 sim.SavingsMonths,
+		SchedulesWithExtra:            toSchedules(sim.WithExtra.Schedules),
+		SchedulesWithoutExtra:         toSchedules(sim.WithoutExtra.Schedules),
+		AsOf:                          sim.AsOf.Format(time.RFC3339),
+		FormulaVersion:                sim.FormulaVersion,
+		Assumptions:                   sim.Assumptions,
+		NegativeAmortization:          sim.NegativeAmortization,
+		IsEstimate:                    true,
 	}, nil
 }
 
-// Simulator core function
+// runSim is a thin adapter for legacy unit tests; production path uses kernel.SimulateAvalanche.
 func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.AvalanchePaymentSchedule) {
-	// Initialize simulation debts
-	var simDebts []*simDebt
+	inputs := make([]kernel.DebtInput, 0, len(debts))
 	for _, d := range debts {
 		rate := 0.0
 		if d.InterestRate != nil {
@@ -374,132 +366,26 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 		if d.MinimumPayment != nil {
 			minPay = *d.MinimumPayment
 		}
-		simDebts = append(simDebts, &simDebt{
-			id:             d.ID,
-			name:           d.Name,
-			balance:        d.OutstandingBalance,
-			interestRate:   rate,
-			minimumPayment: minPay,
+		inputs = append(inputs, kernel.DebtInput{
+			ID:                d.ID,
+			Name:              d.Name,
+			Type:              d.Type,
+			Balance:           d.OutstandingBalance,
+			AnnualInterestPct: rate,
+			MinimumPayment:    minPay,
 		})
 	}
-
-	// Sort by interest rate DESC (Avalanche prioritizes highest interest rate)
-	sort.Slice(simDebts, func(i, j int) bool {
-		return simDebts[i].interestRate > simDebts[j].interestRate
-	})
-
-	totalInterest := 0.0
-	monthCount := 0
-	maxMonths := 1200 // 100 years guard
-	stalled := false
-
-	// Avalanche keeps the original monthly debt-payment budget constant. When one
-	// debt is paid off, its former minimum payment rolls into the next target.
-	monthlyBudget := extraMonthly
-	for _, d := range simDebts {
-		monthlyBudget += d.minimumPayment
+	// Kernel returns with/without-extra; runSim is a single-side call so extra is the budget delta.
+	run := kernel.SimulateAvalanche(inputs, extraMonthly, time.Now()).WithExtra
+	out := make([]model.AvalanchePaymentSchedule, 0, len(run.Schedules))
+	for _, sc := range run.Schedules {
+		out = append(out, model.AvalanchePaymentSchedule{
+			DebtID:            sc.DebtID,
+			DebtName:          sc.DebtName,
+			PayoffMonthIndex:  sc.PayoffMonthIndex,
+			PayoffDate:        sc.PayoffDate,
+			TotalInterestPaid: sc.TotalInterestPaid,
+		})
 	}
-
-	// Map to record schedules
-	payoffSchedules := make(map[string]model.AvalanchePaymentSchedule)
-
-	// Keep simulating month by month until all balances are zero
-	for monthCount < maxMonths {
-		activeCount := 0
-		for _, d := range simDebts {
-			if d.balance > 0 {
-				activeCount++
-			}
-		}
-		if activeCount == 0 {
-			break
-		}
-
-		monthCount++
-		currentDate := time.Now().AddDate(0, monthCount, 0)
-
-		// 1. Apply monthly interest first
-		for _, d := range simDebts {
-			if d.balance > 0 {
-				interest := d.balance * (d.interestRate / 12 / 100)
-				d.balance += interest
-				totalInterest += interest
-
-				// Record interest paid per debt inside payoffSchedules
-				sched := payoffSchedules[d.id]
-				sched.TotalInterestPaid += interest
-				payoffSchedules[d.id] = sched
-			}
-		}
-
-		// 2. Pay minimums on all active debts, then roll every unused rupiah
-		// (including paid-off minimums) into the highest-interest active debt.
-		remainingBudget := monthlyBudget
-		for _, d := range simDebts {
-			if d.balance <= 0 {
-				continue
-			}
-			payment := math.Min(d.minimumPayment, d.balance)
-			d.balance -= payment
-			remainingBudget -= payment
-		}
-		for _, d := range simDebts {
-			if d.balance <= 0 || remainingBudget <= 0 {
-				continue
-			}
-			payment := math.Min(remainingBudget, d.balance)
-			d.balance -= payment
-			remainingBudget -= payment
-		}
-
-		// Record payoffs after the complete monthly budget has been applied.
-		for _, d := range simDebts {
-			if d.balance <= 0 {
-				d.balance = 0
-				sched := payoffSchedules[d.id]
-				if sched.PayoffMonthIndex == 0 {
-					sched.DebtID = d.id
-					sched.DebtName = d.name
-					sched.PayoffMonthIndex = monthCount
-					sched.PayoffDate = currentDate
-					payoffSchedules[d.id] = sched
-				}
-			}
-		}
-
-		// If the fixed budget cannot cover this month's interest, balances can
-		// never amortize under these assumptions. Stop instead of returning a
-		// misleading 100-year payoff date.
-		monthlyInterest := 0.0
-		for _, d := range simDebts {
-			if d.balance > 0 {
-				monthlyInterest += d.balance * (d.interestRate / 12 / 100)
-			}
-		}
-		if monthlyBudget <= monthlyInterest && monthlyInterest > 0 {
-			stalled = true
-			break
-		}
-	}
-
-	// Compile schedules list in matching order
-	var schedules []model.AvalanchePaymentSchedule
-	for _, d := range debts {
-		sched, found := payoffSchedules[d.ID]
-		if !found && !stalled {
-			sched = model.AvalanchePaymentSchedule{
-				DebtID:           d.ID,
-				DebtName:         d.Name,
-				PayoffMonthIndex: monthCount,
-				PayoffDate:       time.Now().AddDate(0, monthCount, 0),
-			}
-		} else if !found {
-			// A zero payoff index/date explicitly means the payment budget does
-			// not amortize this debt under the supplied assumptions.
-			sched = model.AvalanchePaymentSchedule{DebtID: d.ID, DebtName: d.Name}
-		}
-		schedules = append(schedules, sched)
-	}
-
-	return monthCount, totalInterest, schedules
+	return run.MonthsToPayoff, run.TotalInterestPaid, out
 }

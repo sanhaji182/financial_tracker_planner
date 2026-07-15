@@ -47,7 +47,7 @@ export const DebtAvalanchePage: React.FC = () => {
           Simulator Debt Avalanche
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Metode pelunasan utang tercepat secara matematis. Bayar minimum semua utang, lalu pusatkan dana ekstra pada utang berbunga tertinggi.
+          Estimasi pelunasan dengan metode avalanche (bunga tertinggi dulu). Model disederhanakan APR bulanan — bukan quote kontrak bank.
         </p>
       </div>
 
@@ -97,14 +97,35 @@ export const DebtAvalanchePage: React.FC = () => {
         </Card>
       ) : (
         <div className="space-y-6">
+          {(simulation.as_of || simulation.formula_version) && (
+            <p className="text-[11px] text-slate-400 font-medium">
+              {simulation.as_of ? `as of ${new Date(simulation.as_of).toLocaleString('id-ID')}` : ''}
+              {simulation.formula_version ? ` · formula ${simulation.formula_version}` : ''}
+              {simulation.is_estimate !== false ? ' · estimasi' : ''}
+            </p>
+          )}
+
+          {simulation.negative_amortization && (
+            <Card className="p-4 border border-rose-200 bg-rose-50 dark:bg-rose-950/20 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-sm font-semibold">
+              Anggaran pembayaran saat ini tidak cukup menutup bunga bulanan (negative amortization).
+              Naikkan extra payment atau restruktur utang — jadwal pelunasan di bawah tidak dapat diandalkan.
+            </Card>
+          )}
+
           {/* Simulation Callout Alert */}
           <div className="p-6 bg-gradient-to-r from-amber-500 to-amber-600 rounded-2xl text-white shadow-lg space-y-3.5">
             <div className="flex items-center gap-2">
               <Zap className="h-6 w-6 text-white fill-white animate-bounce" />
-              <h2 className="text-lg font-black">Rencana Pelunasan Teroptimal Terhitung!</h2>
+              <h2 className="text-lg font-black">Estimasi Rencana Avalanche</h2>
             </div>
             <p className="text-sm font-semibold max-w-2xl leading-relaxed opacity-95">
-              Dengan mengalokasikan pembayaran ekstra sebesar <span className="font-bold underline">{formatRupiah(extraAmount)}</span>/bulan, semua utang Anda diproyeksikan akan lunas <span className="font-extrabold text-white text-base bg-white/20 px-1.5 py-0.5 rounded">{simulation.savings_months} bulan lebih cepat</span> dan menghemat bunga pinjaman sebesar <span className="font-extrabold text-white text-base bg-white/20 px-1.5 py-0.5 rounded">{simulation.formatted_savings_interest}</span>!
+              {simulation.negative_amortization
+                ? 'Dengan anggaran saat ini, model mendeteksi utang yang tidak terlunasi. Hasil di bawah hanya untuk ilustrasi.'
+                : (
+                  <>
+                    Dengan mengalokasikan pembayaran ekstra sebesar <span className="font-bold underline">{formatRupiah(extraAmount)}</span>/bulan, semua utang Anda diproyeksikan akan lunas <span className="font-extrabold text-white text-base bg-white/20 px-1.5 py-0.5 rounded">{simulation.savings_months} bulan lebih cepat</span> dan menghemat bunga pinjaman sebesar <span className="font-extrabold text-white text-base bg-white/20 px-1.5 py-0.5 rounded">{simulation.formatted_savings_interest}</span> (estimasi).
+                  </>
+                )}
             </p>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/20 pt-4 text-xs font-bold">
@@ -199,6 +220,17 @@ export const DebtAvalanchePage: React.FC = () => {
               </table>
             </div>
           </Card>
+
+          {simulation.assumptions && simulation.assumptions.length > 0 && (
+            <Card className="p-4 space-y-2">
+              <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Asumsi model</h3>
+              <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                {simulation.assumptions.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </Card>
+          )}
         </div>
       )}
     </div>

@@ -10,6 +10,10 @@ type EFSummaryResponse struct {
 	Status             string           `json:"status"` // Aman, Kurang, Kritis
 	TargetRationale    string           `json:"target_rationale"`
 	DataSufficiency    *DataSufficiency `json:"data_sufficiency,omitempty"`
+	// Provenance from calculation kernel (ef-v1).
+	AsOf           string   `json:"as_of,omitempty"`
+	FormulaVersion string   `json:"formula_version,omitempty"`
+	Assumptions    []string `json:"assumptions,omitempty"`
 }
 
 type UpdateEFConfigRequest struct {

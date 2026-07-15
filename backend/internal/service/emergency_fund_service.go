@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type EFService interface {
@@ -107,49 +108,29 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 		// if monthlyLivingCost <= 0, data is insufficient
 	}
 
-	// 4. Calculate metrics
+	// 4. Income stability signals for adaptive target (kernel ef-v1).
 	assessmentMonth := time.Date(time.Now().Year(), time.Now().Month(), 1, 0, 0, 0, 0, time.Local)
 	assessmentStart := assessmentMonth.AddDate(0, -3, 0)
-	targetRationale := "Target manual pengguna"
-	if monthlyOverride == nil && targetMonths == 6 {
-		var minIncome, maxIncome float64
-		_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
-			SELECT SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)) monthly
-			FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
-			WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
-			GROUP BY DATE_TRUNC('month',t.date)) x`, ownerID, assessmentStart, assessmentMonth).Scan(&minIncome, &maxIncome)
-		switch {
-		case maxIncome == 0:
-			targetRationale = "6 bulan: histori pendapatan belum cukup"
-		case minIncome/maxIncome < .7:
-			targetMonths = 9
-			targetRationale = "9 bulan: pendapatan berfluktuasi"
-		default:
-			targetMonths = 4
-			targetRationale = "4 bulan: pendapatan historis relatif stabil"
-		}
-	}
-	targetAmount := monthlyLivingCost * float64(targetMonths)
+	var minIncome, maxIncome float64
+	_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
+		SELECT SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)) monthly
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		GROUP BY DATE_TRUNC('month',t.date)) x`, ownerID, assessmentStart, assessmentMonth).Scan(&minIncome, &maxIncome)
 
-	var coverageMonths float64
-	if monthlyLivingCost > 0 {
-		coverageMonths = totalEmergencyFund / monthlyLivingCost
-	}
+	// Adaptive only when user kept the default 6-month config and did not set a living-cost override
+	// as a "manual plan" signal. Explicit non-default target_months always wins inside the kernel.
+	useAdaptive := monthlyOverride == nil
 
-	var progressPercentage float64
-	if targetAmount > 0 {
-		progressPercentage = (totalEmergencyFund / targetAmount) * 100.0
-	}
-
-	// 5. Determine status
-	var status string
-	if coverageMonths >= float64(targetMonths) {
-		status = "Aman"
-	} else if coverageMonths >= 3.0 {
-		status = "Kurang"
-	} else {
-		status = "Kritis"
-	}
+	ef := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   time.Now(),
+		EFBalance:              totalEmergencyFund,
+		MonthlyLivingCost:      monthlyLivingCost,
+		ConfiguredTargetMonths: targetMonths,
+		UseAdaptive:            useAdaptive,
+		MinMonthlyIncome:       minIncome,
+		MaxMonthlyIncome:       maxIncome,
+	})
 
 	return &dto.EFSummaryResponse{
 		TotalEmergencyFund: dto.MoneyValue{
@@ -160,24 +141,24 @@ func (s *efService) GetEFSummary(ctx context.Context, userID string) (*dto.EFSum
 			Value:          monthlyLivingCost,
 			FormattedValue: formatRupiah(monthlyLivingCost),
 		},
-		TargetMonths: targetMonths,
+		TargetMonths: ef.TargetMonths,
 		TargetAmount: dto.MoneyValue{
-			Value:          targetAmount,
-			FormattedValue: formatRupiah(targetAmount),
+			Value:          ef.TargetAmount,
+			FormattedValue: formatRupiah(ef.TargetAmount),
 		},
-		CoverageMonths:     coverageMonths,
-		ProgressPercentage: progressPercentage,
-		Status:             status,
-		TargetRationale:    targetRationale,
+		CoverageMonths:     ef.CoverageMonths,
+		ProgressPercentage: ef.ProgressPercentage,
+		Status:             ef.Status,
+		TargetRationale:    ef.TargetRationale,
 		DataSufficiency: &dto.DataSufficiency{
-			IsSufficient: monthlyLivingCost > 0,
-			MissingFields: func() []string {
-				if monthlyLivingCost <= 0 {
-					return []string{"living_cost_history"}
-				}
-				return nil
-			}(),
+			IsSufficient:       ef.DataQuality.IsSufficient,
+			MissingFields:      ef.DataQuality.MissingFields,
+			UsesFallbackValues: ef.DataQuality.UsesFallbackValues,
+			Confidence:         ef.DataQuality.Confidence,
 		},
+		AsOf:           ef.AsOf.Format(time.RFC3339),
+		FormulaVersion: ef.FormulaVersion,
+		Assumptions:    ef.Assumptions,
 	}, nil
 }
 

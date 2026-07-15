@@ -116,6 +116,11 @@ export interface AvalancheSimulationResponse {
   savings_months: number;
   schedules_with_extra: AvalanchePaymentScheduleResponse[];
   schedules_without_extra: AvalanchePaymentScheduleResponse[];
+  as_of?: string;
+  formula_version?: string;
+  assumptions?: string[];
+  negative_amortization?: boolean;
+  is_estimate?: boolean;
 }
 
 export const debtsService = {

@@ -213,12 +213,43 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		dtiScore = 100 - (dtiRatio-20)*(100.0/40.0)
 	}
 
-	// EF Score (Weight 30%)
-	efCoverageMonths := 0.0
-	if monthlyLivingCost > 0 {
-		efCoverageMonths = efTotal / monthlyLivingCost
+	// EF Score (Weight 30%) — use adaptive target from kernel ef-v1, not hard-coded 6.
+	// Income stability lookback for adaptive months (same window as EF service).
+	var minIncome, maxIncome float64
+	_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
+		SELECT SUM(t.amount * COALESCE(curr.exchange_rate_to_idr,t.exchange_rate,1)) monthly
+		FROM transactions t LEFT JOIN currencies curr ON curr.code=t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		GROUP BY DATE_TRUNC('month',t.date)) x`, userID, threeMonthsAgo, startOfMonth).Scan(&minIncome, &maxIncome)
+
+	var configuredTargetMonths int
+	var livingCostOverride float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(target_months, 6), COALESCE(monthly_living_cost_override, 0)
+		FROM emergency_fund_configs WHERE user_id = $1
+	`, userID).Scan(&configuredTargetMonths, &livingCostOverride)
+	if configuredTargetMonths <= 0 {
+		configuredTargetMonths = kernel.EFDefaultTargetMonths
 	}
-	efScore := math.Min(100, (efCoverageMonths/6.0)*100)
+	efLivingCost := monthlyLivingCost
+	if livingCostOverride > 0 {
+		efLivingCost = livingCostOverride
+	}
+	efRes := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   now,
+		EFBalance:              efTotal,
+		MonthlyLivingCost:      efLivingCost,
+		ConfiguredTargetMonths: configuredTargetMonths,
+		UseAdaptive:            livingCostOverride <= 0,
+		MinMonthlyIncome:       minIncome,
+		MaxMonthlyIncome:       maxIncome,
+	})
+	efCoverageMonths := efRes.CoverageMonths
+	efTargetMonths := float64(efRes.TargetMonths)
+	if efTargetMonths <= 0 {
+		efTargetMonths = float64(kernel.EFDefaultTargetMonths)
+	}
+	efScore := math.Min(100, (efCoverageMonths/efTargetMonths)*100)
 
 	// Cash Score (Weight 20%)
 	cashScore := 0.0
@@ -316,14 +347,14 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	var nextAction dto.NextActionDto
 	if !dataSufficient {
 		nextAction = dto.NextActionDto{Title: "Lengkapi Data Keuangan", Description: "Belum cukup histori pendapatan dan pengeluaran untuk memberi rekomendasi yang aman.", ActionLabel: "Catat Transaksi", ActionUrl: "/transactions", Priority: 0}
-	} else if efCoverageMonths < 6.0 {
-		needed := (6.0 * monthlyLivingCost) - efTotal
+	} else if efCoverageMonths < efTargetMonths {
+		needed := (efTargetMonths * monthlyLivingCost) - efTotal
 		if needed < 0 {
 			needed = 0
 		}
 		nextAction = dto.NextActionDto{
 			Title:       "Top Up Dana Darurat",
-			Description: fmt.Sprintf("Dana darurat Anda saat ini baru mencakup %.1f bulan pengeluaran hidup. Segera top up Rp %s lagi untuk mencapai target aman 6 bulan.", efCoverageMonths, formatNumber(needed)),
+			Description: fmt.Sprintf("Dana darurat Anda saat ini baru mencakup %.1f bulan pengeluaran hidup. Segera top up Rp %s lagi untuk mencapai target aman %.0f bulan (%s).", efCoverageMonths, formatNumber(needed), efTargetMonths, efRes.TargetRationale),
 			ActionLabel: "Top Up Sekarang",
 			ActionUrl:   "/accounts",
 			Priority:    1,
