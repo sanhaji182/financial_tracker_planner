@@ -347,10 +347,13 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			surplus = 0
 		}
 		nextAction = dto.NextActionDto{
-			Title:       "Alokasikan ke Investasi",
-			Description: fmt.Sprintf("Kondisi keuangan Anda prima! Alokasikan dana surplus bulan ini sekitar Rp %s ke instrumen reksa dana atau saham produktif.", formatNumber(surplus)),
-			ActionLabel: "Lihat Investasi",
-			ActionUrl:   "/assets",
+			Title: "Tinjau Alokasi Surplus",
+			Description: fmt.Sprintf(
+				"Estimasi surplus ~Rp %s tersedia setelah kewajiban. Tinjau opsi: tambah buffer kas, percepat target, atau sisihkan untuk tujuan jangka panjang. Bukan rekomendasi produk investasi.",
+				formatNumber(surplus),
+			),
+			ActionLabel: "Lihat Opsi Alokasi",
+			ActionUrl:   "/allocation",
 			Priority:    4,
 		}
 	}
@@ -562,6 +565,8 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		InsightSummary: insightSummary,
 		NextAction:     nextAction,
 		NetWorthTrend:  netWorthTrend,
+		AsOf:           time.Now().UTC().Format(time.RFC3339),
+		FormulaVersion: "dashboard-v1-trust-freeze",
 	}
 
 	// Cache to Redis with 5 minutes TTL

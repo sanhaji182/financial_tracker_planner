@@ -297,19 +297,19 @@ func (s *allocationService) GetAllocationAdvice(ctx context.Context, userID stri
 		surplusRemaining -= suggested
 	}
 
-	// Priority 5: Productive investment with remaining surplus.
+	// Priority 5: Educational long-term allocation guidance (not product advice).
 	if surplusRemaining > 0 {
 		suggested := surplusRemaining
 		advices = append(advices, dto.AdviceDto{
 			Priority: 5,
-			Title:    "Alokasikan Ke Investasi",
+			Title:    "Sisihkan Untuk Tujuan Jangka Panjang",
 			AmountSuggested: dto.MoneyValue{
 				Value:          suggested,
 				FormattedValue: formatRupiah(suggested),
 			},
-			Reason:     "Pos utama (dana darurat, utang bunga tinggi, target jangka dekat, buffer) sudah terpenuhi. Alokasikan sisa ke instrumen produktif.",
-			ActionType: "invest",
-			ActionUrl:  "/assets",
+			Reason:     "Pos utama (dana darurat, utang bunga tinggi, target jangka dekat, buffer) sudah terpenuhi. Surplus berpotensi tersedia untuk tujuan jangka panjang — tinjau opsi sendiri; ini bukan rekomendasi produk/sekuritas.",
+			ActionType: "long_term_allocation",
+			ActionUrl:  "/goals",
 		})
 	}
 

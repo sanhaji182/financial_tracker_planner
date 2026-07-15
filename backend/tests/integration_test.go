@@ -263,7 +263,8 @@ func TestE2EFlowIntegration(t *testing.T) {
 
 	// Register routes
 	v1 := r.Group("/api/v1")
-	authHandler.RegisterRoutes(v1)
+	authGroup := v1.Group("/auth")
+	authHandler.RegisterRoutes(authGroup)
 	accountHandler.RegisterRoutes(v1)
 	txHandler.RegisterRoutes(v1)
 	dashHandler.RegisterRoutes(v1)

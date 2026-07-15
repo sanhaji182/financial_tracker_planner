@@ -37,3 +37,4 @@ Thumbs.db
 uploads/
 db-data/
 redis-data/
+.env.production

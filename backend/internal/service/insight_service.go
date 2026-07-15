@@ -605,8 +605,8 @@ func (s *insightService) GenerateInsights(ctx context.Context, userID string, mo
 			desc = fmt.Sprintf("Rasio pengeluaran terhadap pendapatan bulan ini %.0f%%. Pertimbangkan untuk meningkatkan persentase tabungan.",
 				(totalExpense/totalIncome)*100)
 		} else if totalIncome > 0 && totalExpense/totalIncome < 0.6 {
-			title = "💡 Rekomendasi: Optimalkan Investasi"
-			desc = "Luar biasa! Pengeluaran terkendali dengan baik. Pertimbangkan mengalokasikan surplus ke instrumen investasi."
+			title = "💡 Rekomendasi: Tinjau Alokasi Surplus"
+			desc = "Pengeluaran terkendali. Tinjau apakah surplus lebih cocok untuk buffer, target, atau tujuan jangka panjang. Bukan rekomendasi produk investasi."
 		} else {
 			title = "💡 Keuangan Terkendali"
 			desc = "Pola keuangan bulan ini terlihat seimbang. Tetap pantau pengeluaran dan pastikan target tabungan terpenuhi."

@@ -146,6 +146,7 @@ func main() {
 	// Global middlewares
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
+	r.Use(middleware.SecurityHeaders())
 	r.Use(gin.Recovery())
 
 	// Create uploads directory if it doesn't exist (NO static file exposure)
@@ -180,19 +181,13 @@ func main() {
 	v1.Use(middleware.DashboardCacheInvalidator(rdb))
 	{
 		// Register health check handler
-		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck)
+		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck, cfg.BuildVersion, cfg.BuildSHA)
 		healthHandler.RegisterRoutes(v1)
 
-		// Register Auth handler
-		authHandler.RegisterRoutes(v1)
-		authHandler.RegisterRoutes(&r.RouterGroup)
-
-		// Apply rate limiting to auth endpoints
-		authRateLimited := v1.Group("/auth")
-		authRateLimited.Use(middleware.RateLimit(30))
-		{
-			_ = authRateLimited
-		}
+		// Auth routes — rate limited (login/register/refresh brute-force protection)
+		authGroup := v1.Group("/auth")
+		authGroup.Use(middleware.RateLimit(30))
+		authHandler.RegisterRoutes(authGroup)
 
 		// Register Accounts handler
 		accountHandler.RegisterRoutes(v1)
@@ -390,8 +385,8 @@ func setupDatabase(cfg *config.Config) (*pgxpool.Pool, error) {
 func setupRedis(cfg *config.Config) *redis.Client {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
-		Password: "", // no password set
-		DB:       0,  // use default DB
+		Password: cfg.RedisPassword,
+		DB:       0, // use default DB
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -171,6 +171,13 @@ export const DashboardPage: React.FC = () => {
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Ringkasan kesehatan finansial, jadwal tagihan, dan proyeksi keuangan keluarga Anda bulan ini.
         </p>
+        {(dash.as_of || dash.formula_version) && (
+          <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 flex items-center gap-1">
+            <Info className="h-3 w-3" />
+            Estimasi berdasarkan data hingga {dash.as_of ? new Date(dash.as_of).toLocaleString('id-ID') : 'sekarang'}
+            {dash.formula_version ? ` · formula ${dash.formula_version}` : ''}. Bukan nasihat investasi.
+          </p>
+        )}
       </div>
 
       {/* Row 1 — Top Summary Bar */}

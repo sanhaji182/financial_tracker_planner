@@ -1,0 +1,25 @@
+# Build stage — pin Go to match go.mod (1.25.x)
+FROM golang:1.25-alpine AS builder
+WORKDIR /app
+RUN apk add --no-cache git ca-certificates
+COPY backend/go.mod backend/go.sum* ./
+RUN go mod download
+COPY backend/ ./
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o main cmd/server/main.go
+
+FROM alpine:3.20
+ARG BUILD_SHA=dev
+ARG APP_VERSION=0.1.0
+ENV BUILD_SHA=${BUILD_SHA}
+ENV APP_VERSION=${APP_VERSION}
+RUN apk add --no-cache ca-certificates postgresql-client tzdata \
+  && adduser -D -u 1000 appuser
+WORKDIR /app
+COPY --from=builder /app/main .
+COPY --from=builder /app/migrations ./migrations
+RUN mkdir -p /app/uploads /app/data && chown -R appuser:appuser /app
+USER appuser
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=20s \
+  CMD wget -qO- http://127.0.0.1:8080/api/v1/health >/dev/null || exit 1
+CMD ["./main"]

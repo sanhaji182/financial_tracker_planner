@@ -89,6 +89,8 @@ export interface DashboardResponse {
   insight_summary: string;
   next_action: NextAction;
   net_worth_trend: TrendPoint[];
+  as_of?: string;
+  formula_version?: string;
 }
 
 export const dashboardService = {

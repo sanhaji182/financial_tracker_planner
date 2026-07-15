@@ -21,20 +21,20 @@ func NewAuthHandler(authService service.AuthService) *AuthHandler {
 	return &AuthHandler{authService: authService}
 }
 
-func (h *AuthHandler) RegisterRoutes(rg *gin.RouterGroup) {
-	authGroup := rg.Group("/auth")
-	{
-		authGroup.POST("/register", h.Register)
-		authGroup.POST("/login", h.Login)
-		authGroup.POST("/refresh", h.Refresh)
+// RegisterRoutes mounts auth endpoints on the provided group.
+// Callers should pass a group already rooted at /auth (with rate limiting applied).
+func (h *AuthHandler) RegisterRoutes(authGroup *gin.RouterGroup) {
+	// Public (rate-limited by caller)
+	authGroup.POST("/register", h.Register)
+	authGroup.POST("/login", h.Login)
+	authGroup.POST("/refresh", h.Refresh)
+	authGroup.POST("/register-spouse", h.RegisterSpouse) // Token passed in query or body
 
-		// Protected routes
-		authGroup.POST("/logout", middleware.AuthMiddleware(), h.Logout)
-		authGroup.POST("/invite-spouse", middleware.AuthMiddleware(), middleware.RoleMiddleware("owner"), h.InviteSpouse)
-		authGroup.POST("/register-spouse", h.RegisterSpouse) // Token passed in query or body
-		authGroup.PUT("/change-password", middleware.AuthMiddleware(), h.ChangePassword)
-		authGroup.GET("/me", middleware.AuthMiddleware(), h.GetMe)
-	}
+	// Protected routes
+	authGroup.POST("/logout", middleware.AuthMiddleware(), h.Logout)
+	authGroup.POST("/invite-spouse", middleware.AuthMiddleware(), middleware.RoleMiddleware("owner"), h.InviteSpouse)
+	authGroup.PUT("/change-password", middleware.AuthMiddleware(), h.ChangePassword)
+	authGroup.GET("/me", middleware.AuthMiddleware(), h.GetMe)
 }
 
 func (h *AuthHandler) Register(c *gin.Context) {

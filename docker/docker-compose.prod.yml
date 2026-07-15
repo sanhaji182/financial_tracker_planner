@@ -1,0 +1,131 @@
+name: financial-os
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-financial_os}
+      POSTGRES_USER: ${DB_USER:-fos}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - fos-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fos} -d ${DB_NAME:-financial_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - fos-internal
+    # no public ports
+
+  redis:
+    image: redis:7-alpine
+    container_name: fos-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - fos-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fos-internal
+
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.backend.prod
+      args:
+        BUILD_SHA: ${BUILD_SHA:-dev}
+        APP_VERSION: ${APP_VERSION:-0.1.0}
+    image: sankhair/fos-backend:latest
+    container_name: fos-backend
+    restart: unless-stopped
+    env_file:
+      - ../.env.production
+    environment:
+      APP_ENV: production
+      APP_PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      BUILD_SHA: ${BUILD_SHA:-dev}
+      APP_VERSION: ${APP_VERSION:-0.1.0}
+      WORKER_URL: http://worker:8081
+      STORAGE_TYPE: local
+      STORAGE_PATH: /app/uploads
+    ports:
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - fos-uploads:/app/uploads
+      - fos-private-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    networks:
+      - fos-internal
+    security_opt:
+      - no-new-privileges:true
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.worker
+    image: sankhair/fos-worker:latest
+    container_name: fos-worker
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      WORKER_PORT: "8081"
+      WORKER_SECRET: ${WORKER_SECRET}
+      CORS_ORIGINS: ${CORS_ALLOWED_ORIGINS}
+      # OpenAI-compatible endpoint (9r/kiro). Provider still set to "openai" in app settings.
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://9r.sans.biz.id/v1}
+    expose:
+      - "8081"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - fos-internal
+    security_opt:
+      - no-new-privileges:true
+    # not published publicly
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.frontend.prod
+      args:
+        VITE_API_URL: /api/v1
+    image: sankhair/fos-frontend:latest
+    container_name: fos-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3130:80"
+    depends_on:
+      - backend
+    networks:
+      - fos-internal
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  fos-postgres-data:
+  fos-redis-data:
+  fos-uploads:
+  fos-private-data:
+
+networks:
+  fos-internal:
+    driver: bridge
