@@ -74,6 +74,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Aset', path: '/assets', icon: Coins },
         { name: 'Kalender Tagihan', path: '/bills', icon: CalendarDays },
         { name: 'Forecast Cashflow', path: '/forecast', icon: TrendingUp },
+        { name: 'Data Quality', path: '/data-quality', icon: Database },
         { name: 'Dana Darurat', path: '/emergency-fund', icon: Shield },
         { name: 'Saran Alokasi', path: '/allocation', icon: Lightbulb },
         { name: 'Simulasi Skenario', path: '/scenarios', icon: Activity },

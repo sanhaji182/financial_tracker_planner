@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useDashboardData } from '../hooks/useDashboard';
+import { useDataQuality } from '../hooks/useDataQuality';
+import { gateFor } from '../services/dataQuality';
 import { useAuthStore } from '../stores/authStore';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -35,6 +37,7 @@ export const DashboardPage: React.FC = () => {
   const { user } = useAuthStore();
 
   const { data: dash, isLoading, isError, refetch } = useDashboardData();
+  const { data: dq } = useDataQuality();
   const [alertsOpen, setAlertsOpen] = useState(true);
   const [topInsights, setTopInsights] = useState<MonthlyInsight[]>([]);
 
@@ -194,6 +197,41 @@ export const DashboardPage: React.FC = () => {
         )}
       </div>
 
+      {/* Data Quality banner */}
+      {dq && (dq.overall_confidence !== 'high' || (dq.issues || []).length > 0) && (
+        <Card className={`p-4 flex items-start gap-3 border ${
+          dq.overall_confidence === 'low'
+            ? 'border-rose-200 bg-rose-50/70 dark:border-rose-900 dark:bg-rose-950/20'
+            : 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20'
+        }`}>
+          <AlertTriangle className={`h-5 w-5 shrink-0 mt-0.5 ${
+            dq.overall_confidence === 'low' ? 'text-rose-600' : 'text-amber-600'
+          }`} />
+          <div className="flex-1 space-y-1 min-w-0">
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-100">
+              Kualitas data: {dq.grade} ({dq.overall_score}/100) · keyakinan {dq.overall_confidence}
+            </p>
+            <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+              {(dq.decision_metrics_hidden || []).length > 0
+                ? `Metrik disembunyikan: ${(dq.decision_metrics_hidden || []).join(', ')}. `
+                : ''}
+              {(dq.decision_metrics_degraded || []).length > 0
+                ? `Degraded: ${(dq.decision_metrics_degraded || []).join(', ')}. `
+                : ''}
+              {(dq.missing_inputs || []).length > 0
+                ? `Lengkapi: ${(dq.missing_inputs || []).join(', ')}.`
+                : 'Perbaiki isu data agar angka decision-support lebih tepercaya.'}
+            </p>
+          </div>
+          <Link
+            to="/data-quality"
+            className="shrink-0 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+          >
+            Data Quality <ArrowRight className="h-3 w-3" />
+          </Link>
+        </Card>
+      )}
+
       {/* Row 1 — Top Summary Bar */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
         {/* Net Worth */}
@@ -233,38 +271,62 @@ export const DashboardPage: React.FC = () => {
           </div>
         </Card>
 
-        {/* DTI Ratio */}
+        {/* DTI Ratio — gated */}
         <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-amber-500 shadow-sm">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Debt-to-Income (DTI)</span>
           <div className="mt-2.5">
-            <span className="text-xl font-black text-slate-900 dark:text-white font-mono block truncate">
-              {dash.dti_ratio.toFixed(1)}%
-            </span>
-            <div className="mt-1">
-              <Badge variant={getDtiBadgeColor(dash.dti_status)} className="!px-1.5 !py-0.5 !text-[9px] capitalize">
-                {getDtiLabel(dash.dti_status, dash.dti_ratio)}
-              </Badge>
-            </div>
+            {gateFor(dq, 'dti')?.visible === false ? (
+              <>
+                <span className="text-sm font-black text-slate-400 block">Data tidak cukup</span>
+                <Link to="/data-quality" className="text-[10px] font-bold text-indigo-500 hover:underline mt-1 block">
+                  Lengkapi income →
+                </Link>
+              </>
+            ) : (
+              <>
+                <span className="text-xl font-black text-slate-900 dark:text-white font-mono block truncate">
+                  {dash.dti_ratio.toFixed(1)}%
+                </span>
+                <div className="mt-1">
+                  <Badge variant={getDtiBadgeColor(dash.dti_status)} className="!px-1.5 !py-0.5 !text-[9px] capitalize">
+                    {getDtiLabel(dash.dti_status, dash.dti_ratio)}
+                  </Badge>
+                  {gateFor(dq, 'dti')?.degraded && (
+                    <span className="ml-1 text-[9px] font-bold text-amber-600">estimasi</span>
+                  )}
+                </div>
+              </>
+            )}
           </div>
         </Card>
 
-        {/* Health Score */}
+        {/* Health Score — gated */}
         <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-emerald-500 shadow-sm col-span-2 sm:col-span-1">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Financial Health Score</span>
           <div className="mt-2.5 flex items-center justify-between">
-            <div>
-              <span className="text-xl font-black text-slate-900 dark:text-white block font-mono">
-                {dash.health_score.score}<span className="text-[10px] text-slate-400">/100</span>
-              </span>
-              <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-500 block mt-1 leading-none">
-                {dash.health_score.rating}
-              </span>
-              {typeof dash.health_score.reconciliation_rate === 'number' && (
-                <span className="text-[9px] font-semibold text-slate-400 block mt-1">
-                  Rekonsiliasi {(dash.health_score.reconciliation_rate * 100).toFixed(0)}%
+            {gateFor(dq, 'health_score')?.visible === false ? (
+              <div>
+                <span className="text-sm font-black text-slate-400 block">Disembunyikan</span>
+                <Link to="/data-quality" className="text-[10px] font-bold text-indigo-500 hover:underline mt-1 block">
+                  Perbaiki data →
+                </Link>
+              </div>
+            ) : (
+              <div>
+                <span className="text-xl font-black text-slate-900 dark:text-white block font-mono">
+                  {dash.health_score.score}<span className="text-[10px] text-slate-400">/100</span>
                 </span>
-              )}
-            </div>
+                <span className="text-[9px] font-extrabold uppercase tracking-wider text-emerald-500 block mt-1 leading-none">
+                  {dash.health_score.rating}
+                  {gateFor(dq, 'health_score')?.degraded ? ' · degraded' : ''}
+                </span>
+                {typeof dash.health_score.reconciliation_rate === 'number' && (
+                  <span className="text-[9px] font-semibold text-slate-400 block mt-1">
+                    Rekonsiliasi {(dash.health_score.reconciliation_rate * 100).toFixed(0)}%
+                  </span>
+                )}
+              </div>
+            )}
             <div className={`p-2 rounded-full border ${getHealthScoreColor(dash.health_score.status_color)}`}>
               <Heart className="h-5 w-5 fill-current" />
             </div>
@@ -272,11 +334,11 @@ export const DashboardPage: React.FC = () => {
         </Card>
       </div>
 
-      {/* Data sufficiency banner */}
+      {/* Data sufficiency banner (legacy + link) */}
       {dash.data_sufficiency && !dash.data_sufficiency.is_sufficient && (
         <Card className="p-4 border border-amber-200 dark:border-amber-900 bg-amber-50/70 dark:bg-amber-950/20 flex items-start gap-3">
           <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
-          <div className="space-y-1">
+          <div className="space-y-1 flex-1">
             <p className="text-xs font-bold text-amber-800 dark:text-amber-300">
               Data belum cukup untuk rekomendasi penuh
             </p>
@@ -285,6 +347,9 @@ export const DashboardPage: React.FC = () => {
               Angka safe-to-spend & health score bersifat sementara.
             </p>
           </div>
+          <Link to="/data-quality" className="text-[11px] font-bold text-indigo-600 hover:underline shrink-0">
+            Detail →
+          </Link>
         </Card>
       )}
 
@@ -373,19 +438,37 @@ export const DashboardPage: React.FC = () => {
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl space-y-1">
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Saldo Akhir Proyeksi</span>
-              <span className="text-lg font-black font-mono text-slate-900 dark:text-white">
-                {dash.forecast_end_month.formatted_value}
-              </span>
+              {gateFor(dq, 'forecast')?.visible === false ? (
+                <span className="text-sm font-black text-slate-400">Data tidak cukup</span>
+              ) : (
+                <span className="text-lg font-black font-mono text-slate-900 dark:text-white">
+                  {dash.forecast_end_month.formatted_value}
+                </span>
+              )}
             </div>
             <div className="bg-indigo-50/50 dark:bg-indigo-950/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-950 space-y-1">
               <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Safe-to-Spend (Konservatif)</span>
-              <span className="text-lg font-black font-mono text-indigo-700 dark:text-indigo-400">
-                {dash.safe_to_spend.formatted_value}
-              </span>
+              {gateFor(dq, 'safe_to_spend')?.visible === false ? (
+                <>
+                  <span className="text-sm font-black text-slate-400 block">Disembunyikan</span>
+                  <Link to="/data-quality" className="text-[10px] font-bold text-indigo-500 hover:underline">
+                    Perbaiki data →
+                  </Link>
+                </>
+              ) : (
+                <>
+                  <span className="text-lg font-black font-mono text-indigo-700 dark:text-indigo-400">
+                    {dash.safe_to_spend.formatted_value}
+                  </span>
+                  {gateFor(dq, 'safe_to_spend')?.degraded && (
+                    <span className="text-[9px] font-bold text-amber-600 block">keyakinan rendah — cek Data Quality</span>
+                  )}
+                </>
+              )}
             </div>
           </div>
 
-          {dash.safe_to_spend_scenarios && (
+          {dash.safe_to_spend_scenarios && gateFor(dq, 'safe_to_spend')?.visible !== false && (
             <div className="grid grid-cols-3 gap-2">
               <div className="rounded-lg border border-slate-100 dark:border-slate-800 p-2.5 bg-white dark:bg-slate-950">
                 <span className="text-[9px] font-bold uppercase tracking-wider text-slate-400 block">Konservatif</span>

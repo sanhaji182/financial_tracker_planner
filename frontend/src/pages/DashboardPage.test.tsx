@@ -30,6 +30,28 @@ vi.mock('../hooks/useDashboard', () => ({
   useDashboardData: vi.fn(),
 }));
 
+vi.mock('../hooks/useDataQuality', () => ({
+  useDataQuality: vi.fn(() => ({
+    data: {
+      overall_score: 88,
+      overall_confidence: 'high',
+      grade: 'Good',
+      issues: [],
+      gates: [
+        { metric: 'dti', visible: true, degraded: false, confidence: 'high' },
+        { metric: 'health_score', visible: true, degraded: false, confidence: 'high' },
+        { metric: 'safe_to_spend', visible: true, degraded: false, confidence: 'high' },
+        { metric: 'forecast', visible: true, degraded: false, confidence: 'high' },
+      ],
+      decision_metrics_hidden: [],
+      decision_metrics_degraded: [],
+      missing_inputs: [],
+    },
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
 // Mock authStore
 vi.mock('../stores/authStore', () => ({
   useAuthStore: () => ({

@@ -26,6 +26,7 @@ const BillsPage = React.lazy(() => import('./pages/BillsPage').then(m => ({ defa
 const ForecastPage = React.lazy(() => import('./pages/ForecastPage').then(m => ({ default: m.ForecastPage })));
 const EmergencyFundPage = React.lazy(() => import('./pages/EmergencyFundPage').then(m => ({ default: m.EmergencyFundPage })));
 const AllocationPage = React.lazy(() => import('./pages/AllocationPage').then(m => ({ default: m.AllocationPage })));
+const DataQualityPage = React.lazy(() => import('./pages/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
 const BudgetsPage = React.lazy(() => import('./pages/BudgetsPage').then(m => ({ default: m.BudgetsPage })));
 const MonthlyClosingPage = React.lazy(() => import('./pages/MonthlyClosingPage').then(m => ({ default: m.MonthlyClosingPage })));
 const AlertCenterPage = React.lazy(() => import('./pages/AlertCenterPage'));
@@ -172,6 +173,7 @@ const App: React.FC = () => {
               <Route path="forecast" element={<ForecastPage />} />
               <Route path="emergency-fund" element={<EmergencyFundPage />} />
               <Route path="allocation" element={<AllocationPage />} />
+              <Route path="data-quality" element={<DataQualityPage />} />
               <Route path="budgets" element={<BudgetsPage />} />
               <Route path="closing" element={<MonthlyClosingPage />} />
               <Route path="goals" element={<GoalsPage />} />

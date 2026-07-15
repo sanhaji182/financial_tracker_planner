@@ -89,6 +89,7 @@ func main() {
 	transferService := service.NewTransferService(dbPool)
 	reconciliationService := service.NewReconciliationService(dbPool)
 	closingService := service.NewClosingService(dbPool)
+	dataQualityService := service.NewDataQualityService(dbPool)
 	telegramService := service.NewTelegramService()
 	alertService := service.NewAlertService(dbPool)
 	alertGeneratorService := service.NewAlertGeneratorService(dbPool, telegramService)
@@ -124,6 +125,7 @@ func main() {
 	transferHandler := handler.NewTransferHandler(transferService)
 	reconciliationHandler := handler.NewReconciliationHandler(reconciliationService)
 	closingHandler := handler.NewClosingHandler(closingService)
+	dataQualityHandler := handler.NewDataQualityHandler(dataQualityService)
 	alertHandler := handler.NewAlertHandler(alertService)
 	auditHandler := handler.NewAuditHandler(auditService)
 	docHandler := handler.NewDocumentHandler(docService)
@@ -206,6 +208,9 @@ func main() {
 
 		// Register Dashboard handler
 		dashboardHandler.RegisterRoutes(v1)
+
+		// Register Data Quality Center
+		dataQualityHandler.RegisterRoutes(v1)
 
 		// Register SharedView handler
 		sharedViewHandler.RegisterRoutes(v1)
