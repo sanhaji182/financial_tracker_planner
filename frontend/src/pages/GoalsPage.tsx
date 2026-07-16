@@ -16,7 +16,7 @@ import {
 	Info,
 	ArrowUpRight
 } from 'lucide-react';
-import goalsService, { type Goal } from '../services/goals';
+import goalsService, { type Goal, type GoalPlan } from '../services/goals';
 import { accountsService, type Account } from '../services/accounts';
 import debtsService, { type Debt } from '../services/debts';
 import { Card } from '../components/ui/Card';
@@ -34,6 +34,7 @@ export const GoalsPage: React.FC = () => {
 	const [goals, setGoals] = useState<Goal[]>([]);
 	const [accounts, setAccounts] = useState<Account[]>([]);
 	const [debts, setDebts] = useState<Debt[]>([]);
+	const [plan, setPlan] = useState<GoalPlan | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
 	const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -69,14 +70,16 @@ export const GoalsPage: React.FC = () => {
 		setIsLoading(true);
 		setErrorMsg(null);
 		try {
-			const [goalsData, accountsData, debtsData] = await Promise.all([
+			const [goalsData, accountsData, debtsData, planData] = await Promise.all([
 				goalsService.getGoals(),
 				accountsService.getAccounts(),
-				debtsService.getDebts()
+				debtsService.getDebts(),
+				goalsService.getGoalPlan().catch(() => null),
 			]);
 			setGoals(goalsData);
 			setAccounts(accountsData);
 			setDebts(debtsData);
+			setPlan(planData);
 		} catch (err: any) {
 			setErrorMsg(err.message || 'Gagal mengambil data target keuangan');
 		} finally {
@@ -333,6 +336,105 @@ export const GoalsPage: React.FC = () => {
 					<AlertCircle className="h-5 w-5 text-rose-600 shrink-0" />
 					<span>{errorMsg}</span>
 				</div>
+			)}
+
+			{/* Household goal plan (goals-v1) */}
+			{plan && !isLoading && (
+				<Card className="p-5 space-y-4 border-indigo-100 dark:border-indigo-900/40">
+					<div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+						<div>
+							<h2 className="text-sm font-bold text-slate-700 dark:text-slate-200 uppercase tracking-wider flex items-center gap-2">
+								<TrendingUp className="h-4 w-4 text-indigo-500" />
+								Rencana Prioritas Rumah Tangga
+							</h2>
+							<p className="text-xs text-slate-500 mt-1">
+								Alokasi surplus ke tujuan ber-tenggat · formula {plan.formula_version}
+							</p>
+						</div>
+						<div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-right text-xs">
+							<div>
+								<p className="text-slate-400">Surplus/bln</p>
+								<p className="font-bold text-slate-800 dark:text-slate-100">
+									<MoneyDisplay value={plan.monthly_surplus} />
+								</p>
+							</div>
+							<div>
+								<p className="text-slate-400">Tersedia utk goals</p>
+								<p className="font-bold text-indigo-600">
+									<MoneyDisplay value={plan.available_for_goals} />
+								</p>
+							</div>
+							<div>
+								<p className="text-slate-400">Kebutuhan</p>
+								<p className="font-bold text-slate-800 dark:text-slate-100">
+									<MoneyDisplay value={plan.total_monthly_required} />
+								</p>
+							</div>
+							<div>
+								<p className="text-slate-400">Gap underfunded</p>
+								<p className={`font-bold ${plan.unfunded_gap > 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
+									<MoneyDisplay value={plan.unfunded_gap} />
+								</p>
+							</div>
+						</div>
+					</div>
+
+					{plan.conflicts && plan.conflicts.length > 0 && (
+						<div className="space-y-2">
+							{plan.conflicts.map((c, i) => (
+								<div key={i} className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-100 dark:border-amber-900/40 text-xs text-amber-900 dark:text-amber-200">
+									<p className="font-semibold">{c.message}</p>
+									<p className="mt-1 text-amber-800/80 dark:text-amber-300/80">Trade-off: {c.trade_off}</p>
+									{c.goal_names?.length > 0 && (
+										<p className="mt-1 text-[11px] opacity-80">Tujuan: {c.goal_names.join(', ')}</p>
+									)}
+								</div>
+							))}
+						</div>
+					)}
+
+					{plan.items && plan.items.length > 0 && (
+						<div className="overflow-x-auto">
+							<table className="w-full text-xs text-left">
+								<thead>
+									<tr className="text-slate-400 border-b border-slate-100 dark:border-slate-800">
+										<th className="py-2 pr-2">Tujuan</th>
+										<th className="py-2 pr-2">Prio</th>
+										<th className="py-2 pr-2 text-right">Butuh/bln</th>
+										<th className="py-2 pr-2 text-right">Alokasi</th>
+										<th className="py-2 pr-2">Status</th>
+										<th className="py-2">Catatan</th>
+									</tr>
+								</thead>
+								<tbody className="divide-y divide-slate-50 dark:divide-slate-800/50">
+									{plan.items.map((it) => (
+										<tr key={it.id}>
+											<td className="py-2 pr-2 font-medium text-slate-800 dark:text-slate-200">{it.name}</td>
+											<td className="py-2 pr-2 text-slate-500">P{it.priority}</td>
+											<td className="py-2 pr-2 text-right"><MoneyDisplay value={it.monthly_required} /></td>
+											<td className="py-2 pr-2 text-right font-semibold"><MoneyDisplay value={it.allocated_monthly} /></td>
+											<td className="py-2 pr-2">
+												<span className={`px-1.5 py-0.5 rounded font-bold ${
+													it.feasibility_status === 'on_track' || it.feasibility_status === 'achieved'
+														? 'bg-emerald-50 text-emerald-700'
+														: it.feasibility_status === 'at_risk'
+														? 'bg-amber-50 text-amber-700'
+														: it.feasibility_status === 'no_deadline'
+														? 'bg-slate-50 text-slate-600'
+														: 'bg-rose-50 text-rose-700'
+												}`}>
+													{it.feasibility_status}
+													{it.delay_months > 0 ? ` · +${it.delay_months.toFixed(1)}bln` : ''}
+												</span>
+											</td>
+											<td className="py-2 text-slate-500 max-w-xs">{it.note}</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					)}
+				</Card>
 			)}
 
 			{isLoading ? (

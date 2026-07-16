@@ -25,14 +25,24 @@ type MetricState struct {
 	Scenario float64 `json:"scenario"`
 	Impact   float64 `json:"impact"`
 	Severity string  `json:"severity"` // positive (green), neutral (blue/gray), negative (red/yellow)
+	Unit     string  `json:"unit,omitempty"` // idr | months | ratio
 }
 
 // ScenarioResult represents the simulated side-by-side impact comparison
 type ScenarioResult struct {
-	EndingBalance MetricState `json:"ending_balance"`
-	TotalDebts    MetricState `json:"total_debts"`
-	EFCoverage    MetricState `json:"ef_coverage"`
-	CashRunway    MetricState `json:"cash_runway"`
+	EndingBalance   MetricState `json:"ending_balance"`
+	TotalDebts      MetricState `json:"total_debts"`
+	EFCoverage      MetricState `json:"ef_coverage"`
+	CashRunway      MetricState `json:"cash_runway"`
+	DebtInterest    MetricState `json:"debt_interest_cost"`
+	GoalFundingGap  MetricState `json:"goal_funding_gap"`
+	GoalDelayMonths MetricState `json:"goal_delay_months"`
+	DownsideRunway  MetricState `json:"downside_runway"`
+	AsOf            string      `json:"as_of,omitempty"`
+	FormulaVersion  string      `json:"formula_version,omitempty"`
+	HorizonMonths   int         `json:"horizon_months,omitempty"`
+	Assumptions     []string    `json:"assumptions,omitempty"`
+	Notes           []string    `json:"notes,omitempty"`
 }
 
 // SimulateScenarioRequest is the request body for simulation

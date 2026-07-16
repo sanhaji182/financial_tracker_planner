@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 	"github.com/user/financial-os/internal/model"
 )
 
@@ -44,169 +44,132 @@ func (s *scenarioService) resolveOwnerID(ctx context.Context, userID string) (st
 	return userID, nil
 }
 
-// SimulateScenario calculates side-by-side what-if metrics
+// SimulateScenario calculates side-by-side what-if metrics via scenario-v1 kernel.
 func (s *scenarioService) SimulateScenario(ctx context.Context, userID string, changes []dto.ScenarioChange) (*dto.ScenarioResult, error) {
 	ownerID, err := s.resolveOwnerID(ctx, userID)
 	if err != nil {
 		ownerID = userID
 	}
 
-	// 1. Fetch current cash balance
 	var startingCash float64
 	err = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0)
-		FROM accounts
-		WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND is_active = true AND deleted_at IS NULL
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
+		FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
+		WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash') AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&startingCash)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch starting balance: %w", err)
 	}
 
-	// 2. Query average income & expenses (lookback 3 months)
 	now := time.Now()
 	startOfCurrentMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfCurrentMonth.AddDate(0, -3, 0)
 
 	var totalIncomeLast3Months float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0)
-		FROM transactions
-		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed' AND date >= $2 AND date < $3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0)
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalIncomeLast3Months)
-
 	avgMonthlyIncome := totalIncomeLast3Months / 3.0
 
 	var totalExpenseLast3Months float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0)
-		FROM transactions
-		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed' AND date >= $2 AND date < $3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0)
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id = $1 AND t.type = 'expense' AND t.status = 'confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfCurrentMonth).Scan(&totalExpenseLast3Months)
-
 	avgMonthlyExpense := totalExpenseLast3Months / 3.0
 
-	// 3. Query current outstanding debts
 	var outstandingDebts float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(outstanding_balance), 0)
-		FROM debts
-		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		SELECT COALESCE(SUM(d.outstanding_balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
+		FROM debts d LEFT JOIN currencies c ON c.code=d.currency
+		WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
 	`, ownerID).Scan(&outstandingDebts)
 
-	// BASE STATE METRICS
-	baseEndingBalance := startingCash + avgMonthlyIncome - avgMonthlyExpense
-	baseTotalDebts := outstandingDebts
-	baseEFCoverage := 0.0
-	if avgMonthlyExpense > 0 {
-		baseEFCoverage = startingCash / avgMonthlyExpense
+	// Blended APR weighted by outstanding (interest_rate stored as percent)
+	var blendedAPR float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT CASE WHEN SUM(outstanding_balance) > 0
+			THEN SUM(outstanding_balance * interest_rate) / SUM(outstanding_balance) / 100.0
+			ELSE 0 END
+		FROM debts
+		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL AND outstanding_balance > 0
+	`, ownerID).Scan(&blendedAPR)
+
+	// Active goals monthly need (time-bound within 12 months)
+	var goalsMonthlyNeed float64
+	rows, gerr := s.dbPool.Query(ctx, `
+		SELECT target_amount, current_amount, target_date
+		FROM goals
+		WHERE user_id = $1 AND status = 'active' AND target_date IS NOT NULL
+		AND target_date <= (CURRENT_DATE + INTERVAL '12 months')
+	`, ownerID)
+	if gerr == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var target, current float64
+			var td time.Time
+			if rows.Scan(&target, &current, &td) != nil {
+				continue
+			}
+			rem := target - current
+			if rem <= 0 {
+				continue
+			}
+			months := td.Sub(now).Hours() / 24 / 30
+			if months <= 0 {
+				goalsMonthlyNeed += rem
+			} else {
+				goalsMonthlyNeed += rem / months
+			}
+		}
 	}
-	baseCashRunway := baseEFCoverage
 
-	// SCENARIO STATE METRICS (Initial states copied from base states)
-	scenarioEndingBalance := baseEndingBalance
-	scenarioTotalDebts := baseTotalDebts
-	scenarioMonthlyExpense := avgMonthlyExpense
-	scenarioMonthlyIncome := avgMonthlyIncome
-	scenarioCashPool := startingCash
-
-	// Apply simulated changes
+	kChanges := make([]kernel.ScenarioChangeInput, 0, len(changes))
 	for _, c := range changes {
-		switch c.Type {
-		case "extra_debt_payment":
-			scenarioTotalDebts -= c.Params.MonthlyExtraAmount
-			if scenarioTotalDebts < 0 {
-				scenarioTotalDebts = 0
-			}
-			// Paying extra debt reduces ending balance & cash pool
-			scenarioEndingBalance -= c.Params.MonthlyExtraAmount
-			scenarioCashPool -= c.Params.MonthlyExtraAmount
-
-		case "income_change":
-			changeAmt := avgMonthlyIncome * (c.Params.Percentage / 100.0)
-			scenarioMonthlyIncome += changeAmt
-			scenarioEndingBalance += changeAmt
-
-		case "large_purchase":
-			scenarioEndingBalance -= c.Params.Amount
-			scenarioCashPool -= c.Params.Amount
-
-		case "investment_increase":
-			// Shifting cash to investment reduces ending liquid balance
-			scenarioEndingBalance -= c.Params.MonthlyAmount
-			scenarioCashPool -= c.Params.MonthlyAmount
-
-		case "add_subscription":
-			scenarioMonthlyExpense += c.Params.MonthlyAmount
-			scenarioEndingBalance -= c.Params.MonthlyAmount
-
-		case "remove_expense":
-			scenarioMonthlyExpense -= c.Params.MonthlyAmount
-			if scenarioMonthlyExpense < 0 {
-				scenarioMonthlyExpense = 0
-			}
-			scenarioEndingBalance += c.Params.MonthlyAmount
-		}
+		kChanges = append(kChanges, kernel.ScenarioChangeInput{
+			Type:               c.Type,
+			MonthlyExtraAmount: c.Params.MonthlyExtraAmount,
+			Percentage:         c.Params.Percentage,
+			Amount:             c.Params.Amount,
+			MonthlyAmount:      c.Params.MonthlyAmount,
+		})
 	}
 
-	// Recalculate dynamic runway ratios
-	scenarioEFCoverage := 0.0
-	if scenarioMonthlyExpense > 0 {
-		// Cash pool after any immediate cash outlays divided by monthly expenses
-		if scenarioCashPool < 0 {
-			scenarioCashPool = 0
-		}
-		scenarioEFCoverage = scenarioCashPool / scenarioMonthlyExpense
-	}
-	scenarioCashRunway := scenarioEFCoverage
+	kr := kernel.ComputeScenarioCompare(kernel.ScenarioCompareInputs{
+		AsOf:                   now.UTC(),
+		StartingCash:           startingCash,
+		AvgMonthlyIncome:       avgMonthlyIncome,
+		AvgMonthlyExpense:      avgMonthlyExpense,
+		OutstandingDebts:       outstandingDebts,
+		BlendedDebtAPR:         blendedAPR,
+		ActiveGoalsMonthlyNeed: goalsMonthlyNeed,
+		HorizonMonths:          12,
+		Changes:                kChanges,
+	})
 
-	// Compute Impacts
-	endingBalanceImpact := scenarioEndingBalance - baseEndingBalance
-	totalDebtsImpact := scenarioTotalDebts - baseTotalDebts
-	efCoverageImpact := scenarioEFCoverage - baseEFCoverage
-	cashRunwayImpact := scenarioCashRunway - baseCashRunway
-
-	// Get Severity Helper
-	getSeverity := func(val float64, inverse bool) string {
-		if val == 0 {
-			return "neutral"
+	mapMetric := func(m kernel.ScenarioMetric) dto.MetricState {
+		return dto.MetricState{
+			Base: m.Base, Scenario: m.Scenario, Impact: m.Impact, Severity: m.Severity, Unit: m.Unit,
 		}
-		if inverse {
-			if val < 0 {
-				return "positive"
-			}
-			return "negative"
-		}
-		if val > 0 {
-			return "positive"
-		}
-		return "negative"
 	}
 
 	return &dto.ScenarioResult{
-		EndingBalance: dto.MetricState{
-			Base:     baseEndingBalance,
-			Scenario: scenarioEndingBalance,
-			Impact:   endingBalanceImpact,
-			Severity: getSeverity(endingBalanceImpact, false),
-		},
-		TotalDebts: dto.MetricState{
-			Base:     baseTotalDebts,
-			Scenario: scenarioTotalDebts,
-			Impact:   totalDebtsImpact,
-			Severity: getSeverity(totalDebtsImpact, true), // less debt is good (positive)
-		},
-		EFCoverage: dto.MetricState{
-			Base:     baseEFCoverage,
-			Scenario: scenarioEFCoverage,
-			Impact:   efCoverageImpact,
-			Severity: getSeverity(efCoverageImpact, false),
-		},
-		CashRunway: dto.MetricState{
-			Base:     baseCashRunway,
-			Scenario: scenarioCashRunway,
-			Impact:   cashRunwayImpact,
-			Severity: getSeverity(cashRunwayImpact, false),
-		},
+		EndingBalance:   mapMetric(kr.EndingBalance),
+		TotalDebts:      mapMetric(kr.TotalDebts),
+		EFCoverage:      mapMetric(kr.EFCoverage),
+		CashRunway:      mapMetric(kr.CashRunway),
+		DebtInterest:    mapMetric(kr.DebtInterest),
+		GoalFundingGap:  mapMetric(kr.GoalFundingGap),
+		GoalDelayMonths: mapMetric(kr.GoalDelayMonths),
+		DownsideRunway:  mapMetric(kr.DownsideRunway),
+		AsOf:            kr.AsOf.Format(time.RFC3339),
+		FormulaVersion:  kr.FormulaVersion,
+		HorizonMonths:   kr.HorizonMonths,
+		Assumptions:     kr.Assumptions,
+		Notes:           kr.Notes,
 	}, nil
 }
 
@@ -306,10 +269,8 @@ func (s *scenarioService) DeleteScenario(ctx context.Context, userID string, id 
 	if err != nil {
 		return fmt.Errorf("failed to delete scenario: %w", err)
 	}
-
 	if tag.RowsAffected() == 0 {
-		return pgx.ErrNoRows
+		return fmt.Errorf("scenario not found")
 	}
-
 	return nil
 }

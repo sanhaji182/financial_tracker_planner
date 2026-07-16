@@ -79,3 +79,44 @@ type GoalContributionRequest struct {
 	Date            string  `json:"date" binding:"required"` // YYYY-MM-DD
 	Notes           string  `json:"notes"`
 }
+
+// GoalPlanResponse is household-level goal priority + conflict plan (goals-v1).
+type GoalPlanResponse struct {
+	AsOf                 string                `json:"as_of"`
+	FormulaVersion       string                `json:"formula_version"`
+	MonthlySurplus       float64               `json:"monthly_surplus"`
+	ReservedHigher       float64               `json:"reserved_higher_priority"`
+	AvailableForGoals    float64               `json:"available_for_goals"`
+	TotalMonthlyRequired float64               `json:"total_monthly_required"`
+	TotalAllocated       float64               `json:"total_allocated"`
+	UnfundedGap          float64               `json:"unfunded_gap"`
+	Items                []GoalPlanItemDTO     `json:"items"`
+	Conflicts            []GoalPlanConflictDTO `json:"conflicts"`
+	TradeOffs            []string              `json:"trade_offs"`
+	Assumptions          []string              `json:"assumptions"`
+}
+
+type GoalPlanItemDTO struct {
+	ID                string  `json:"id"`
+	Name              string  `json:"name"`
+	Type              string  `json:"type"`
+	Priority          int     `json:"priority"`
+	Remaining         float64 `json:"remaining"`
+	MonthsRemaining   float64 `json:"months_remaining,omitempty"`
+	MonthlyRequired   float64 `json:"monthly_required"`
+	AllocatedMonthly  float64 `json:"allocated_monthly"`
+	FundingShare      float64 `json:"funding_share"`
+	FeasibilityStatus string  `json:"feasibility_status"`
+	DelayMonths       float64 `json:"delay_months"`
+	IsAffordable      bool    `json:"is_affordable"`
+	FundingGap        float64 `json:"funding_gap"`
+	Note              string  `json:"note"`
+}
+
+type GoalPlanConflictDTO struct {
+	Kind      string   `json:"kind"`
+	GoalIDs   []string `json:"goal_ids"`
+	GoalNames []string `json:"goal_names"`
+	Message   string   `json:"message"`
+	TradeOff  string   `json:"trade_off"`
+}

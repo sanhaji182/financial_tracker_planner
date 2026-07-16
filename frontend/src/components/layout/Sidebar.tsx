@@ -25,7 +25,8 @@ import {
   Database,
   Zap,
   Activity,
-  Bot
+  Bot,
+  HeartPulse
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { authService } from '../../services/auth';
@@ -76,6 +77,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Forecast Cashflow', path: '/forecast', icon: TrendingUp },
         { name: 'Data Quality', path: '/data-quality', icon: Database },
         { name: 'Dana Darurat', path: '/emergency-fund', icon: Shield },
+        { name: 'Proteksi RT', path: '/protection', icon: HeartPulse },
         { name: 'Saran Alokasi', path: '/allocation', icon: Lightbulb },
         { name: 'Simulasi Skenario', path: '/scenarios', icon: Activity },
         { name: 'Budget Kategori', path: '/budgets', icon: PieChart },

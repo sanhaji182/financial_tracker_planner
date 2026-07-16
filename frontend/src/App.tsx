@@ -39,6 +39,7 @@ const GoalsPage = React.lazy(() => import('./pages/GoalsPage').then(m => ({ defa
 const SubscriptionsPage = React.lazy(() => import('./pages/SubscriptionsPage').then(m => ({ default: m.SubscriptionsPage })));
 const InsightsPage = React.lazy(() => import('./pages/InsightsPage'));
 const ScenariosPage = React.lazy(() => import('./pages/ScenariosPage').then(m => ({ default: m.ScenariosPage })));
+const ProtectionPage = React.lazy(() => import('./pages/ProtectionPage').then(m => ({ default: m.ProtectionPage })));
 const AutomationPage = React.lazy(() => import('./pages/AutomationPage').then(m => ({ default: m.AutomationPage })));
 const CurrencyPage = React.lazy(() => import('./pages/CurrencyPage').then(m => ({ default: m.CurrencyPage })));
 const AISettingsPage = React.lazy(() => import('./pages/AISettingsPage'));
@@ -180,6 +181,7 @@ const App: React.FC = () => {
               <Route path="subscriptions" element={<SubscriptionsPage />} />
               <Route path="insights" element={<InsightsPage />} />
               <Route path="scenarios" element={<ScenariosPage />} />
+              <Route path="protection" element={<ProtectionPage />} />
               <Route path="alerts" element={<AlertCenterPage />} />
               <Route path="documents" element={<DocumentCenterPage />} />
               <Route path="admin/audit-log" element={<AuditLogPage />} />

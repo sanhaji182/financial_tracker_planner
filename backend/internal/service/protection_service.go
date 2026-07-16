@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type ProtectionService interface {
@@ -81,7 +82,6 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 		return nil, err
 	}
 
-	// Load profile from file
 	s.mu.RLock()
 	profiles, err := s.loadProfiles()
 	s.mu.RUnlock()
@@ -96,19 +96,16 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 		}
 	}
 
-	// Calculate from DB data
 	now := time.Now()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
 
-	// Emergency fund
 	var efTotal float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0) FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
 		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&efTotal)
 
-	// Monthly expenses (last 3 months average)
 	var totalExpenses float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0) FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
@@ -117,7 +114,6 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExpenses)
 	monthlyExpenses := totalExpenses / 3.0
 
-	// Monthly income (last 3 months average)
 	var totalIncome float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)), 0) FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
@@ -126,116 +122,90 @@ func (s *protectionService) GetAssessment(ctx context.Context, userID string) (*
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalIncome)
 	monthlyIncome := totalIncome / 3.0
 
-	// Total debt payments
-	var totalDebtPayments float64
+	var outstandingDebts float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(d.minimum_payment * COALESCE(c.exchange_rate_to_idr,1)), 0) FROM debts d LEFT JOIN currencies c ON c.code=d.currency
+		SELECT COALESCE(SUM(d.outstanding_balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
+		FROM debts d LEFT JOIN currencies c ON c.code=d.currency
 		WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
-	`, ownerID).Scan(&totalDebtPayments)
+	`, ownerID).Scan(&outstandingDebts)
 
-	// Calculate metrics
-	efMonths := 0.0
-	if monthlyExpenses > 0 {
-		efMonths = efTotal / monthlyExpenses
-	}
-
-	dtiRatio := 0.0
-	if monthlyIncome > 0 {
-		dtiRatio = (totalDebtPayments / monthlyIncome) * 100
-	}
-
-	// Income variance (simple: range / avg for now)
 	var minIncome, maxIncome float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT COALESCE(MIN(monthly), 0), COALESCE(MAX(monthly), 0) FROM (
-			SELECT SUM(amount) as monthly FROM transactions
-			WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
+			SELECT SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)) as monthly
+			FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+			WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed'
 			AND date >= $2 AND date < $3 AND deleted_at IS NULL
 			GROUP BY TO_CHAR(date, 'YYYY-MM')
 		) sub
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&minIncome, &maxIncome)
 
-	incomeStable := true
-	if monthlyIncome > 0 && maxIncome > 0 {
-		variance := (maxIncome - minIncome) / monthlyIncome
-		incomeStable = variance < 0.5
-	}
+	efRes := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   now,
+		EFBalance:              efTotal,
+		MonthlyLivingCost:      monthlyExpenses,
+		ConfiguredTargetMonths: kernel.EFDefaultTargetMonths,
+		UseAdaptive:            true,
+		MinMonthlyIncome:       minIncome,
+		MaxMonthlyIncome:       maxIncome,
+	})
 
-	// Build assessment
-	var gaps []dto.ProtectionGap
-	var recommendations []string
-	score := 0
+	kr := kernel.ComputeProtectionAssessment(kernel.ProtectionInputs{
+		AsOf:               now.UTC(),
+		MonthlyIncome:      monthlyIncome,
+		MonthlyExpenses:    monthlyExpenses,
+		EFBalance:          efTotal,
+		EFCoverageMonths:   efRes.CoverageMonths,
+		EFTargetMonths:     float64(efRes.TargetMonths),
+		OutstandingDebts:   outstandingDebts,
+		DependentsCount:    profile.DependentsCount,
+		IncomeEarnersCount: profile.IncomeEarnersCount,
+		HasHealthInsurance: profile.HasHealthInsurance,
+		HasLifeInsurance:   profile.HasLifeInsurance,
+		ExistingLifeCover:  profile.ExistingLifeCover,
+		YearsToIndependence: profile.YearsToIndependence,
+		MinMonthlyIncome:   minIncome,
+		MaxMonthlyIncome:   maxIncome,
+	})
 
-	// Health insurance
-	if profile.HasHealthInsurance {
-		score += 15
-	} else {
-		gaps = append(gaps, dto.ProtectionGap{Category: "health_insurance", Severity: "high", Description: "Anda belum memiliki asuransi kesehatan. Ini adalah prioritas perlindungan utama."})
-		recommendations = append(recommendations, "Daftarkan BPJS Kesehatan atau asuransi kesehatan swasta untuk seluruh anggota keluarga.")
+	gaps := make([]dto.ProtectionGap, 0, len(kr.Gaps))
+	for _, g := range kr.Gaps {
+		gaps = append(gaps, dto.ProtectionGap{
+			Category: g.Category, Severity: g.Severity, Description: g.Description, Amount: g.Amount,
+		})
 	}
-
-	// Life insurance
-	if profile.HasLifeInsurance {
-		score += 20
-	} else if profile.DependentsCount > 0 || profile.IncomeEarnersCount <= 1 {
-		gaps = append(gaps, dto.ProtectionGap{Category: "life_insurance", Severity: "high", Description: fmt.Sprintf("Dengan %d tanggungan dan %d pencari nafkah, asuransi jiwa sangat diperlukan.", profile.DependentsCount, profile.IncomeEarnersCount)})
-		recommendations = append(recommendations, "Pertimbangkan asuransi jiwa dengan pertanggungan minimal 10x penghasilan tahunan.")
-	} else {
-		score += 10 // partial credit if no dependents
-	}
-
-	// Emergency fund
-	if efMonths >= 3.0 {
-		score += 25
-	} else if efMonths > 0 {
-		score += int(efMonths / 3.0 * 25)
-		gaps = append(gaps, dto.ProtectionGap{Category: "emergency_fund", Severity: "medium", Description: fmt.Sprintf("Dana darurat hanya mencakup %.1f bulan. Target minimal 3-6 bulan.", efMonths)})
-		recommendations = append(recommendations, fmt.Sprintf("Tingkatkan dana darurat hingga mencapai minimal 3 bulan pengeluaran (kekurangan ~%s).", formatRupiahProtection(monthlyExpenses*3-efTotal)))
-	} else {
-		gaps = append(gaps, dto.ProtectionGap{Category: "emergency_fund", Severity: "high", Description: "Anda belum memiliki dana darurat. Ini adalah fondasi keamanan finansial."})
-		recommendations = append(recommendations, "Mulai alokasikan minimal 10% penghasilan bulanan ke rekening dana darurat.")
-	}
-
-	// DTI
-	if dtiRatio < 30 {
-		score += 15
-	} else if dtiRatio < 50 {
-		score += 8
-		gaps = append(gaps, dto.ProtectionGap{Category: "debt_load", Severity: "medium", Description: fmt.Sprintf("DTI %.1f%% cukup tinggi. Target ideal < 30%%.", dtiRatio)})
-	} else {
-		gaps = append(gaps, dto.ProtectionGap{Category: "debt_load", Severity: "high", Description: fmt.Sprintf("DTI %.1f%% sangat tinggi. Prioritaskan pelunasan utang bunga tinggi.", dtiRatio)})
-		recommendations = append(recommendations, "Gunakan metode debt avalanche untuk mempercepat pelunasan utang berbunga tinggi.")
-	}
-
-	// Income stability
-	if incomeStable {
-		score += 15
-	} else {
-		score += 5
-		gaps = append(gaps, dto.ProtectionGap{Category: "income_stability", Severity: "medium", Description: "Variasi penghasilan bulanan cukup besar. Pertimbangkan dana cadangan ekstra."})
-	}
-
-	// Multiple earners
-	if profile.IncomeEarnersCount >= 2 {
-		score += 10
-	} else {
-		score += 3
-	}
-
-	if len(recommendations) == 0 {
-		recommendations = append(recommendations, "Proteksi finansial Anda sudah cukup baik. Lakukan review berkala setiap 6 bulan.")
-	}
+	// Legacy recommendations field mirrors guidance
+	recs := append([]string{}, kr.Guidance...)
 
 	return &dto.ProtectionAssessmentResponse{
 		HasHealthInsurance:  profile.HasHealthInsurance,
 		HasLifeInsurance:    profile.HasLifeInsurance,
 		HasEmergencyFund:    efTotal > 0,
-		EmergencyFundMonths: efMonths,
+		EmergencyFundMonths: efRes.CoverageMonths,
 		IncomeEarnersCount:  profile.IncomeEarnersCount,
 		DependentsCount:     profile.DependentsCount,
-		ProtectionScore:     score,
+		ProtectionScore:     kr.ProtectionScore,
 		Gaps:                gaps,
-		Recommendations:     recommendations,
+		Recommendations:     recs,
+		AsOf:                kr.AsOf.Format(time.RFC3339),
+		FormulaVersion:      kr.FormulaVersion,
+		LifeCoverNeed:       kr.LifeCoverNeed,
+		ExistingLifeCover:   kr.ExistingLifeCover,
+		LifeCoverGap:        kr.LifeCoverGap,
+		IncomeReplacement:   kr.IncomeReplacement,
+		DebtClearance:       kr.DebtClearance,
+		DependentEducation:  kr.DependentEducation,
+		FuneralBuffer:       kr.FuneralBuffer,
+		LiquidOffset:        kr.LiquidOffset,
+		ScoreLabel:          kr.ScoreLabel,
+		DataConfidence:      kr.DataConfidence,
+		IsSufficient:        kr.IsSufficient,
+		MissingFields:       kr.MissingFields,
+		Guidance:            kr.Guidance,
+		Assumptions:         kr.Assumptions,
+		Methodology:         kr.Methodology,
+		Disclaimer:          kr.Disclaimer,
+		IsProductAdvice:     false,
 	}, nil
 }
 
@@ -270,20 +240,13 @@ func (s *protectionService) UpdateProfile(ctx context.Context, userID string, re
 	if req.DependentsCount != nil {
 		profile.DependentsCount = *req.DependentsCount
 	}
+	if req.ExistingLifeCover != nil {
+		profile.ExistingLifeCover = math.Max(0, *req.ExistingLifeCover)
+	}
+	if req.YearsToIndependence != nil {
+		profile.YearsToIndependence = *req.YearsToIndependence
+	}
 
 	profiles[ownerID] = profile
 	return s.saveProfiles(profiles)
-}
-
-func formatRupiahProtection(amount float64) string {
-	isNegative := amount < 0
-	if isNegative {
-		amount = -amount
-	}
-
-	formatted := formatNumber(math.Round(amount))
-	if isNegative {
-		return "-Rp " + formatted
-	}
-	return "Rp " + formatted
 }

@@ -50,6 +50,46 @@ export interface Goal {
   contribution_history: GoalContributionItem[];
 }
 
+export interface GoalPlanItem {
+  id: string;
+  name: string;
+  type: string;
+  priority: number;
+  remaining: number;
+  months_remaining?: number;
+  monthly_required: number;
+  allocated_monthly: number;
+  funding_share: number;
+  feasibility_status: FeasibilityStatus | string;
+  delay_months: number;
+  is_affordable: boolean;
+  funding_gap: number;
+  note: string;
+}
+
+export interface GoalPlanConflict {
+  kind: string;
+  goal_ids: string[];
+  goal_names: string[];
+  message: string;
+  trade_off: string;
+}
+
+export interface GoalPlan {
+  as_of: string;
+  formula_version: string;
+  monthly_surplus: number;
+  reserved_higher_priority: number;
+  available_for_goals: number;
+  total_monthly_required: number;
+  total_allocated: number;
+  unfunded_gap: number;
+  items: GoalPlanItem[];
+  conflicts: GoalPlanConflict[];
+  trade_offs: string[];
+  assumptions: string[];
+}
+
 export interface CreateGoalPayload {
   name: string;
   type: string;
@@ -88,6 +128,11 @@ const goalsService = {
   getGoals: async (): Promise<Goal[]> => {
     const res = await api.get<any>('/goals');
     return res.data.data || [];
+  },
+
+  getGoalPlan: async (): Promise<GoalPlan> => {
+    const res = await api.get<any>('/goals/plan');
+    return res.data.data;
   },
 
   getGoalByID: async (id: string): Promise<Goal> => {
