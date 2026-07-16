@@ -182,12 +182,12 @@ Acceptance: distributed lock/job queue, idempotency keys, retry policy, dead-let
 
 1. **Goal-based planning:** sinking funds, target affordability, priority conflicts, and timeline trade-offs. **SHIPPED `goals-v1`** — kernel `ComputeGoalPlan`, `GET /api/v1/goals/plan`, Goals UI plan card + conflicts/trade-offs.
 2. **Protection planning:** needs-based coverage gap with explicit assumptions; no product sales/recommendation. **SHIPPED `protection-v1`** — kernel `ComputeProtectionAssessment`, `/api/v1/protection/*`, Protection page (disclaimer, methodology, no product push).
-3. **Retirement education:** inflation-adjusted scenarios, contribution gap, longevity range; avoid guaranteed-return language.
-4. **Behavioral UX:** monthly review checklist, anomaly confirmation, subscription cleanup, and reversible suggested actions.
+3. **Retirement education:** inflation-adjusted scenarios, contribution gap, longevity range; avoid guaranteed-return language. **SHIPPED `retirement-v1`** — kernel `ComputeRetirementEducation`, `GET /api/v1/retirement/education` + profile, Retirement UI, governance methodology.
+4. **Behavioral UX:** monthly review checklist, anomaly confirmation, subscription cleanup, and reversible suggested actions. **SHIPPED `behavioral-v1`** — kernel `ComputeMonthlyReview`, `GET /api/v1/review/monthly` + item status, Monthly Review UI.
 5. **Scenario comparison:** side-by-side outcomes with liquidity, debt interest, goal delay, and downside risk—not only ending balance. **SHIPPED `scenario-v1`** — kernel `ComputeScenarioCompare` adds interest / goal gap / delay / downside runway; Scenarios UI extended.
-6. **Accessibility/mobile:** WCAG AA, keyboard navigation, contrast, screen-reader monetary labels, responsive dense tables.
-7. **Privacy controls:** retention policy, download/delete household data, consent and redaction before sending any context to AI provider.
-8. **Model governance:** prompt/version audit, deterministic rule fallback, eval suite for hallucination and harmful financial advice.
+6. **Accessibility/mobile:** WCAG AA, keyboard navigation, contrast, screen-reader monetary labels, responsive dense tables. **PARTIAL** — `MoneyDisplay` aria-label (spoken currency), review/retirement/privacy pages use landmarks/`role`/table captions; dense-table pass ongoing.
+7. **Privacy controls:** retention policy, download/delete household data, consent and redaction before sending any context to AI provider. **SHIPPED `privacy-v1`** — kernel retention/redact/export/delete plan, `/api/v1/privacy/*`, Privacy UI (consent, export, delete phrase).
+8. **Model governance:** prompt/version audit, deterministic rule fallback, eval suite for hallucination and harmful financial advice. **SHIPPED `model-gov-v1`** — `ComputeModelGovPolicy` + `RunSafetyEvalSuite` + `DeterministicFallback` + prompt audit helper; governance `/model-gov` + `/model-gov/eval`.
 
 ## Quick wins (1–5 hari)
 

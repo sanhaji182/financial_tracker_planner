@@ -25,6 +25,11 @@ func (h *GovernanceHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		g.GET("/goals-plan", h.GoalsPlanMethodology)
 		g.GET("/protection", h.ProtectionMethodology)
 		g.GET("/scenario-compare", h.ScenarioMethodology)
+		g.GET("/retirement", h.RetirementMethodology)
+		g.GET("/behavioral", h.BehavioralMethodology)
+		g.GET("/privacy", h.PrivacyMethodology)
+		g.GET("/model-gov", h.ModelGovMethodology)
+		g.GET("/model-gov/eval", middleware.RoleMiddleware("owner"), h.ModelGovEval)
 	}
 }
 
@@ -122,4 +127,54 @@ func (h *GovernanceHandler) ScenarioMethodology(c *gin.Context) {
 			},
 		},
 	})
+}
+
+func (h *GovernanceHandler) RetirementMethodology(c *gin.Context) {
+	res := kernel.ComputeRetirementEducation(kernel.RetirementInputs{})
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"formula_version":      res.FormulaVersion,
+			"assumptions":          res.Assumptions,
+			"methodology":          res.Methodology,
+			"disclaimer":           res.Disclaimer,
+			"is_guaranteed_return": false,
+			"is_product_advice":    false,
+			"note":                 "GET /api/v1/retirement/education — inflation-adjusted longevity bands",
+		},
+	})
+}
+
+func (h *GovernanceHandler) BehavioralMethodology(c *gin.Context) {
+	res := kernel.ComputeMonthlyReview(kernel.BehavioralInputs{})
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"formula_version": res.FormulaVersion,
+			"assumptions":     res.Assumptions,
+			"disclaimer":      res.Disclaimer,
+			"note":            "GET /api/v1/review/monthly — checklist + reversible suggested actions",
+		},
+	})
+}
+
+func (h *GovernanceHandler) PrivacyMethodology(c *gin.Context) {
+	res := kernel.ComputePrivacyPolicy(kernel.PrivacyPolicyInputs{})
+	c.JSON(http.StatusOK, gin.H{
+		"data": gin.H{
+			"formula_version": res.FormulaVersion,
+			"retention_rules": res.RetentionRules,
+			"rights":          res.Rights,
+			"disclaimer":      res.Disclaimer,
+			"note":            "GET /api/v1/privacy/policy · export/delete/redact endpoints under /privacy/*",
+		},
+	})
+}
+
+func (h *GovernanceHandler) ModelGovMethodology(c *gin.Context) {
+	p := kernel.ComputeModelGovPolicy(time.Time{})
+	c.JSON(http.StatusOK, gin.H{"data": p})
+}
+
+func (h *GovernanceHandler) ModelGovEval(c *gin.Context) {
+	res := kernel.RunSafetyEvalSuite(nil, time.Time{})
+	c.JSON(http.StatusOK, gin.H{"data": res})
 }

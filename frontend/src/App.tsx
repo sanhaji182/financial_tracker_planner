@@ -40,6 +40,9 @@ const SubscriptionsPage = React.lazy(() => import('./pages/SubscriptionsPage').t
 const InsightsPage = React.lazy(() => import('./pages/InsightsPage'));
 const ScenariosPage = React.lazy(() => import('./pages/ScenariosPage').then(m => ({ default: m.ScenariosPage })));
 const ProtectionPage = React.lazy(() => import('./pages/ProtectionPage').then(m => ({ default: m.ProtectionPage })));
+const RetirementPage = React.lazy(() => import('./pages/RetirementPage').then(m => ({ default: m.RetirementPage })));
+const MonthlyReviewPage = React.lazy(() => import('./pages/MonthlyReviewPage').then(m => ({ default: m.MonthlyReviewPage })));
+const PrivacyPage = React.lazy(() => import('./pages/PrivacyPage').then(m => ({ default: m.PrivacyPage })));
 const AutomationPage = React.lazy(() => import('./pages/AutomationPage').then(m => ({ default: m.AutomationPage })));
 const CurrencyPage = React.lazy(() => import('./pages/CurrencyPage').then(m => ({ default: m.CurrencyPage })));
 const AISettingsPage = React.lazy(() => import('./pages/AISettingsPage'));
@@ -182,6 +185,16 @@ const App: React.FC = () => {
               <Route path="insights" element={<InsightsPage />} />
               <Route path="scenarios" element={<ScenariosPage />} />
               <Route path="protection" element={<ProtectionPage />} />
+              <Route path="retirement" element={<RetirementPage />} />
+              <Route path="review" element={<MonthlyReviewPage />} />
+              <Route
+                path="settings/privacy"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <PrivacyPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="alerts" element={<AlertCenterPage />} />
               <Route path="documents" element={<DocumentCenterPage />} />
               <Route path="admin/audit-log" element={<AuditLogPage />} />

@@ -5,6 +5,8 @@ interface MoneyDisplayProps {
   currency?: string;
   className?: string;
   colorSemantic?: boolean;
+  /** Optional accessible label override (defaults to formatted currency amount). */
+  ariaLabel?: string;
 }
 
 export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
@@ -12,6 +14,7 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
   currency = 'IDR',
   className = '',
   colorSemantic = false,
+  ariaLabel,
 }) => {
   const isNegative = value < 0;
   const absValue = Math.abs(value);
@@ -24,6 +27,20 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
   };
 
   const formattedStr = `${currency === 'IDR' ? 'Rp' : currency} ${formatValue(absValue)}`;
+  const display = `${isNegative ? '-' : ''}${formattedStr}`;
+
+  // Prefer native Intl currency for screen readers (spoken form).
+  let spoken = display;
+  try {
+    spoken = new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: currency || 'IDR',
+      currencyDisplay: 'name',
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    spoken = display;
+  }
 
   let colorClass = '';
   if (colorSemantic) {
@@ -35,8 +52,12 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
   }
 
   return (
-    <span className={`font-mono tracking-tight ${colorClass} ${className}`}>
-      {isNegative ? '-' : ''}{formattedStr}
+    <span
+      className={`font-mono tracking-tight ${colorClass} ${className}`}
+      aria-label={ariaLabel || spoken}
+    >
+      {/* Visual amount; aria-label provides spoken form for AT */}
+      <span aria-hidden="false">{display}</span>
     </span>
   );
 };

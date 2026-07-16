@@ -26,7 +26,9 @@ import {
   Zap,
   Activity,
   Bot,
-  HeartPulse
+  HeartPulse,
+  PiggyBank,
+  ClipboardCheck
 } from 'lucide-react';
 import { useAuthStore } from '../../stores/authStore';
 import { authService } from '../../services/auth';
@@ -78,9 +80,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Data Quality', path: '/data-quality', icon: Database },
         { name: 'Dana Darurat', path: '/emergency-fund', icon: Shield },
         { name: 'Proteksi RT', path: '/protection', icon: HeartPulse },
+        { name: 'Edukasi Pensiun', path: '/retirement', icon: PiggyBank },
         { name: 'Saran Alokasi', path: '/allocation', icon: Lightbulb },
         { name: 'Simulasi Skenario', path: '/scenarios', icon: Activity },
         { name: 'Budget Kategori', path: '/budgets', icon: PieChart },
+        { name: 'Review Bulanan', path: '/review', icon: ClipboardCheck },
         { name: 'Tutup Buku Bulanan', path: '/closing', icon: Lock },
         { name: 'Goal Tracking', path: '/goals', icon: Target },
         { name: 'Layanan Langganan', path: '/subscriptions', icon: CalendarDays },
@@ -91,6 +95,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         { name: 'Jurnal Keluarga', path: '/journal', icon: BookOpen },
         { name: 'Agenda Checklist', path: '/tasks', icon: CheckSquare },
         { name: 'Backup & Restore', path: '/settings/backup', icon: Database },
+        { name: 'Privasi & Data', path: '/settings/privacy', icon: Shield },
         { name: 'Aturan Otomatis', path: '/settings/automation', icon: SettingsIcon },
         { name: 'Kurs Mata Uang', path: '/settings/currencies', icon: Coins },
         { name: 'Asisten AI', path: '/settings/ai', icon: Bot },

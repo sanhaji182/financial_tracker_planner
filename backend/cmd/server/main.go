@@ -105,6 +105,9 @@ func main() {
 	scenarioService := service.NewScenarioService(dbPool)
 	currencyService := service.NewCurrencyService(dbPool)
 	protectionService := service.NewProtectionService(dbPool, "/app/data")
+	retirementService := service.NewRetirementService(dbPool, "/app/data")
+	behavioralService := service.NewBehavioralService(dbPool, "/app/data")
+	privacyService := service.NewPrivacyService(dbPool, "/app/data")
 	ruleService := service.NewAutomationRuleService(dbPool, telegramService)
 
 	// Initialize Handlers
@@ -140,6 +143,9 @@ func main() {
 	currencyHandler := handler.NewCurrencyHandler(currencyService)
 	ruleHandler := handler.NewAutomationRuleHandler(ruleService)
 	protectionHandler := handler.NewProtectionHandler(protectionService)
+	retirementHandler := handler.NewRetirementHandler(retirementService)
+	behavioralHandler := handler.NewBehavioralHandler(behavioralService)
+	privacyHandler := handler.NewPrivacyHandler(privacyService)
 	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService)
 	governanceHandler := handler.NewGovernanceHandler()
 	jobRunner := service.NewJobRunner(rdb, "")
@@ -261,6 +267,9 @@ func main() {
 		currencyHandler.RegisterRoutes(v1)
 		ruleHandler.RegisterRoutes(v1)
 		protectionHandler.RegisterRoutes(v1)
+		retirementHandler.RegisterRoutes(v1)
+		behavioralHandler.RegisterRoutes(v1)
+		privacyHandler.RegisterRoutes(v1)
 		aiSettingsHandler.RegisterRoutes(v1)
 		governanceHandler.RegisterRoutes(v1)
 
