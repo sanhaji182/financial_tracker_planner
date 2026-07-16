@@ -108,6 +108,8 @@ services:
       dockerfile: docker/Dockerfile.frontend.prod
       args:
         VITE_API_URL: /api/v1
+        VITE_BUILD_SHA: ${BUILD_SHA:-dev}
+        VITE_APP_VERSION: ${APP_VERSION:-0.1.0}
     image: sankhair/fos-frontend:latest
     container_name: fos-frontend
     restart: unless-stopped

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
 import { useMonthlyForecast, useForecastBacktest } from '../hooks/useForecast';
 import { Card } from '../components/ui/Card';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import { 
   ChevronLeft, 
   ChevronRight, 
@@ -121,6 +122,8 @@ export const ForecastPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
             📈 Proyeksi Cashflow & Safe-to-Spend
+            <MetricHelp metric="forecast" />
+            <MetricHelp metric="safe_to_spend" />
           </h1>
           <p className="text-xs text-text-secondary">
             Simulasi saldo kas harian sepanjang bulan berdasarkan data pengeluaran historis dan tagihan wajib.
@@ -525,14 +528,15 @@ export const ForecastPage: React.FC = () => {
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
           Detail Riwayat Proyeksi Harian
         </h3>
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs border-collapse">
+        <div className="overflow-x-auto -mx-1 px-1" role="region" aria-label="Proyeksi harian" tabIndex={0}>
+          <table className="w-full text-left text-xs border-collapse min-w-[36rem]">
+            <caption className="sr-only">Detail proyeksi saldo harian</caption>
             <thead>
               <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase bg-slate-50/50 dark:bg-slate-900/10">
-                <th className="p-3">Tanggal</th>
-                <th className="p-3">Event Keuangan</th>
-                <th className="p-3 text-right">Mutasi Nilai</th>
-                <th className="p-3 text-right">Saldo Proyeksi</th>
+                <th scope="col" className="p-3 sticky left-0 bg-slate-50/95 dark:bg-slate-900/95 z-10">Tanggal</th>
+                <th scope="col" className="p-3">Event Keuangan</th>
+                <th scope="col" className="p-3 text-right">Mutasi Nilai</th>
+                <th scope="col" className="p-3 text-right">Saldo Proyeksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

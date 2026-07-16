@@ -8,6 +8,7 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import { 
   Shield, 
   Coins, 
@@ -156,6 +157,7 @@ export const EmergencyFundPage: React.FC = () => {
         <div>
           <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
             🛡️ Dana Darurat & Investasi
+            <MetricHelp metric="ef_coverage" />
           </h1>
           <p className="text-xs text-text-secondary">
             Pantau ketahanan finansial keluarga dan alokasi pertumbuhan portofolio investasi Anda.

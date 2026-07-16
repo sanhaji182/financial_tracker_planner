@@ -136,6 +136,39 @@ body {
   outline-offset: 2px;
 }
 
+/* Prefer reduced motion for vestibular / a11y */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* Dense table sticky first column + keyboard scroll region */
+[role="region"][tabindex="0"]:focus-visible {
+  outline: 2px solid var(--color-primary-500);
+  outline-offset: 2px;
+}
+
+/* Improve muted text contrast toward WCAG AA on light bg */
+.text-slate-400 {
+  color: #64748b; /* slate-500-ish: better contrast than #94a3b8 */
+}
+.dark .text-slate-400 {
+  color: #94a3b8;
+}
+.text-slate-500 {
+  color: #475569;
+}
+.dark .text-slate-500 {
+  color: #94a3b8;
+}
+
+
 /* Mobile PWA transitions & safe area support */
 :root {
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);

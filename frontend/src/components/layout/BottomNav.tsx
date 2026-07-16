@@ -83,18 +83,21 @@ export const BottomNav: React.FC = () => {
   return (
     <>
       {/* Bottom Bar Container */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 pb-safe lg:hidden">
+      <nav
+        aria-label="Navigasi mobile"
+        className="fixed bottom-0 left-0 right-0 z-40 bg-white/90 dark:bg-slate-900/90 backdrop-blur-lg border-t border-slate-200 dark:border-slate-800 pb-safe lg:hidden"
+      >
         <div className="flex h-14 items-center justify-around">
           
           {/* Tab 1: Home/Dashboard */}
           <NavLink to={homePath} className={({ isActive }) => isActive ? activeStyle : inactiveStyle}>
-            <LayoutDashboard className="w-5.5 h-5.5" />
+            <LayoutDashboard className="w-5.5 h-5.5" aria-hidden="true" />
             <span className="text-[10px] mt-0.5 font-medium">Dashboard</span>
           </NavLink>
 
           {/* Tab 2: Transactions */}
           <NavLink to="/transactions" className={({ isActive }) => isActive ? activeStyle : inactiveStyle}>
-            <Receipt className="w-5.5 h-5.5" />
+            <Receipt className="w-5.5 h-5.5" aria-hidden="true" />
             <span className="text-[10px] mt-0.5 font-medium">Transaksi</span>
           </NavLink>
 
@@ -104,46 +107,58 @@ export const BottomNav: React.FC = () => {
               to="/transactions" 
               className="flex h-12 w-12 items-center justify-center rounded-full bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 border-4 border-white dark:border-slate-900 active:scale-95 transition-transform animate-bounce-subtle"
               title="Tambah Transaksi"
+              aria-label="Tambah transaksi"
             >
-              <Plus className="w-6 h-6 stroke-[3]" />
+              <Plus className="w-6 h-6 stroke-[3]" aria-hidden="true" />
             </NavLink>
           </div>
 
           {/* Tab 4: Bills */}
           <NavLink to="/bills" className={({ isActive }) => isActive ? activeStyle : inactiveStyle}>
-            <CalendarDays className="w-5.5 h-5.5" />
+            <CalendarDays className="w-5.5 h-5.5" aria-hidden="true" />
             <span className="text-[10px] mt-0.5 font-medium">Tagihan</span>
           </NavLink>
 
           {/* Tab 5: Lainnya Toggle */}
           <button 
+            type="button"
             onClick={() => setMenuOpen(true)}
             className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 dark:text-slate-400 active:text-slate-700"
+            aria-label="Buka menu lainnya"
+            aria-haspopup="dialog"
+            aria-expanded={menuOpen}
           >
-            <Menu className="w-5.5 h-5.5" />
+            <Menu className="w-5.5 h-5.5" aria-hidden="true" />
             <span className="text-[10px] mt-0.5 font-medium">Lainnya</span>
           </button>
 
         </div>
-      </div>
+      </nav>
 
       {/* 'Lainnya' Fullscreen Bottom Drawer / Sheet */}
       {menuOpen && (
-        <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/50 backdrop-blur-sm lg:hidden animate-fade-in">
+        <div
+          className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/50 backdrop-blur-sm lg:hidden animate-fade-in"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menu lainnya"
+        >
           {/* Overlay dismissal */}
-          <div className="flex-1" onClick={() => setMenuOpen(false)} />
+          <div className="flex-1" onClick={() => setMenuOpen(false)} aria-hidden="true" />
           
           {/* Menu Drawer body */}
           <div className="bg-bg-base border-t border-slate-200 dark:border-slate-800 rounded-t-2xl max-h-[80vh] flex flex-col overflow-hidden animate-slide-up pb-safe">
             
             {/* Header */}
             <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 dark:border-slate-800 shrink-0">
-              <span className="font-bold text-slate-900 dark:text-white">Menu Lainnya</span>
+              <span className="font-bold text-slate-900 dark:text-white" id="lainnya-title">Menu Lainnya</span>
               <button 
+                type="button"
                 onClick={() => setMenuOpen(false)}
                 className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-300"
+                aria-label="Tutup menu"
               >
-                <X className="w-5 h-5" />
+                <X className="w-5 h-5" aria-hidden="true" />
               </button>
             </div>
 
@@ -183,13 +198,15 @@ export const BottomNav: React.FC = () => {
                   </div>
                 </div>
                 <button
+                  type="button"
                   onClick={() => {
                     setMenuOpen(false);
                     clearAuth();
                   }}
                   className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold text-rose-600 bg-rose-50 hover:bg-rose-100 dark:bg-rose-950/15 dark:text-rose-400 transition-colors"
+                  aria-label="Keluar dari akun"
                 >
-                  <LogOut className="w-4 h-4" />
+                  <LogOut className="w-4 h-4" aria-hidden="true" />
                   <span>Keluar</span>
                 </button>
               </div>

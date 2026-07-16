@@ -59,19 +59,23 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-base border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between">
+    <header
+      role="banner"
+      className="fixed top-0 left-0 right-0 z-50 h-14 bg-bg-base border-b border-slate-200 dark:border-slate-800 px-4 flex items-center justify-between"
+    >
       <div className="flex items-center gap-3">
         {/* Toggle mobile sidebar */}
         <Button
           variant="ghost"
           onClick={onMenuClick}
-          className="hidden !p-2 !h-auto"
+          className="lg:hidden !p-2 !h-auto"
+          aria-label="Buka menu navigasi"
         >
-          <Menu className="w-5 h-5 text-text-secondary" />
+          <Menu className="w-5 h-5 text-text-secondary" aria-hidden="true" />
         </Button>
 
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white">
+        <div className="flex items-center gap-2" aria-label="Financial OS">
+          <div className="w-8 h-8 rounded-lg bg-indigo-600 flex items-center justify-center text-white" aria-hidden="true">
             <Wallet className="w-4 h-4" />
           </div>
           <span className="font-bold text-base tracking-tight text-text-primary dark:text-white">
@@ -87,11 +91,12 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
           onClick={toggleTheme}
           className="!p-2.5 !h-auto rounded-full"
           title={theme === 'light' ? 'Ganti ke Dark Mode' : 'Ganti ke Light Mode'}
+          aria-label={theme === 'light' ? 'Ganti ke Dark Mode' : 'Ganti ke Light Mode'}
         >
           {theme === 'light' ? (
-            <Moon className="w-4 h-4 text-text-secondary" />
+            <Moon className="w-4 h-4 text-text-secondary" aria-hidden="true" />
           ) : (
-            <Sun className="w-4 h-4 text-amber-400" />
+            <Sun className="w-4 h-4 text-amber-400" aria-hidden="true" />
           )}
         </Button>
 
@@ -102,10 +107,13 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
             className="!p-2.5 !h-auto rounded-full relative"
             onClick={handleBellClick}
             id="bell-btn"
+            aria-label={unreadCount > 0 ? `Notifikasi, ${unreadCount} belum dibaca` : 'Notifikasi'}
+            aria-haspopup="dialog"
+            aria-expanded={isOpen}
           >
-            <Bell className="w-4 h-4 text-text-secondary" />
+            <Bell className="w-4 h-4 text-text-secondary" aria-hidden="true" />
             {unreadCount > 0 && (
-              <span className="absolute top-1 right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 shadow-lg">
+              <span className="absolute top-1 right-1 min-w-[18px] h-[18px] flex items-center justify-center rounded-full bg-red-500 text-white text-[10px] font-bold px-1 shadow-lg" aria-hidden="true">
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
@@ -113,11 +121,15 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
 
           {/* Dropdown */}
           {isOpen && (
-            <div className="absolute right-0 mt-2 w-80 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden z-50 animate-fade-in">
+            <div
+              role="dialog"
+              aria-label="Notifikasi"
+              className="absolute right-0 mt-2 w-80 rounded-2xl bg-slate-900 border border-white/10 shadow-2xl overflow-hidden z-50 animate-fade-in"
+            >
               {/* Dropdown header */}
               <div className="flex items-center justify-between px-4 py-3 border-b border-white/5">
                 <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-violet-400" />
+                  <Bell className="h-4 w-4 text-violet-400" aria-hidden="true" />
                   <span className="text-sm font-semibold text-white">Notifikasi</span>
                   {unreadCount > 0 && (
                     <span className="text-xs bg-red-500/20 text-red-300 border border-red-500/30 rounded-full px-2 py-0.5 font-medium">
@@ -125,8 +137,8 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
                     </span>
                   )}
                 </div>
-                <button onClick={() => setIsOpen(false)}>
-                  <X className="h-4 w-4 text-slate-500 hover:text-white transition-colors" />
+                <button type="button" onClick={() => setIsOpen(false)} aria-label="Tutup notifikasi">
+                  <X className="h-4 w-4 text-slate-500 hover:text-white transition-colors" aria-hidden="true" />
                 </button>
               </div>
 
@@ -141,8 +153,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
                   previewAlerts.map(alert => (
                     <div
                       key={alert.id}
+                      role="button"
+                      tabIndex={0}
                       className={`px-4 py-3 hover:bg-white/5 transition-colors cursor-pointer flex items-start gap-3 ${!alert.is_read ? 'bg-white/3' : ''}`}
                       onClick={e => handleMarkRead(alert.id, e)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleMarkRead(alert.id, e as unknown as React.MouseEvent);
+                        }
+                      }}
                     >
                       {severityIcon[alert.severity]}
                       <div className="flex-1 min-w-0">

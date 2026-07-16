@@ -120,6 +120,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       ) : null}
       
       <aside
+        id="app-sidebar"
+        aria-label="Navigasi utama"
         className={`
           fixed top-14 bottom-0 left-0 z-40 w-[260px] bg-bg-base border-r border-slate-200 dark:border-slate-800
           transition-transform lg:translate-x-0 flex flex-col justify-between
@@ -127,7 +129,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         `}
       >
         <div className="flex-1 py-4 px-3 overflow-y-auto">
-          <nav className="space-y-1">
+          <nav className="space-y-1" aria-label="Menu aplikasi">
             {menuItems.map((item) => (
               <NavLink
                 key={item.name}
@@ -135,7 +137,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 className={({ isActive }) => isActive ? activeStyle : inactiveStyle}
                 onClick={onClose}
               >
-                <item.icon className="w-5 h-5" />
+                <item.icon className="w-5 h-5" aria-hidden="true" />
                 <span>{item.name}</span>
               </NavLink>
             ))}
@@ -146,7 +148,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
         <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-800/20">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3 overflow-hidden">
-              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-semibold text-sm shrink-0">
+              <div className="w-8 h-8 rounded-full bg-indigo-500 flex items-center justify-center text-white font-semibold text-sm shrink-0" aria-hidden="true">
                 {user?.name ? user.name[0].toUpperCase() : 'U'}
               </div>
               <div className="overflow-hidden">
@@ -160,11 +162,13 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             </div>
             
             <button
+              type="button"
               onClick={handleLogout}
               className="p-1.5 rounded-lg text-slate-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-950/20 transition-colors shrink-0"
               title="Keluar"
+              aria-label="Keluar dari akun"
             >
-              <LogOut className="w-4.5 h-4.5" />
+              <LogOut className="w-4.5 h-4.5" aria-hidden="true" />
             </button>
           </div>
         </div>

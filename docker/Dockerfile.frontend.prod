@@ -5,7 +5,11 @@ COPY frontend/package.json frontend/package-lock.json* ./
 RUN npm ci || npm install
 COPY frontend/ ./
 ARG VITE_API_URL=/api/v1
-ENV VITE_API_URL=$VITE_API_URL
+ARG VITE_BUILD_SHA=dev
+ARG VITE_APP_VERSION=0.1.0
+ENV VITE_API_URL=$VITE_API_URL \
+    VITE_BUILD_SHA=$VITE_BUILD_SHA \
+    VITE_APP_VERSION=$VITE_APP_VERSION
 RUN npm run build
 
 FROM nginx:1.27-alpine

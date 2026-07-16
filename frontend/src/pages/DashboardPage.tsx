@@ -7,6 +7,7 @@ import { useAuthStore } from '../stores/authStore';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import { 
   TrendingUp, 
   Heart, 
@@ -273,7 +274,10 @@ export const DashboardPage: React.FC = () => {
 
         {/* DTI Ratio — gated */}
         <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-amber-500 shadow-sm">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Debt-to-Income (DTI)</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+            Debt-to-Income (DTI)
+            <MetricHelp metric="dti" />
+          </span>
           <div className="mt-2.5">
             {gateFor(dq, 'dti')?.visible === false ? (
               <>
@@ -302,7 +306,10 @@ export const DashboardPage: React.FC = () => {
 
         {/* Health Score — gated */}
         <Card className="p-4 bg-gradient-to-br from-slate-50 to-white dark:from-slate-900 dark:to-slate-950 flex flex-col justify-between border-l-4 border-l-emerald-500 shadow-sm col-span-2 sm:col-span-1">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Financial Health Score</span>
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+            Financial Health Score
+            <MetricHelp metric="health_score" />
+          </span>
           <div className="mt-2.5 flex items-center justify-between">
             {gateFor(dq, 'health_score')?.visible === false ? (
               <div>
@@ -432,8 +439,9 @@ export const DashboardPage: React.FC = () => {
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Forecast */}
         <Card className="p-6 space-y-4">
-          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
+          <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1">
             📊 Proyeksi Arus Kas Akhir Bulan
+            <MetricHelp metric="forecast" />
           </h3>
           <div className="grid grid-cols-2 gap-4">
             <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl space-y-1">
@@ -447,7 +455,10 @@ export const DashboardPage: React.FC = () => {
               )}
             </div>
             <div className="bg-indigo-50/50 dark:bg-indigo-950/10 p-4 rounded-xl border border-indigo-100 dark:border-indigo-950 space-y-1">
-              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider block">Safe-to-Spend (Konservatif)</span>
+              <span className="text-[10px] font-bold text-indigo-500 uppercase tracking-wider flex items-center gap-1">
+                Safe-to-Spend (Konservatif)
+                <MetricHelp metric="safe_to_spend" />
+              </span>
               {gateFor(dq, 'safe_to_spend')?.visible === false ? (
                 <>
                   <span className="text-sm font-black text-slate-400 block">Disembunyikan</span>

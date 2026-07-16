@@ -372,17 +372,18 @@ export const BillsPage: React.FC = () => {
                 onAction={isOwner ? handleOpenCreateModal : undefined}
               />
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs border-collapse">
+              <div className="overflow-x-auto -mx-1 px-1" role="region" aria-label="Daftar tagihan" tabIndex={0}>
+                <table className="w-full text-left text-xs border-collapse min-w-[40rem]">
+                  <caption className="sr-only">Daftar tagihan berulang</caption>
                   <thead>
                     <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider bg-slate-50/50 dark:bg-slate-900/10">
-                      <th className="p-4">Nama Tagihan</th>
-                      <th className="p-4 text-right">Jumlah</th>
-                      <th className="p-4">Jatuh Tempo</th>
-                      <th className="p-4">Frekuensi</th>
-                      <th className="p-4">Akun Sumber</th>
-                      <th className="p-4">Status</th>
-                      <th className="p-4 text-right">Aksi</th>
+                      <th scope="col" className="p-4 sticky left-0 bg-slate-50/95 dark:bg-slate-900/95 z-10">Nama Tagihan</th>
+                      <th scope="col" className="p-4 text-right">Jumlah</th>
+                      <th scope="col" className="p-4">Jatuh Tempo</th>
+                      <th scope="col" className="p-4">Frekuensi</th>
+                      <th scope="col" className="p-4">Akun Sumber</th>
+                      <th scope="col" className="p-4">Status</th>
+                      <th scope="col" className="p-4 text-right">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

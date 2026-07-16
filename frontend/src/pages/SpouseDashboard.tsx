@@ -262,15 +262,16 @@ export const SpouseDashboard: React.FC = () => {
               <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Daftar Portofolio Aset Bersama</h3>
               <Badge variant="success">Read-Only</Badge>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="overflow-x-auto -mx-1 px-1" role="region" aria-label="Aset bersama" tabIndex={0}>
+              <table className="w-full text-left text-xs border-collapse min-w-[36rem]">
+                <caption className="sr-only">Daftar portofolio aset bersama</caption>
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="pb-3 pr-2">Nama Aset</th>
-                    <th className="pb-3 pr-2">Kategori</th>
-                    <th className="pb-3 pr-2">Linked Account</th>
-                    <th className="pb-3 pr-2 text-right">Nilai Saat Ini</th>
-                    <th className="pb-3 text-right">Notes</th>
+                    <th scope="col" className="pb-3 pr-2 sticky left-0 bg-white dark:bg-slate-950 z-10">Nama Aset</th>
+                    <th scope="col" className="pb-3 pr-2">Kategori</th>
+                    <th scope="col" className="pb-3 pr-2">Linked Account</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Nilai Saat Ini</th>
+                    <th scope="col" className="pb-3 text-right">Notes</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -311,16 +312,17 @@ export const SpouseDashboard: React.FC = () => {
               <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Daftar Utang & Cicilan Keluarga</h3>
               <Badge variant="success">Read-Only</Badge>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="overflow-x-auto -mx-1 px-1" role="region" aria-label="Utang bersama" tabIndex={0}>
+              <table className="w-full text-left text-xs border-collapse min-w-[40rem]">
+                <caption className="sr-only">Daftar utang dan cicilan keluarga</caption>
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="pb-3 pr-2">Nama Kontrak</th>
-                    <th className="pb-3 pr-2">Jenis</th>
-                    <th className="pb-3 pr-2">Kreditur</th>
-                    <th className="pb-3 pr-2 text-right">Suku Bunga</th>
-                    <th className="pb-3 pr-2 text-right">Cicilan / Bln</th>
-                    <th className="pb-3 text-right">Sisa Outstanding</th>
+                    <th scope="col" className="pb-3 pr-2 sticky left-0 bg-white dark:bg-slate-950 z-10">Nama Kontrak</th>
+                    <th scope="col" className="pb-3 pr-2">Jenis</th>
+                    <th scope="col" className="pb-3 pr-2">Kreditur</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Suku Bunga</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Cicilan / Bln</th>
+                    <th scope="col" className="pb-3 text-right">Sisa Outstanding</th>
                   </tr>
                 </thead>
                 <tbody>

@@ -7,6 +7,7 @@ import {
   ArrowLeft, 
   Zap
 } from 'lucide-react';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
 
 export const DebtAvalanchePage: React.FC = () => {
@@ -34,17 +35,20 @@ export const DebtAvalanchePage: React.FC = () => {
     <div className="space-y-6">
       {/* Back to list */}
       <button 
+        type="button"
         onClick={() => navigate('/debts')}
         className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+        aria-label="Kembali ke daftar utang"
       >
-        <ArrowLeft className="h-4 w-4" />
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Kembali ke Daftar Utang
       </button>
 
       <div>
         <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-          <Zap className="h-7 w-7 text-amber-500 fill-amber-500" />
+          <Zap className="h-7 w-7 text-amber-500 fill-amber-500" aria-hidden="true" />
           Simulator Debt Avalanche
+          <MetricHelp metric="debt_avalanche" />
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
           Estimasi pelunasan dengan metode avalanche (bunga tertinggi dulu). Model disederhanakan APR bulanan — bukan quote kontrak bank.
@@ -67,6 +71,7 @@ export const DebtAvalanchePage: React.FC = () => {
                 type="number"
                 value={extraAmount}
                 onChange={(e) => setExtraAmount(Math.max(0, parseInt(e.target.value) || 0))}
+                aria-label="Dana tambahan per bulan (Rupiah)"
                 className="w-32 h-9 rounded-lg border border-slate-200 bg-bg-base px-2 py-1 text-xs text-text-primary focus:outline-none dark:border-slate-800 dark:text-white font-mono"
               />
             </div>
@@ -169,17 +174,18 @@ export const DebtAvalanchePage: React.FC = () => {
           {/* Comparison Table */}
           <Card className="p-6 space-y-4">
             <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Rincian Perbandingan Tiap Kontrak Utang</h3>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="overflow-x-auto -mx-1 px-1" role="region" aria-label="Perbandingan utang avalanche" tabIndex={0}>
+              <table className="w-full text-left text-xs border-collapse min-w-[44rem]">
+                <caption className="sr-only">Perbandingan pelunasan utang dengan dan tanpa extra payment</caption>
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="pb-3 pr-2">Nama Utang</th>
-                    <th className="pb-3 pr-2 text-right">Lunas Tanpa Extra</th>
-                    <th className="pb-3 pr-2 text-right">Lunas Dengan Extra</th>
-                    <th className="pb-3 pr-2 text-right">Penyelamatan Waktu</th>
-                    <th className="pb-3 pr-2 text-right">Bunga Tanpa Extra</th>
-                    <th className="pb-3 pr-2 text-right">Bunga Dengan Extra</th>
-                    <th className="pb-3 text-right">Hemat Bunga</th>
+                    <th scope="col" className="pb-3 pr-2 sticky left-0 bg-white dark:bg-slate-950 z-10">Nama Utang</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Lunas Tanpa Extra</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Lunas Dengan Extra</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Penyelamatan Waktu</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Bunga Tanpa Extra</th>
+                    <th scope="col" className="pb-3 pr-2 text-right">Bunga Dengan Extra</th>
+                    <th scope="col" className="pb-3 text-right">Hemat Bunga</th>
                   </tr>
                 </thead>
                 <tbody>
