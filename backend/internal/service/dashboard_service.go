@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -190,31 +189,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		return nil, fmt.Errorf("failed to fetch emergency fund: %w", err)
 	}
 
-	// 8. Calculations: DTI, EF Coverage, Health Score components
-	var dtiRatio float64
-	if incomeThisMonth > 0 {
-		dtiRatio = (totalMinDebtPayments / incomeThisMonth) * 100
-	}
-
-	var dtiStatus string
-	if dtiRatio < 20 {
-		dtiStatus = "healthy"
-	} else if dtiRatio <= 50 {
-		dtiStatus = "warning"
-	} else {
-		dtiStatus = "danger"
-	}
-
-	// DTI Score (Weight 30%)
-	dtiScore := 0.0
-	if dtiRatio < 20 {
-		dtiScore = 100
-	} else if dtiRatio <= 60 {
-		dtiScore = 100 - (dtiRatio-20)*(100.0/40.0)
-	}
-
-	// EF Score (Weight 30%) — use adaptive target from kernel ef-v1, not hard-coded 6.
-	// Income stability lookback for adaptive months (same window as EF service).
+	// 8. EF (ef-v1) + governed health score (health-v1). No false-healthy DTI without income.
 	var minIncome, maxIncome float64
 	_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
 		SELECT SUM(t.amount * COALESCE(curr.exchange_rate_to_idr,t.exchange_rate,1)) monthly
@@ -249,27 +224,8 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	if efTargetMonths <= 0 {
 		efTargetMonths = float64(kernel.EFDefaultTargetMonths)
 	}
-	efScore := math.Min(100, (efCoverageMonths/efTargetMonths)*100)
 
-	// Cash Score (Weight 20%)
-	cashScore := 0.0
-	if monthlyLivingCost > 0 {
-		cashScore = math.Min(100, (cashAvailable/monthlyLivingCost)*50.0)
-	}
-
-	// Savings Rate Score (Weight 20%)
-	savingsThisMonth := incomeThisMonth - expenseThisMonth
-	if savingsThisMonth < 0 {
-		savingsThisMonth = 0
-	}
-	savingsRateScore := 0.0
-	if incomeThisMonth > 0 {
-		savingsRateScore = math.Min(100, (savingsThisMonth/incomeThisMonth)*200)
-	}
-
-	// Reconciliation confidence (last 90 days).
-	// Unreconciled books lower the final health grade so users can't look "Excellent"
-	// while half their ledger is unconfirmed against bank statements.
+	// Reconciliation rate (last 90 days) feeds health confidence.
 	var totalTx90, reconciledTx90 float64
 	_ = s.dbPool.QueryRow(ctx, `
 		SELECT
@@ -286,32 +242,26 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	if totalTx90 > 0 {
 		reconciliationRate = reconciledTx90 / totalTx90
 	}
-	// Confidence multiplies raw score. Floor at 0.70 so sparse books don't nuke the grade.
-	// Fully reconciled → 1.0; 0% reconciled → 0.70.
-	reconciliationConfidence := 0.70 + 0.30*reconciliationRate
 
-	rawHealth := (0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)
-	healthScoreVal := int(math.Round(rawHealth * reconciliationConfidence))
-	if healthScoreVal > 100 {
-		healthScoreVal = 100
-	}
-	var healthRating, healthColor string
-	if healthScoreVal >= 80 {
-		healthRating = "Excellent"
-		healthColor = "Green"
-	} else if healthScoreVal >= 60 {
-		healthRating = "Good"
-		healthColor = "Green"
-	} else if healthScoreVal >= 40 {
-		healthRating = "Fair"
-		healthColor = "Yellow"
-	} else if healthScoreVal >= 20 {
-		healthRating = "Poor"
-		healthColor = "Orange"
-	} else {
-		healthRating = "Critical"
-		healthColor = "Red"
-	}
+	health := kernel.ComputeHealthScore(kernel.HealthInputs{
+		AsOf:                 now,
+		IncomeThisMonth:      incomeThisMonth,
+		ExpenseThisMonth:     expenseThisMonth,
+		TotalMinDebtPayments: totalMinDebtPayments,
+		CashAvailable:        cashAvailable,
+		MonthlyLivingCost:    monthlyLivingCost,
+		EFCoverageMonths:     efCoverageMonths,
+		EFTargetMonths:       efTargetMonths,
+		ReconciliationRate:   reconciliationRate,
+		MinMonthlyIncome:     minIncome,
+		MaxMonthlyIncome:     maxIncome,
+	})
+	dtiRatio := health.DTIRatio
+	dtiStatus := health.DTIStatus
+	healthScoreVal := health.Score
+	healthRating := health.Rating
+	healthColor := health.StatusColor
+	reconciliationConfidence := health.ReconciliationConfidence
 
 	// 9. Forecast & Safe to Spend — shared calculation kernel.
 	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
@@ -509,8 +459,12 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	}
 
 	// 14. Insight Summary
+	savingsThisMonth := incomeThisMonth - expenseThisMonth
+	if savingsThisMonth < 0 {
+		savingsThisMonth = 0
+	}
 	insightSummary := "Arus kas bersih keluarga Anda bulan ini positif. "
-	if savingsThisMonth > 0 {
+	if savingsThisMonth > 0 && incomeThisMonth > 0 {
 		insightSummary += fmt.Sprintf("Anda telah menyisihkan surplus sebesar Rp %s (%d%% dari income) bulan ini.", formatNumber(savingsThisMonth), int(savingsThisMonth/incomeThisMonth*100))
 	} else {
 		insightSummary += "Pengeluaran Anda bulan ini sama atau lebih besar dari pendapatan. Batasi pengeluaran non-primer."
@@ -561,13 +515,33 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		},
 		DTIRatio:  dtiRatio,
 		DTIStatus: dtiStatus,
-		HealthScore: dto.HealthScoreDto{
-			Score:                    healthScoreVal,
-			Rating:                   healthRating,
-			StatusColor:              healthColor,
-			ReconciliationRate:       reconciliationRate,
-			ReconciliationConfidence: reconciliationConfidence,
-		},
+		HealthScore: func() dto.HealthScoreDto {
+			comps := make([]dto.HealthComponentDto, 0, len(health.Components))
+			for _, c := range health.Components {
+				comps = append(comps, dto.HealthComponentDto{
+					Key: c.Key, Label: c.Label, Weight: c.Weight,
+					RawScore: c.RawScore, Weighted: c.Weighted, Included: c.Included,
+					Explain: c.Explain, ValueLabel: c.ValueLabel,
+				})
+			}
+			return dto.HealthScoreDto{
+				Score:                    healthScoreVal,
+				Rating:                   healthRating,
+				StatusColor:              healthColor,
+				ReconciliationRate:       reconciliationRate,
+				ReconciliationConfidence: reconciliationConfidence,
+				FormulaVersion:           health.FormulaVersion,
+				RawScore:                 health.RawScore,
+				DataConfidence:           health.DataConfidence,
+				IsSufficient:             health.IsSufficient,
+				MissingFields:            health.MissingFields,
+				Components:               comps,
+				Methodology:              health.Methodology,
+				Disclaimer:               health.Disclaimer,
+				IsCreditScore:            false,
+				Assumptions:              health.Assumptions,
+			}
+		}(),
 		UpcomingBills: dbBills,
 		ForecastEndMonth: dto.MoneyValue{
 			Value:          forecastEndMonth,

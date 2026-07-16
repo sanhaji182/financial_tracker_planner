@@ -236,30 +236,22 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		targetMonths = kernel.EFDefaultTargetMonths
 	}
 
-	// Health score components
-	dtiScore := 0.0
-	if dtiRatio < 20 {
-		dtiScore = 100
-	} else if dtiRatio <= 60 {
-		dtiScore = 100 - (dtiRatio-20)*(100.0/40.0)
-	}
-
-	efScore := math.Min(100, (efCoverageMonths/float64(targetMonths))*100)
-	cashScore := 0.0
-	if monthlyLivingCost > 0 {
-		cashScore = math.Min(100, (totalCash/monthlyLivingCost)*50.0)
-	}
-
-	savingsThisMonth := totalIncome - totalExpense
-	if savingsThisMonth < 0 {
-		savingsThisMonth = 0
-	}
-	savingsRateScore := 0.0
-	if totalIncome > 0 {
-		savingsRateScore = math.Min(100, (savingsThisMonth/totalIncome)*200)
-	}
-
-	healthScoreVal := int(math.Round((0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)))
+	// Health score via shared health-v1 kernel (no false-healthy without income).
+	health := kernel.ComputeHealthScore(kernel.HealthInputs{
+		AsOf:                 now,
+		IncomeThisMonth:      totalIncome,
+		ExpenseThisMonth:     totalExpense,
+		TotalMinDebtPayments: totalMinDebtPayments,
+		CashAvailable:        totalCash,
+		MonthlyLivingCost:    monthlyLivingCost,
+		EFCoverageMonths:     efCoverageMonths,
+		EFTargetMonths:       float64(targetMonths),
+		ReconciliationRate:   1.0, // closing snapshot is post-reconciliation by process
+		MinMonthlyIncome:     minIncome,
+		MaxMonthlyIncome:     maxIncome,
+	})
+	dtiRatio = health.DTIRatio
+	healthScoreVal := health.Score
 
 	// 6. Budgets Snapshot
 	budgetCategories := make([]dto.ClosingCategoryBudget, 0)

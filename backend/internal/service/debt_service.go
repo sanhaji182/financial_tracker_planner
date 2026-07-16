@@ -329,19 +329,39 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 			out = append(out, dto.AvalanchePaymentScheduleResponse{
 				DebtID:                 sc.DebtID,
 				DebtName:               sc.DebtName,
+				DebtType:               sc.DebtType,
 				PayoffMonthIndex:       sc.PayoffMonthIndex,
 				PayoffDate:             sc.PayoffDate,
 				TotalInterestPaid:      sc.TotalInterestPaid,
 				FormattedTotalInterest: dto.FormatRupiah(sc.TotalInterestPaid),
+				TotalFeesPaid:          sc.TotalFeesPaid,
+				FormattedTotalFees:     dto.FormatRupiah(sc.TotalFeesPaid),
+				EffectiveAPR:           sc.EffectiveAPR,
+				InterestModel:          sc.InterestModel,
 			})
 		}
 		return out
+	}
+
+	sens := make([]dto.DebtSensitivityPoint, 0, len(sim.Sensitivity))
+	for _, sp := range sim.Sensitivity {
+		sens = append(sens, dto.DebtSensitivityPoint{
+			Label:                  sp.Label,
+			ExtraMonthly:           sp.ExtraMonthly,
+			FormattedExtraMonthly:  dto.FormatRupiah(sp.ExtraMonthly),
+			MonthsToPayoff:         sp.MonthsToPayoff,
+			TotalInterestPaid:      sp.TotalInterestPaid,
+			FormattedTotalInterest: dto.FormatRupiah(sp.TotalInterestPaid),
+			Stalled:                sp.Stalled,
+		})
 	}
 
 	return &dto.AvalancheSimulationResponse{
 		MonthsToPayoff:                sim.WithExtra.MonthsToPayoff,
 		TotalInterestPaid:             sim.WithExtra.TotalInterestPaid,
 		FormattedTotalInterest:        dto.FormatRupiah(sim.WithExtra.TotalInterestPaid),
+		TotalFeesPaid:                 sim.WithExtra.TotalFeesPaid,
+		FormattedTotalFees:            dto.FormatRupiah(sim.WithExtra.TotalFeesPaid),
 		MonthsToPayoffWithoutExtra:    sim.WithoutExtra.MonthsToPayoff,
 		TotalInterestPaidWithoutExtra: sim.WithoutExtra.TotalInterestPaid,
 		FormattedInterestWithoutExtra: dto.FormatRupiah(sim.WithoutExtra.TotalInterestPaid),
@@ -355,6 +375,9 @@ func (s *debtService) SimulateAvalanche(ctx context.Context, userID string, extr
 		Assumptions:                   sim.Assumptions,
 		NegativeAmortization:          sim.NegativeAmortization,
 		IsEstimate:                    true,
+		BlendedNominalAPR:             sim.BlendedNominalAPR,
+		InterestModels:                sim.InterestModels,
+		Sensitivity:                   sens,
 	}, nil
 }
 

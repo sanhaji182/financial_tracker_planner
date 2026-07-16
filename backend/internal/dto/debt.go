@@ -164,16 +164,33 @@ type DebtSummaryResponse struct {
 type AvalanchePaymentScheduleResponse struct {
 	DebtID                 string    `json:"debt_id"`
 	DebtName               string    `json:"debt_name"`
+	DebtType               string    `json:"debt_type,omitempty"`
 	PayoffMonthIndex       int       `json:"payoff_month_index"`
 	PayoffDate             time.Time `json:"payoff_date"`
 	TotalInterestPaid      float64   `json:"total_interest_paid"`
 	FormattedTotalInterest string    `json:"formatted_total_interest"`
+	TotalFeesPaid          float64   `json:"total_fees_paid,omitempty"`
+	FormattedTotalFees     string    `json:"formatted_total_fees,omitempty"`
+	EffectiveAPR           float64   `json:"effective_apr,omitempty"`
+	InterestModel          string    `json:"interest_model,omitempty"`
+}
+
+type DebtSensitivityPoint struct {
+	Label                  string  `json:"label"`
+	ExtraMonthly           float64 `json:"extra_monthly"`
+	FormattedExtraMonthly  string  `json:"formatted_extra_monthly"`
+	MonthsToPayoff         int     `json:"months_to_payoff"`
+	TotalInterestPaid      float64 `json:"total_interest_paid"`
+	FormattedTotalInterest string  `json:"formatted_total_interest"`
+	Stalled                bool    `json:"stalled"`
 }
 
 type AvalancheSimulationResponse struct {
 	MonthsToPayoff                int                                `json:"months_to_payoff"`
 	TotalInterestPaid             float64                            `json:"total_interest_paid"`
 	FormattedTotalInterest        string                             `json:"formatted_total_interest"`
+	TotalFeesPaid                 float64                            `json:"total_fees_paid,omitempty"`
+	FormattedTotalFees            string                             `json:"formatted_total_fees,omitempty"`
 	MonthsToPayoffWithoutExtra    int                                `json:"months_to_payoff_without_extra"`
 	TotalInterestPaidWithoutExtra float64                            `json:"total_interest_paid_without_extra"`
 	FormattedInterestWithoutExtra string                             `json:"formatted_interest_without_extra"`
@@ -182,12 +199,15 @@ type AvalancheSimulationResponse struct {
 	SavingsMonths                 int                                `json:"savings_months"`
 	SchedulesWithExtra            []AvalanchePaymentScheduleResponse `json:"schedules_with_extra"`
 	SchedulesWithoutExtra         []AvalanchePaymentScheduleResponse `json:"schedules_without_extra"`
-	// Provenance + model limitations (debt-v1).
-	AsOf                 string   `json:"as_of,omitempty"`
-	FormulaVersion       string   `json:"formula_version,omitempty"`
-	Assumptions          []string `json:"assumptions,omitempty"`
-	NegativeAmortization bool     `json:"negative_amortization"`
-	IsEstimate           bool     `json:"is_estimate"`
+	// Provenance + model limitations (debt-v2).
+	AsOf                 string                 `json:"as_of,omitempty"`
+	FormulaVersion       string                 `json:"formula_version,omitempty"`
+	Assumptions          []string               `json:"assumptions,omitempty"`
+	NegativeAmortization bool                   `json:"negative_amortization"`
+	IsEstimate           bool                   `json:"is_estimate"`
+	BlendedNominalAPR    float64                `json:"blended_nominal_apr,omitempty"`
+	InterestModels       []string               `json:"interest_models,omitempty"`
+	Sensitivity          []DebtSensitivityPoint `json:"sensitivity,omitempty"`
 }
 
 func ToDebtPaymentResponse(p *model.DebtPayment) DebtPaymentResponse {

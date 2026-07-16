@@ -26,12 +26,34 @@ type DebtSummaryDto struct {
 
 type HealthScoreDto struct {
 	Score       int    `json:"score"`
-	Rating      string `json:"rating"`       // Excellent, Good, Fair, Poor, Critical
-	StatusColor string `json:"status_color"` // Green, Yellow, Orange, Red
+	Rating      string `json:"rating"`       // Excellent, Good, Fair, Poor, Critical, Insufficient, OptOut
+	StatusColor string `json:"status_color"` // Green, Yellow, Orange, Red, Gray
 	// Reconciliation confidence: % of confirmed txs in last 90d that are reconciled.
 	// Factor (0-1) multiplies raw score so unreconciled books cap the health grade.
 	ReconciliationRate       float64 `json:"reconciliation_rate"`
 	ReconciliationConfidence float64 `json:"reconciliation_confidence"` // 0.7–1.0 multiplier applied
+	// Governance (health-v1)
+	FormulaVersion string               `json:"formula_version,omitempty"`
+	RawScore       float64              `json:"raw_score,omitempty"`
+	DataConfidence string               `json:"data_confidence,omitempty"` // high|medium|low
+	IsSufficient   bool                 `json:"is_sufficient"`
+	MissingFields  []string             `json:"missing_fields,omitempty"`
+	Components     []HealthComponentDto `json:"components,omitempty"`
+	Methodology    []string             `json:"methodology,omitempty"`
+	Disclaimer     string               `json:"disclaimer,omitempty"`
+	IsCreditScore  bool                 `json:"is_credit_score"` // always false
+	Assumptions    []string             `json:"assumptions,omitempty"`
+}
+
+type HealthComponentDto struct {
+	Key        string  `json:"key"`
+	Label      string  `json:"label"`
+	Weight     float64 `json:"weight"`
+	RawScore   float64 `json:"raw_score"`
+	Weighted   float64 `json:"weighted"`
+	Included   bool    `json:"included"`
+	Explain    string  `json:"explain"`
+	ValueLabel string  `json:"value_label,omitempty"`
 }
 
 type SafeToSpendScenarios struct {

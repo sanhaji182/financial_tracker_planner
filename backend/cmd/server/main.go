@@ -141,6 +141,8 @@ func main() {
 	ruleHandler := handler.NewAutomationRuleHandler(ruleService)
 	protectionHandler := handler.NewProtectionHandler(protectionService)
 	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService)
+	governanceHandler := handler.NewGovernanceHandler()
+	jobRunner := service.NewJobRunner(rdb, "")
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -260,6 +262,7 @@ func main() {
 		ruleHandler.RegisterRoutes(v1)
 		protectionHandler.RegisterRoutes(v1)
 		aiSettingsHandler.RegisterRoutes(v1)
+		governanceHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
@@ -275,7 +278,10 @@ func main() {
 		defer ticker.Stop()
 		for {
 			log.Info().Msg("Running daily background auto status update for bills...")
-			if err := billService.AutoUpdateStatus(context.Background()); err != nil {
+			idem := time.Now().UTC().Format("2006-01-02")
+			if _, err := jobRunner.Run(context.Background(), "bills_auto_overdue", idem, func(ctx context.Context) error {
+				return billService.AutoUpdateStatus(ctx)
+			}); err != nil {
 				log.Error().Err(err).Msg("Failed to run auto status update for bills")
 			}
 
@@ -290,7 +296,10 @@ func main() {
 	go func() {
 		// Run immediately on startup
 		log.Info().Msg("Running initial alert generation...")
-		if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
+		idem := time.Now().UTC().Format("2006-01-02-15")
+		if _, err := jobRunner.Run(context.Background(), "alert_generate", idem, func(ctx context.Context) error {
+			return alertGeneratorService.GenerateAlertsForAllUsers(ctx)
+		}); err != nil {
 			log.Error().Err(err).Msg("Initial alert generation failed")
 		}
 
@@ -300,7 +309,10 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Info().Msg("Running 6h alert generation cron...")
-				if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
+				idem := time.Now().UTC().Format("2006-01-02-15")
+				if _, err := jobRunner.Run(context.Background(), "alert_generate", idem, func(ctx context.Context) error {
+					return alertGeneratorService.GenerateAlertsForAllUsers(ctx)
+				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run alert generation")
 				}
 			}
@@ -311,10 +323,18 @@ func main() {
 	go func() {
 		// Run immediately on startup
 		log.Info().Msg("Running initial task overdue check...")
-		if affected, err := taskService.RunAutoOverdue(context.Background()); err != nil {
+		idem := time.Now().UTC().Format("2006-01-02-15")
+		if _, err := jobRunner.Run(context.Background(), "tasks_auto_overdue", idem, func(ctx context.Context) error {
+			affected, err := taskService.RunAutoOverdue(ctx)
+			if err != nil {
+				return err
+			}
+			if affected > 0 {
+				log.Info().Msgf("Initial task overdue check marked %d tasks as overdue", affected)
+			}
+			return nil
+		}); err != nil {
 			log.Error().Err(err).Msg("Initial task overdue check failed")
-		} else if affected > 0 {
-			log.Info().Msgf("Initial task overdue check marked %d tasks as overdue", affected)
 		}
 
 		ticker := time.NewTicker(1 * time.Hour)
@@ -323,10 +343,18 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Info().Msg("Running hourly task overdue check...")
-				if affected, err := taskService.RunAutoOverdue(context.Background()); err != nil {
+				idem := time.Now().UTC().Format("2006-01-02-15")
+				if _, err := jobRunner.Run(context.Background(), "tasks_auto_overdue", idem, func(ctx context.Context) error {
+					affected, err := taskService.RunAutoOverdue(ctx)
+					if err != nil {
+						return err
+					}
+					if affected > 0 {
+						log.Info().Msgf("Hourly task overdue check marked %d tasks as overdue", affected)
+					}
+					return nil
+				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run task overdue check")
-				} else if affected > 0 {
-					log.Info().Msgf("Hourly task overdue check marked %d tasks as overdue", affected)
 				}
 			}
 		}
@@ -336,7 +364,10 @@ func main() {
 	go func() {
 		// Run immediately on startup
 		log.Info().Msg("Running initial automation rules evaluation...")
-		if err := ruleService.EvaluateRules(context.Background()); err != nil {
+		idem := time.Now().UTC().Format("2006-01-02")
+		if _, err := jobRunner.Run(context.Background(), "automation_rules", idem, func(ctx context.Context) error {
+			return ruleService.EvaluateRules(ctx)
+		}); err != nil {
 			log.Error().Err(err).Msg("Initial automation rules evaluation failed")
 		}
 
@@ -346,7 +377,10 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Info().Msg("Running 24h automation rules evaluation cron...")
-				if err := ruleService.EvaluateRules(context.Background()); err != nil {
+				idem := time.Now().UTC().Format("2006-01-02")
+				if _, err := jobRunner.Run(context.Background(), "automation_rules", idem, func(ctx context.Context) error {
+					return ruleService.EvaluateRules(ctx)
+				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run automation rules evaluation")
 				}
 			}
