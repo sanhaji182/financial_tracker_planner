@@ -15,6 +15,7 @@ import (
 type ForecastService interface {
 	CalculateMonthlyForecast(ctx context.Context, userID string, month string) (*dto.ForecastResponse, error)
 	GetDailyProjections(ctx context.Context, userID string, month string) ([]dto.DailyProjectionDto, error)
+	GetBacktest(ctx context.Context, userID string, months int) (*dto.ForecastBacktestResponse, error)
 }
 
 type forecastService struct {
@@ -371,7 +372,7 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 
 	dailyVariableExpense := estimatedVariableExpenses / 30.0
 
-	ladder := kernel.BuildCashLadder(kernel.LadderInputs{
+	ladderInputs := kernel.LadderInputs{
 		AsOfDay:              asOfDay,
 		DaysInMonth:          daysInMonth,
 		IsCurrentMonth:       isCurrentMonth,
@@ -379,28 +380,47 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		Events:               ladderEvents,
 		DailyVariableExpense: dailyVariableExpense,
 		LivingCostThreshold:  monthlyLivingCostThreshold,
-	})
+	}
+	// forecast-v2: three variable-spend ladders; primary path = expected (×1.0).
+	scenarios := kernel.BuildScenarioLadders(ladderInputs)
+	ladder := scenarios.Expected
 
-	// Map pure ladder → DTO daily projections with formatted values.
+	// Map pure ladder → DTO daily projections with scenario bands.
 	projections := make([]dto.DailyProjectionDto, 0, len(ladder.Days))
-	for _, d := range ladder.Days {
+	for i, d := range ladder.Days {
 		currentDate := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), d.Day, 0, 0, 0, 0, targetYearMonth.Location())
 		dateStr := currentDate.Format("2006-01-02")
+		bandC, bandE, bandO := d.ProjectedBalance, d.ProjectedBalance, d.ProjectedBalance
+		if i < len(scenarios.DayBands) {
+			bandC = scenarios.DayBands[i].Conservative
+			bandE = scenarios.DayBands[i].Expected
+			bandO = scenarios.DayBands[i].Optimistic
+		}
 		projections = append(projections, dto.DailyProjectionDto{
-			Date:             dateStr,
-			ProjectedBalance: d.ProjectedBalance,
-			FormattedBalance: formatRupiah(d.ProjectedBalance),
-			EventName:        d.EventName,
-			EventAmount:      d.EventAmount,
-			FormattedAmount:  formatRupiah(d.EventAmount),
-			Included:         d.Included,
+			Date:                      dateStr,
+			ProjectedBalance:          d.ProjectedBalance,
+			FormattedBalance:          formatRupiah(d.ProjectedBalance),
+			EventName:                 d.EventName,
+			EventAmount:               d.EventAmount,
+			FormattedAmount:           formatRupiah(d.EventAmount),
+			Included:                  d.Included,
+			BandConservative:          bandC,
+			BandExpected:              bandE,
+			BandOptimistic:            bandO,
+			FormattedBandConservative: formatRupiah(bandC),
+			FormattedBandExpected:     formatRupiah(bandE),
+			FormattedBandOptimistic:   formatRupiah(bandO),
 		})
 	}
 
-	projectedEndBalance := ladder.ProjectedEndBalance
+	projectedEndBalance := scenarios.EndExpected
 	lowestBalance := ladder.LowestBalance
 	lowestBalanceDate := time.Date(targetYearMonth.Year(), targetYearMonth.Month(), ladder.LowestBalanceDay, 0, 0, 0, 0, targetYearMonth.Location())
 	isTight := ladder.IsTight
+	// Tight if any scenario dips below living threshold (use conservative worst case).
+	if scenarios.Conservative.IsTight {
+		isTight = true
+	}
 
 	// Safe-to-spend via shared calculation kernel, capped by ladder lowest.
 	daysRemaining := daysInMonth - asOfDay + 1
@@ -461,8 +481,13 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		Confidence:         confidence,
 	}
 
-	// Merge assumptions: ladder (as-of semantics) + cashflow kernel.
-	assumptions := append([]string{}, ladder.Assumptions...)
+	// Merge assumptions: scenario bands + ladder (as-of) + cashflow kernel.
+	assumptions := append([]string{}, scenarios.Assumptions...)
+	for _, a := range ladder.Assumptions {
+		if !containsStr(assumptions, a) {
+			assumptions = append(assumptions, a)
+		}
+	}
 	for _, a := range cf.Assumptions {
 		if !containsStr(assumptions, a) {
 			assumptions = append(assumptions, a)
@@ -479,8 +504,8 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		assumptions = append(assumptions, excludedBillsNote)
 	}
 
-	// Formula version combines ladder + cashflow for provenance.
-	formulaVersion := ladder.FormulaVersion + "+" + cf.FormulaVersion
+	// Formula version combines scenario bands + ladder + cashflow for provenance.
+	formulaVersion := scenarios.FormulaVersion + "+" + ladder.FormulaVersion + "+" + cf.FormulaVersion
 
 	res := &dto.ForecastResponse{
 		Month: month,
@@ -499,6 +524,11 @@ func (s *forecastService) CalculateMonthlyForecast(ctx context.Context, userID s
 		ProjectedEndBalance: dto.MoneyValue{
 			Value:          projectedEndBalance,
 			FormattedValue: formatRupiah(projectedEndBalance),
+		},
+		EndBalanceScenarios: &dto.EndBalanceScenarios{
+			Conservative: dto.MoneyValue{Value: scenarios.EndConservative, FormattedValue: formatRupiah(scenarios.EndConservative)},
+			Expected:     dto.MoneyValue{Value: scenarios.EndExpected, FormattedValue: formatRupiah(scenarios.EndExpected)},
+			Optimistic:   dto.MoneyValue{Value: scenarios.EndOptimistic, FormattedValue: formatRupiah(scenarios.EndOptimistic)},
 		},
 		LowestBalance: dto.MoneyValue{
 			Value:          lowestBalance,
@@ -579,6 +609,174 @@ func (s *forecastService) GetDailyProjections(ctx context.Context, userID string
 		return nil, err
 	}
 	return res.DailyProjections, nil
+}
+
+// GetBacktest compares estimated monthly net (income − fixed − variable from
+// stored forecasts) against actual confirmed cashflow for completed months.
+// Horizon bucketing uses days-from-month-start style labels via synthetic
+// points (month_end primary; 30d alias when enough samples).
+func (s *forecastService) GetBacktest(ctx context.Context, userID string, months int) (*dto.ForecastBacktestResponse, error) {
+	ownerID, err := s.resolveOwnerID(ctx, userID)
+	if err != nil {
+		ownerID = userID
+	}
+	if months <= 0 {
+		months = 6
+	}
+	if months > 24 {
+		months = 24
+	}
+	now := time.Now()
+	// Exclude current incomplete month — only completed months.
+	startOfCurrent := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+
+	type fcRow struct {
+		Month    string
+		EstInc   float64
+		EstFixed float64
+		EstVar   float64
+	}
+	rows, err := s.dbPool.Query(ctx, `
+		SELECT month,
+		       COALESCE(estimated_income,0),
+		       COALESCE(estimated_fixed_expenses,0),
+		       COALESCE(estimated_variable_expenses,0)
+		FROM forecasts
+		WHERE user_id = $1
+		  AND month < $2
+		ORDER BY month DESC
+		LIMIT $3
+	`, ownerID, startOfCurrent.Format("2006-01"), months)
+	if err != nil {
+		return nil, fmt.Errorf("forecasts: %w", err)
+	}
+	defer rows.Close()
+
+	var stored []fcRow
+	for rows.Next() {
+		var r fcRow
+		if scanErr := rows.Scan(&r.Month, &r.EstInc, &r.EstFixed, &r.EstVar); scanErr == nil {
+			stored = append(stored, r)
+		}
+	}
+
+	var points []kernel.BacktestPoint
+	var dtoPoints []dto.ForecastBacktestPoint
+	skipped := 0
+
+	for _, r := range stored {
+		ym, parseErr := time.Parse("2006-01", r.Month)
+		if parseErr != nil {
+			skipped++
+			continue
+		}
+		monthStart := time.Date(ym.Year(), ym.Month(), 1, 0, 0, 0, 0, now.Location())
+		monthEnd := monthStart.AddDate(0, 1, 0)
+
+		var actualIncome, actualExpense float64
+		_ = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(amount),0) FROM transactions
+			WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
+			  AND deleted_at IS NULL AND date >= $2 AND date < $3
+		`, ownerID, monthStart, monthEnd).Scan(&actualIncome)
+		_ = s.dbPool.QueryRow(ctx, `
+			SELECT COALESCE(SUM(amount),0) FROM transactions
+			WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
+			  AND deleted_at IS NULL AND date >= $2 AND date < $3
+		`, ownerID, monthStart, monthEnd).Scan(&actualExpense)
+
+		// Skip months with no actual activity (can't score empty books).
+		if actualIncome == 0 && actualExpense == 0 {
+			skipped++
+			continue
+		}
+
+		projectedNet := r.EstInc - r.EstFixed - r.EstVar
+		actualNet := actualIncome - actualExpense
+		// Band from variable ±25% (same multipliers as forecast-v2).
+		bandLow := r.EstInc - r.EstFixed - r.EstVar*kernel.VarMultConservative
+		bandHigh := r.EstInc - r.EstFixed - r.EstVar*kernel.VarMultOptimistic
+		if bandLow > bandHigh {
+			bandLow, bandHigh = bandHigh, bandLow
+		}
+
+		points = append(points, kernel.BacktestPoint{
+			Month:        r.Month,
+			HorizonDays:  0,
+			ProjectedEnd: projectedNet,
+			ActualEnd:    actualNet,
+			BandLow:      bandLow,
+			BandHigh:     bandHigh,
+			HasBand:      true,
+		})
+		// Also emit a 30d alias for horizon table when we treat full month ≈ 30d.
+		points = append(points, kernel.BacktestPoint{
+			Month:        r.Month,
+			HorizonDays:  30,
+			ProjectedEnd: projectedNet,
+			ActualEnd:    actualNet,
+			BandLow:      bandLow,
+			BandHigh:     bandHigh,
+			HasBand:      true,
+		})
+
+		errAmt := projectedNet - actualNet
+		dtoPoints = append(dtoPoints, dto.ForecastBacktestPoint{
+			Month:              r.Month,
+			ProjectedNet:       projectedNet,
+			FormattedProjected: formatRupiah(projectedNet),
+			ActualNet:          actualNet,
+			FormattedActual:    formatRupiah(actualNet),
+			Error:              errAmt,
+			FormattedError:     formatRupiah(errAmt),
+		})
+	}
+
+	bt := kernel.EvaluateBacktest(points, now)
+	// Overall from month_end only (HorizonDays=0) to avoid double-count with 30d aliases.
+	var monthEndPts []kernel.BacktestPoint
+	for _, p := range points {
+		if p.HorizonDays == 0 {
+			monthEndPts = append(monthEndPts, p)
+		}
+	}
+	overallBT := kernel.EvaluateBacktest(monthEndPts, now)
+
+	mapAcc := func(h kernel.HorizonBacktest) dto.HorizonAccuracy {
+		return dto.HorizonAccuracy{
+			HorizonDays:         h.HorizonDays,
+			Label:               h.Label,
+			SampleSize:          h.SampleSize,
+			MAE:                 h.MAE,
+			FormattedMAE:        formatRupiah(h.MAE),
+			WAPE:                h.WAPE,
+			Bias:                h.Bias,
+			FormattedBias:       formatRupiah(h.Bias),
+			DirectionalAccuracy: h.DirectionalAccuracy,
+			BandCoverage:        h.BandCoverage,
+			BandSamples:         h.BandSamples,
+		}
+	}
+	by := make([]dto.HorizonAccuracy, 0, len(bt.ByHorizon))
+	for _, h := range bt.ByHorizon {
+		// Prefer showing 30d + month_end; skip empty
+		if h.SampleSize == 0 {
+			continue
+		}
+		by = append(by, mapAcc(h))
+	}
+
+	return &dto.ForecastBacktestResponse{
+		AsOf:           now.UTC().Format(time.RFC3339),
+		FormulaVersion: kernel.ForecastScenarioVersion,
+		Overall:        mapAcc(overallBT.Overall),
+		ByHorizon:      by,
+		Points:         dtoPoints,
+		PointsUsed:     len(dtoPoints),
+		PointsSkipped:  skipped,
+		Assumptions:    overallBT.Assumptions,
+		MetricNote:     "Membandingkan net bulanan (estimasi income−fixed−variable vs aktual confirmed). Bukan snapshot saldo harian.",
+	}, nil
 }
 
 func containsStr(ss []string, target string) bool {

@@ -9,6 +9,20 @@ type DailyProjectionDto struct {
 	FormattedAmount  string  `json:"formatted_amount,omitempty"`
 	// Included is false for pre-as-of stub days on current-month forecasts.
 	Included bool `json:"included"`
+	// Scenario band balances (forecast-v2); expected == ProjectedBalance.
+	BandConservative float64 `json:"band_conservative,omitempty"`
+	BandExpected     float64 `json:"band_expected,omitempty"`
+	BandOptimistic   float64 `json:"band_optimistic,omitempty"`
+	FormattedBandConservative string `json:"formatted_band_conservative,omitempty"`
+	FormattedBandExpected     string `json:"formatted_band_expected,omitempty"`
+	FormattedBandOptimistic   string `json:"formatted_band_optimistic,omitempty"`
+}
+
+// EndBalanceScenarios is projected end-of-month cash under variable-spend bands.
+type EndBalanceScenarios struct {
+	Conservative MoneyValue `json:"conservative"`
+	Expected     MoneyValue `json:"expected"`
+	Optimistic   MoneyValue `json:"optimistic"`
 }
 
 type ForecastResponse struct {
@@ -17,6 +31,8 @@ type ForecastResponse struct {
 	EstimatedFixedExpenses    MoneyValue           `json:"estimated_fixed_expenses"`
 	EstimatedVariableExpenses MoneyValue           `json:"estimated_variable_expenses"`
 	ProjectedEndBalance       MoneyValue           `json:"projected_end_balance"`
+	// End-balance scenario bands (forecast-v2). Primary projected_end = expected.
+	EndBalanceScenarios *EndBalanceScenarios `json:"end_balance_scenarios,omitempty"`
 	LowestBalance             MoneyValue           `json:"lowest_balance"`
 	LowestBalanceDate         string               `json:"lowest_balance_date"`
 	SafeToSpend               MoneyValue           `json:"safe_to_spend"`
@@ -35,4 +51,44 @@ type ForecastResponse struct {
 	RemainingIncome    *MoneyValue `json:"remaining_income,omitempty"`
 	IncludedEventCount int         `json:"included_event_count,omitempty"`
 	ExcludedDaysBefore int         `json:"excluded_days_before,omitempty"`
+}
+
+// HorizonAccuracy is error metrics for one forecast horizon.
+type HorizonAccuracy struct {
+	HorizonDays         int     `json:"horizon_days"`
+	Label               string  `json:"label"`
+	SampleSize          int     `json:"sample_size"`
+	MAE                 float64 `json:"mae"`
+	FormattedMAE        string  `json:"formatted_mae"`
+	WAPE                float64 `json:"wape"`
+	Bias                float64 `json:"bias"`
+	FormattedBias       string  `json:"formatted_bias"`
+	DirectionalAccuracy float64 `json:"directional_accuracy"`
+	BandCoverage        float64 `json:"band_coverage,omitempty"`
+	BandSamples         int     `json:"band_samples,omitempty"`
+}
+
+// ForecastBacktestPoint is one month used in accuracy evaluation.
+type ForecastBacktestPoint struct {
+	Month              string  `json:"month"`
+	ProjectedNet       float64 `json:"projected_net"`
+	FormattedProjected string  `json:"formatted_projected_net"`
+	ActualNet          float64 `json:"actual_net"`
+	FormattedActual    string  `json:"formatted_actual_net"`
+	Error              float64 `json:"error"` // projected - actual
+	FormattedError     string  `json:"formatted_error"`
+}
+
+// ForecastBacktestResponse is GET /forecast/backtest.
+type ForecastBacktestResponse struct {
+	AsOf           string               `json:"as_of"`
+	FormulaVersion string               `json:"formula_version"`
+	Overall        HorizonAccuracy      `json:"overall"`
+	ByHorizon      []HorizonAccuracy    `json:"by_horizon"`
+	Points         []ForecastBacktestPoint `json:"points"`
+	PointsUsed     int                  `json:"points_used"`
+	PointsSkipped  int                  `json:"points_skipped"`
+	Assumptions    []string             `json:"assumptions,omitempty"`
+	// MetricNote clarifies we compare monthly net cashflow (not balance snapshot).
+	MetricNote string `json:"metric_note"`
 }

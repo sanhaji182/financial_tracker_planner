@@ -1,12 +1,13 @@
 import React, { useState } from 'react';
 import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
-import { useMonthlyForecast } from '../hooks/useForecast';
+import { useMonthlyForecast, useForecastBacktest } from '../hooks/useForecast';
 import { Card } from '../components/ui/Card';
 import { 
   ChevronLeft, 
   ChevronRight, 
   TrendingUp, 
-  AlertTriangle
+  AlertTriangle,
+  Target
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -38,6 +39,7 @@ export const ForecastPage: React.FC = () => {
 
   // Queries
   const { data: fc, isLoading, isError } = useMonthlyForecast(selectedMonth);
+  const { data: bt } = useForecastBacktest(6);
 
   // Month navigation
   const changeMonth = (direction: 'prev' | 'next') => {
@@ -92,12 +94,14 @@ export const ForecastPage: React.FC = () => {
     );
   }
 
-  // Map projections to chart format
+  // Map projections to chart format (expected line + C/O band ribbon)
   const chartData = fc.daily_projections.map((dp) => {
     const dateObj = new Date(dp.date);
     return {
       name: String(dateObj.getDate()),
       balance: dp.projected_balance,
+      bandLow: dp.band_conservative ?? dp.projected_balance,
+      bandHigh: dp.band_optimistic ?? dp.projected_balance,
       dateLabel: dp.date,
       eventName: dp.event_name,
       eventAmount: dp.event_amount,
@@ -200,10 +204,15 @@ export const ForecastPage: React.FC = () => {
         </Card>
 
         <Card className="p-4 flex flex-col justify-between bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/10">
-          <span className="block text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Forecast Akhir Bulan</span>
+          <span className="block text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Forecast Akhir Bulan (Expected)</span>
           <span className="block text-lg font-black mt-1 font-mono text-indigo-600 dark:text-indigo-400">
             {fc.projected_end_balance.formatted_value}
           </span>
+          {fc.end_balance_scenarios && (
+            <span className="text-[9px] font-semibold text-slate-400 mt-1">
+              C {fc.end_balance_scenarios.conservative.formatted_value} · O {fc.end_balance_scenarios.optimistic.formatted_value}
+            </span>
+          )}
         </Card>
 
         <Card className="p-4 flex flex-col justify-between bg-emerald-500/10 border-l-4 border-l-emerald-500 col-span-2 md:col-span-1">
@@ -233,25 +242,51 @@ export const ForecastPage: React.FC = () => {
       {fc.safe_to_spend_scenarios && (
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <Card className="p-4 space-y-1">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Konservatif</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">STS Konservatif</span>
             <span className="text-base font-black font-mono text-slate-800 dark:text-slate-200 block">
               {fc.safe_to_spend_scenarios.conservative.formatted_value}
             </span>
             <span className="text-[10px] text-slate-400 font-semibold">Buffer living cost penuh</span>
           </Card>
           <Card className="p-4 space-y-1 border-indigo-100 dark:border-indigo-900">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Expected</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">STS Expected</span>
             <span className="text-base font-black font-mono text-indigo-700 dark:text-indigo-300 block">
               {fc.safe_to_spend_scenarios.expected.formatted_value}
             </span>
             <span className="text-[10px] text-slate-400 font-semibold">Buffer 50% living cost</span>
           </Card>
           <Card className="p-4 space-y-1 border-emerald-100 dark:border-emerald-900">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Optimis</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">STS Optimis</span>
             <span className="text-base font-black font-mono text-emerald-700 dark:text-emerald-300 block">
               {fc.safe_to_spend_scenarios.optimistic.formatted_value}
             </span>
             <span className="text-[10px] text-slate-400 font-semibold">Expense sisa × 0.8</span>
+          </Card>
+        </div>
+      )}
+
+      {fc.end_balance_scenarios && (
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          <Card className="p-4 space-y-1 border-rose-100 dark:border-rose-900/40">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-rose-500">Akhir bulan · Konservatif</span>
+            <span className="text-base font-black font-mono text-slate-800 dark:text-slate-200 block">
+              {fc.end_balance_scenarios.conservative.formatted_value}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Variable spend ×1.25</span>
+          </Card>
+          <Card className="p-4 space-y-1 border-indigo-100 dark:border-indigo-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Akhir bulan · Expected</span>
+            <span className="text-base font-black font-mono text-indigo-700 dark:text-indigo-300 block">
+              {fc.end_balance_scenarios.expected.formatted_value}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Variable spend ×1.0 (primer)</span>
+          </Card>
+          <Card className="p-4 space-y-1 border-emerald-100 dark:border-emerald-900">
+            <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-600">Akhir bulan · Optimis</span>
+            <span className="text-base font-black font-mono text-emerald-700 dark:text-emerald-300 block">
+              {fc.end_balance_scenarios.optimistic.formatted_value}
+            </span>
+            <span className="text-[10px] text-slate-400 font-semibold">Variable spend ×0.75</span>
           </Card>
         </div>
       )}
@@ -279,6 +314,9 @@ export const ForecastPage: React.FC = () => {
         <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
           <TrendingUp className="h-4 w-4 text-indigo-500" />
           Proyeksi Tren Kas Harian
+          <span className="ml-2 normal-case font-semibold text-[10px] text-slate-400">
+            pita = konservatif→optimis · garis = expected
+          </span>
         </h3>
         <div className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
@@ -287,6 +325,10 @@ export const ForecastPage: React.FC = () => {
                 <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor={fc.is_tight ? "#f43f5e" : "#6366f1"} stopOpacity={0.2}/>
                   <stop offset="95%" stopColor={fc.is_tight ? "#f43f5e" : "#6366f1"} stopOpacity={0}/>
+                </linearGradient>
+                <linearGradient id="colorBand" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#818cf8" stopOpacity={0.25}/>
+                  <stop offset="95%" stopColor="#818cf8" stopOpacity={0.05}/>
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-slate-800" />
@@ -312,7 +354,10 @@ export const ForecastPage: React.FC = () => {
                           {new Date(data.dateLabel).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
                         </p>
                         <p className="font-bold text-indigo-600 dark:text-indigo-400">
-                          Kas: {formatValueToRupiah(data.balance)}
+                          Expected: {formatValueToRupiah(data.balance)}
+                        </p>
+                        <p className="text-[10px] text-slate-500 font-semibold">
+                          Band: {formatValueToRupiah(data.bandLow)} – {formatValueToRupiah(data.bandHigh)}
                         </p>
                         {data.eventName && (
                           <div className="pt-1.5 border-t border-slate-100 dark:border-slate-850">
@@ -333,12 +378,30 @@ export const ForecastPage: React.FC = () => {
                 strokeDasharray="4 4" 
                 label={{ value: 'Batas Threshold', fill: '#f43f5e', position: 'top', fontSize: 9, fontWeight: 'bold' }} 
               />
+              {/* Uncertainty band (high then low with fill between via two areas) */}
+              <Area
+                type="monotone"
+                dataKey="bandHigh"
+                stroke="none"
+                fill="url(#colorBand)"
+                fillOpacity={1}
+                isAnimationActive={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="bandLow"
+                stroke="none"
+                fill="#ffffff"
+                fillOpacity={0.85}
+                className="dark:fill-slate-950"
+                isAnimationActive={false}
+              />
               <Area 
                 type="monotone" 
                 dataKey="balance" 
                 stroke={fc.is_tight ? "#f43f5e" : "#6366f1"} 
                 strokeWidth={2.5}
-                fillOpacity={1} 
+                fillOpacity={0} 
                 fill="url(#colorBalance)" 
                 dot={<RenderLowestDot lowestDay={lowestDay} />}
               />
@@ -346,6 +409,116 @@ export const ForecastPage: React.FC = () => {
           </ResponsiveContainer>
         </div>
       </Card>
+
+      {/* Backtest accuracy */}
+      {bt && (
+        <Card className="p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+              <Target className="h-4 w-4 text-indigo-500" />
+              Akurasi forecast (backtest)
+            </h3>
+            <span className="text-[10px] font-semibold text-slate-400">
+              {bt.formula_version} · {bt.points_used} bulan · skip {bt.points_skipped}
+            </span>
+          </div>
+          {bt.metric_note && (
+            <p className="text-[11px] text-slate-500 font-medium">{bt.metric_note}</p>
+          )}
+          {bt.points_used === 0 ? (
+            <p className="text-xs text-slate-400 font-semibold py-2">
+              Belum ada bulan completed dengan forecast tersimpan + transaksi aktual untuk diukur.
+            </p>
+          ) : (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="rounded-xl border border-slate-100 dark:border-slate-800 p-3">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">MAE</span>
+                  <span className="block text-sm font-black font-mono mt-1">{bt.overall.formatted_mae}</span>
+                </div>
+                <div className="rounded-xl border border-slate-100 dark:border-slate-800 p-3">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">WAPE</span>
+                  <span className="block text-sm font-black font-mono mt-1">
+                    {(bt.overall.wape * 100).toFixed(1)}%
+                  </span>
+                </div>
+                <div className="rounded-xl border border-slate-100 dark:border-slate-800 p-3">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">Bias</span>
+                  <span className="block text-sm font-black font-mono mt-1">{bt.overall.formatted_bias}</span>
+                  <span className="text-[9px] text-slate-400">+ = overstated cash</span>
+                </div>
+                <div className="rounded-xl border border-slate-100 dark:border-slate-800 p-3">
+                  <span className="text-[10px] font-bold uppercase text-slate-400">Band coverage</span>
+                  <span className="block text-sm font-black font-mono mt-1">
+                    {bt.overall.band_samples && typeof bt.overall.band_coverage === 'number'
+                      ? `${(bt.overall.band_coverage * 100).toFixed(0)}%`
+                      : '—'}
+                  </span>
+                </div>
+              </div>
+              {(bt.by_horizon || []).length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase">
+                        <th className="p-2">Horizon</th>
+                        <th className="p-2 text-right">n</th>
+                        <th className="p-2 text-right">MAE</th>
+                        <th className="p-2 text-right">WAPE</th>
+                        <th className="p-2 text-right">Bias</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {bt.by_horizon.map((h) => (
+                        <tr key={`${h.label}-${h.horizon_days}`}>
+                          <td className="p-2 font-bold">{h.label}</td>
+                          <td className="p-2 text-right font-mono">{h.sample_size}</td>
+                          <td className="p-2 text-right font-mono">{h.formatted_mae}</td>
+                          <td className="p-2 text-right font-mono">{(h.wape * 100).toFixed(1)}%</td>
+                          <td className="p-2 text-right font-mono">{h.formatted_bias}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {(bt.points || []).length > 0 && (
+                <details className="text-[11px]">
+                  <summary className="cursor-pointer font-bold text-slate-500 uppercase tracking-wider">
+                    Detail per bulan
+                  </summary>
+                  <div className="mt-2 overflow-x-auto">
+                    <table className="w-full text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold">
+                          <th className="p-2">Bulan</th>
+                          <th className="p-2 text-right">Projected net</th>
+                          <th className="p-2 text-right">Actual net</th>
+                          <th className="p-2 text-right">Error</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {bt.points.map((p) => (
+                          <tr key={p.month}>
+                            <td className="p-2 font-mono font-bold">{p.month}</td>
+                            <td className="p-2 text-right font-mono">{p.formatted_projected_net}</td>
+                            <td className="p-2 text-right font-mono">{p.formatted_actual_net}</td>
+                            <td className={`p-2 text-right font-mono font-bold ${
+                              p.error > 0 ? 'text-amber-600' : p.error < 0 ? 'text-sky-600' : 'text-slate-500'
+                            }`}>
+                              {p.formatted_error}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </details>
+              )}
+            </>
+          )}
+        </Card>
+      )}
 
       {/* Detail Breakdown Table */}
       <Card className="p-6">
