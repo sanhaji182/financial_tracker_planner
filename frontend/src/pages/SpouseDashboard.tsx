@@ -204,12 +204,12 @@ export const SpouseDashboard: React.FC = () => {
                   Tagihan Jatuh Tempo (7 Hari)
                 </h3>
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {summary?.upcoming_bills.length === 0 ? (
+                  {(summary?.upcoming_bills?.length ?? 0) === 0 ? (
                     <p className="py-6 text-center text-xs text-slate-400 font-bold">
                       Tidak ada tagihan jatuh tempo dalam 7 hari.
                     </p>
                   ) : (
-                    summary?.upcoming_bills.map((bill) => (
+                    (summary?.upcoming_bills ?? []).map((bill) => (
                       <div key={bill.id} className="py-3 flex justify-between items-center first:pt-0 last:pb-0">
                         <div>
                           <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{bill.name}</span>

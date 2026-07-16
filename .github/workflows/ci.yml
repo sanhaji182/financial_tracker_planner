@@ -80,6 +80,16 @@ jobs:
         working-directory: frontend
         run: npm test
 
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E critical paths
+        working-directory: frontend
+        run: npm run test:e2e
+        env:
+          CI: true
+
   worker:
     name: Python Worker
     runs-on: ubuntu-latest
