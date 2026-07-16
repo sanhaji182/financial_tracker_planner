@@ -5,7 +5,7 @@ interface MoneyDisplayProps {
   currency?: string;
   className?: string;
   colorSemantic?: boolean;
-  /** Optional accessible label override (defaults to formatted currency amount). */
+  /** Optional accessible label override (defaults to spoken currency amount). */
   ariaLabel?: string;
 }
 
@@ -56,8 +56,7 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
       className={`font-mono tracking-tight ${colorClass} ${className}`}
       aria-label={ariaLabel || spoken}
     >
-      {/* Visual amount; aria-label provides spoken form for AT */}
-      <span aria-hidden="false">{display}</span>
+      {display}
     </span>
   );
 };
