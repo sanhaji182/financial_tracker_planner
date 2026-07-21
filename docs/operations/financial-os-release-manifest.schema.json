@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/sanhaji182/financial_tracker_planner/docs/operations/financial-os-release-manifest.schema.json",
+  "title": "Financial OS immutable release manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "application",
+    "release_id",
+    "source",
+    "created_at",
+    "target_platform",
+    "deployment_authorized",
+    "application_images",
+    "runtime_dependencies",
+    "compose",
+    "migration",
+    "runtime_secret_schema",
+    "previous_manifest_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "application": { "const": "financial-os" },
+    "release_id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "git_sha", "run_id", "run_attempt"],
+      "properties": {
+        "repository": { "const": "sanhaji182/financial_tracker_planner" },
+        "git_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "run_id": { "type": "integer", "minimum": 1 },
+        "run_attempt": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "created_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$" },
+    "target_platform": { "const": "linux/amd64" },
+    "deployment_authorized": { "const": false },
+    "application_images": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["frontend", "backend", "worker"],
+      "properties": {
+        "frontend": { "type": "string", "pattern": "^ghcr\\.io/sanhaji182/financial-os-frontend@sha256:[0-9a-f]{64}$" },
+        "backend": { "type": "string", "pattern": "^ghcr\\.io/sanhaji182/financial-os-backend@sha256:[0-9a-f]{64}$" },
+        "worker": { "type": "string", "pattern": "^ghcr\\.io/sanhaji182/financial-os-worker@sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "runtime_dependencies": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["postgresql", "redis"],
+      "properties": {
+        "postgresql": { "type": "string", "pattern": "^docker\\.io/library/postgres@sha256:[0-9a-f]{64}$" },
+        "redis": { "type": "string", "pattern": "^docker\\.io/library/redis@sha256:[0-9a-f]{64}$" }
+      }
+    },
+    "compose": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "const": "docker/docker-compose.pull.yml" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["identifier", "compatibility", "execution_authorized"],
+      "properties": {
+        "identifier": { "const": "none" },
+        "compatibility": { "const": "not-applicable" },
+        "execution_authorized": { "const": false }
+      }
+    },
+    "runtime_secret_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "values_included"],
+      "properties": {
+        "version": { "const": 1 },
+        "values_included": { "const": false }
+      }
+    },
+    "previous_manifest_sha256": {
+      "oneOf": [
+        { "type": "null" },
+        { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      ]
+    }
+  }
+}

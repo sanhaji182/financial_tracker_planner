@@ -1,0 +1,104 @@
+name: financial-os
+
+services:
+  postgres:
+    image: docker.io/library/postgres@sha256:${FOS_POSTGRES_DIGEST:?immutable PostgreSQL digest required}
+    container_name: fos-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-financial_os}
+      POSTGRES_USER: ${DB_USER:-fos}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?database password required}
+    volumes:
+      - fos-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fos} -d ${DB_NAME:-financial_os}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks: [fos-internal]
+
+  redis:
+    image: docker.io/library/redis@sha256:${FOS_REDIS_DIGEST:?immutable Redis digest required}
+    container_name: fos-redis
+    restart: unless-stopped
+    command: ["redis-server", "--save", "60", "1", "--loglevel", "warning", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
+    volumes:
+      - fos-redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [fos-internal]
+
+  backend:
+    image: ghcr.io/sanhaji182/financial-os-backend@sha256:${FOS_BACKEND_DIGEST:?immutable backend digest required}
+    container_name: fos-backend
+    restart: unless-stopped
+    env_file:
+      - ${FOS_RUNTIME_ENV_FILE:?runtime env file required}
+    environment:
+      APP_ENV: production
+      APP_PORT: "8080"
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+      BUILD_SHA: ${BUILD_SHA:?source SHA required}
+      APP_VERSION: ${APP_VERSION:?release ID required}
+      WORKER_URL: http://worker:8081
+      STORAGE_TYPE: local
+      STORAGE_PATH: /app/uploads
+    ports:
+      - "127.0.0.1:8090:8080"
+    volumes:
+      - fos-uploads:/app/uploads
+      - fos-private-data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      worker:
+        condition: service_started
+    networks: [fos-internal]
+    security_opt: [no-new-privileges:true]
+
+  worker:
+    image: ghcr.io/sanhaji182/financial-os-worker@sha256:${FOS_WORKER_DIGEST:?immutable worker digest required}
+    container_name: fos-worker
+    restart: unless-stopped
+    environment:
+      APP_ENV: production
+      WORKER_PORT: "8081"
+      WORKER_SECRET: ${WORKER_SECRET:?worker secret required}
+      CORS_ORIGINS: ${CORS_ALLOWED_ORIGINS:?CORS origins required}
+      OPENAI_BASE_URL: ${OPENAI_BASE_URL:-https://9r.sans.biz.id/v1}
+    expose: ["8081"]
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks: [fos-internal]
+    security_opt: [no-new-privileges:true]
+
+  frontend:
+    image: ghcr.io/sanhaji182/financial-os-frontend@sha256:${FOS_FRONTEND_DIGEST:?immutable frontend digest required}
+    container_name: fos-frontend
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3130:80"
+    depends_on: [backend]
+    networks: [fos-internal]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  fos-postgres-data:
+  fos-redis-data:
+  fos-uploads:
+  fos-private-data:
+
+networks:
+  fos-internal:
+    driver: bridge

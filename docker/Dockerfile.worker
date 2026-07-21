@@ -1,4 +1,11 @@
-FROM python:3.11-slim
+FROM python:3.11-slim@sha256:db3ff2e1800a8581e2c48a27c3995339d47bdf046da21c7627accd3d51053a93
+
+ARG BUILD_SHA=dev
+ARG APP_VERSION=0.1.0
+ARG OCI_SOURCE=https://github.com/sanhaji182/financial_tracker_planner
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${BUILD_SHA}" \
+      org.opencontainers.image.version="${APP_VERSION}"
 
 # Set proxy for build environment dynamically
 ARG http_proxy

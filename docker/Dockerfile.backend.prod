@@ -1,15 +1,20 @@
-# Build stage — pin Go to match go.mod (1.25.x)
-FROM golang:1.25-alpine AS builder
+# Build stage — toolchain and root filesystem are digest-pinned.
+FROM golang:1.25-alpine@sha256:56961d79ea8129efddcc0b8643fd8a5416b4e6228cfd477e3fd61deb2672c587 AS builder
 WORKDIR /app
 RUN apk add --no-cache git ca-certificates
 COPY backend/go.mod backend/go.sum* ./
 RUN go mod download
 COPY backend/ ./
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o main cmd/server/main.go
+ARG SOURCE_DATE_EPOCH=0
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -buildvcs=false -ldflags="-s -w -buildid=" -o main cmd/server/main.go
 
-FROM alpine:3.20
+FROM alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
 ARG BUILD_SHA=dev
 ARG APP_VERSION=0.1.0
+ARG OCI_SOURCE=https://github.com/sanhaji182/financial_tracker_planner
+LABEL org.opencontainers.image.source="${OCI_SOURCE}" \
+      org.opencontainers.image.revision="${BUILD_SHA}" \
+      org.opencontainers.image.version="${APP_VERSION}"
 ENV BUILD_SHA=${BUILD_SHA}
 ENV APP_VERSION=${APP_VERSION}
 RUN apk add --no-cache ca-certificates postgresql-client tzdata \

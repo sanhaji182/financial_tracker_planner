@@ -1,0 +1,22 @@
+# Release builds receive only source and lock files, never local state or secrets.
+.git
+.github
+.env
+.env.*
+**/.env
+**/.env.*
+**/node_modules
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+backend/bin
+coverage
+platform-review
+*.log
+.tmp
+.cache
+worktrees
+release-evidence
