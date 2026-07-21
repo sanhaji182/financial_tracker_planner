@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Financial OS origin/master every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+Unit=finance-deploy.service
+
+[Install]
+WantedBy=timers.target

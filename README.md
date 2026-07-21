@@ -155,6 +155,16 @@ cd frontend && npm run lint && npm run build && npx vitest run
 cd worker && python3 -m compileall -q .
 ```
 
+## Deployment Authority
+
+GitHub Actions is a hosted quality gate only. It does not publish images, contact Core, or deploy Financial OS. The former five-minute production timer is retired; the current production release remains frozen until a later work package receives separate approval.
+
+Operational controls:
+
+- [`docs/operations/deployment-authority.md`](docs/operations/deployment-authority.md)
+- [`docs/operations/phase-c-change-control.md`](docs/operations/phase-c-change-control.md)
+- `ops/validation/test-single-deployment-authority.sh`
+
 ## Alur Pengembangan
 
 Lihat panduan di direktori `/prompts` untuk aturan coding, skema database, dan UI design system.
@@ -181,7 +191,7 @@ Lihat panduan di direktori `/prompts` untuk aturan coding, skema database, dan U
 - ✅ AI advisor (opsional)
 - ✅ Protection gap analysis
 - ✅ Rate limiting
-- ✅ CI/CD pipeline
+- ✅ Hosted CI quality gates (no automatic production deployment)
 
 ## Roadmap
 

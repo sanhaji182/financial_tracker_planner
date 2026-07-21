@@ -1,0 +1,25 @@
+{
+  "captured_at": "2026-07-21T00:00:00Z",
+  "cron_matches": 0,
+  "deploy_processes": 0,
+  "github_hooks": 0,
+  "github_runners": 0,
+  "manual_path": {
+    "executable": true,
+    "exists": true,
+    "expected_sha256": "26daff04f097f2ccddd15121fe8bd99e82f40712ca4bcecea652fedabceb7258",
+    "path": "/usr/local/sbin/finance-deploy",
+    "sha256": "26daff04f097f2ccddd15121fe8bd99e82f40712ca4bcecea652fedabceb7258"
+  },
+  "queued_jobs": 0,
+  "schema_version": 1,
+  "service": {
+    "active_state": "inactive"
+  },
+  "timer": {
+    "active_state": "inactive",
+    "listed": false,
+    "unit_file_state": "disabled"
+  },
+  "workflow_automatic_refs": []
+}

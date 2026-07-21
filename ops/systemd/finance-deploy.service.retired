@@ -1,0 +1,14 @@
+[Unit]
+Description=Financial OS validate and deploy origin/master
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/usr/local/sbin/finance-deploy
+TimeoutStartSec=1800
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

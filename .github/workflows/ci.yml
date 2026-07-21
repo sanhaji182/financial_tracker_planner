@@ -7,6 +7,18 @@ on:
     branches: [main, master]
 
 jobs:
+  deployment-authority-policy:
+    name: Deployment authority policy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reject automatic production deployment authority
+        run: ops/validation/test-single-deployment-authority.sh
+
   backend:
     name: Go Backend
     runs-on: ubuntu-latest
