@@ -148,7 +148,7 @@ jobs:
             local role="$1" dockerfile="$2"
             local repository="ghcr.io/sanhaji182/financial-os-${role}"
             local common=(
-              --platform linux/amd64 --no-cache --load
+              --platform linux/amd64 --no-cache
               --provenance=false --sbom=false
               --build-arg "BUILD_SHA=${GITHUB_SHA}"
               --build-arg "APP_VERSION=${RELEASE_ID}"
@@ -156,23 +156,53 @@ jobs:
               --build-arg "SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH}"
               --file "$dockerfile" .
             )
-            docker buildx build --tag "fos-${role}:repro-a" "${common[@]}"
-            local first
-            first="$(docker image inspect "fos-${role}:repro-a" --format '{{.Id}}')"
-            docker buildx build --tag "fos-${role}:repro-b" "${common[@]}"
-            local second
-            second="$(docker image inspect "fos-${role}:repro-b" --format '{{.Id}}')"
+            local archive_a="${RUNNER_TEMP}/fos-${role}-repro-a.tar"
+            local archive_b="${RUNNER_TEMP}/fos-${role}-repro-b.tar"
+            docker buildx build --tag "fos-${role}:repro-a" \
+              --output "type=docker,dest=${archive_a},rewrite-timestamp=true" "${common[@]}"
+            docker buildx build --tag "fos-${role}:repro-b" \
+              --output "type=docker,dest=${archive_b},rewrite-timestamp=true" "${common[@]}"
+            image_fingerprint() {
+              python3 - "$1" <<'PY'
+          import hashlib,json,sys,tarfile
+          with tarfile.open(sys.argv[1]) as archive:
+              manifest=json.load(archive.extractfile('manifest.json'))[0]
+              members=[manifest['Config'], *manifest['Layers']]
+              digest=hashlib.sha256()
+              for name in members:
+                  body=archive.extractfile(name).read()
+                  digest.update(len(body).to_bytes(8,'big'))
+                  digest.update(body)
+              print('sha256:' + digest.hexdigest())
+          PY
+            }
+            config_digest() {
+              tar -xOf "$1" manifest.json | python3 -c \
+                'import json,sys; print("sha256:" + json.load(sys.stdin)[0]["Config"].split("/")[-1].removesuffix(".json"))'
+            }
+            local first second config
+            first="$(image_fingerprint "$archive_a")"
+            second="$(image_fingerprint "$archive_b")"
+            [[ "$first" =~ ^sha256:[0-9a-f]{64}$ ]]
+            [[ "$second" =~ ^sha256:[0-9a-f]{64}$ ]]
             test "$first" = "$second" || {
-              echo "non-reproducible ${role} image: ${first} != ${second}" >&2
+              echo "non-reproducible ${role} image archive: ${first} != ${second}" >&2
               return 1
             }
+            config="$(config_digest "$archive_b")"
+            [[ "$config" =~ ^sha256:[0-9a-f]{64}$ ]]
+            docker load --input "$archive_b"
+            loaded="$(docker image inspect "fos-${role}:repro-b" --format '{{.Id}}')"
+            test "$loaded" = "$config"
+            echo "${role}_reproducible_fingerprint=${second}" >> "$GITHUB_OUTPUT"
+            echo "${role}_image_id=${loaded}" >> "$GITHUB_OUTPUT"
             docker tag "fos-${role}:repro-b" "${repository}:${RELEASE_ID}"
             docker push "${repository}:${RELEASE_ID}"
             local digest
             digest="$(docker buildx imagetools inspect "${repository}:${RELEASE_ID}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
             [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
             echo "${role}_ref=${repository}@${digest}" >> "$GITHUB_OUTPUT"
-            echo "${role}_image_id=${second}" >> "$GITHUB_OUTPUT"
+            echo "${role}_registry_digest=${digest}" >> "$GITHUB_OUTPUT"
           }
           build_and_publish frontend docker/Dockerfile.frontend.prod
           build_and_publish backend docker/Dockerfile.backend.prod

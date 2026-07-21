@@ -35,6 +35,13 @@ for marker in (
     "database-backed test skipped; immutable candidate rejected",
 ):
     assert marker in qualitytxt, marker
+for marker in (
+    "type=docker,dest=",
+    "rewrite-timestamp=true",
+    "manifest.json",
+    "docker load --input",
+):
+    assert marker in pubtxt, marker
 for marker in ("download-artifact","verify-release-bundle.sh","imagetools inspect"):
     assert marker in vertxt, marker
 for forbidden in ("docker compose up","finance-deploy","self-hosted","repository_dispatch","workflow_dispatch"):
