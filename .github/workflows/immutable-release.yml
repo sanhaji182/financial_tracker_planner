@@ -82,7 +82,7 @@ jobs:
         working-directory: frontend
         env:
           VITE_BUILD_SHA: ${{ github.sha }}
-          VITE_APP_VERSION: candidate
+          VITE_APP_VERSION: 0.0.0-candidate
         run: |
           set -Eeuo pipefail
           npm ci
