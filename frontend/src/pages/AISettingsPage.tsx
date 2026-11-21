@@ -1,32 +1,33 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { CardSkeleton } from '../components/ui/Skeleton';
-import { 
-  Bot, 
-  Cpu, 
-  Key, 
-  Sparkles, 
-  Check, 
-  AlertTriangle, 
-  RotateCw, 
-  Settings, 
+import {
+  Cpu,
+  Key,
+  Sparkles,
+  Check,
+  AlertTriangle,
+  RotateCw,
+  Settings,
   Play,
   ShieldCheck,
   EyeOff,
-  Eye
+  Eye,
 } from 'lucide-react';
 import { aiSettingsService } from '../services/aiSettings';
 import { Card } from '../components/ui/Card';
+import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuthStore } from '../stores/authStore';
+import { toast } from '../stores/useToastStore';
 
 export const AISettingsPage: React.FC = () => {
   const { user } = useAuthStore();
   const isOwner = user?.role === 'owner';
 
-  // Config States
   const [aiEnabled, setAiEnabled] = useState(false);
-  const [aiProvider, setAiProvider] = useState<'openai' | 'anthropic' | 'local'>('local');
+  const [aiProvider, setAiProvider] = useState<'openai' | 'anthropic' | 'gemini' | 'local'>('local');
   const [aiModel, setAiModel] = useState('default');
   const [ocrEscalation, setOcrEscalation] = useState(false);
   const [autoCategorization, setAutoCategorization] = useState(false);
@@ -36,15 +37,15 @@ export const AISettingsPage: React.FC = () => {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [showApiKey, setShowApiKey] = useState(false);
 
-  // Status UI States
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isCheckingAnomalies, setIsCheckingAnomalies] = useState(false);
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [anomalyResult, setAnomalyResult] = useState<{ count: number; alerts: string[] } | null>(null);
+  const [anomalyResult, setAnomalyResult] = useState<{ count: number; alerts: string[] } | null>(
+    null
+  );
 
-  // Load Settings
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     setIsLoading(true);
     setMessage(null);
     try {
@@ -57,21 +58,21 @@ export const AISettingsPage: React.FC = () => {
       setAdvisorEnabled(settings.advisor_enabled);
       setAnomalyEnabled(settings.anomaly_detection_enabled);
       setHasApiKey(settings.has_api_key);
-    } catch (err: any) {
-      setMessage({
-        type: 'error',
-        text: err.response?.data?.error?.message || err.message || 'Gagal memuat pengaturan AI.',
-      });
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message ||
+        (err instanceof Error ? err.message : 'Gagal memuat pengaturan AI.');
+      setMessage({ type: 'error', text: msg });
     } finally {
       setIsLoading(false);
     }
-  };
-
-  useEffect(() => {
-    loadSettings();
   }, []);
 
-  // Save Settings
+  useEffect(() => {
+    void loadSettings();
+  }, [loadSettings]);
+
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isOwner) return;
@@ -90,20 +91,22 @@ export const AISettingsPage: React.FC = () => {
         api_key: apiKey || undefined,
       });
 
+      toast.success('Pengaturan AI berhasil diperbarui');
       setMessage({ type: 'success', text: 'Pengaturan AI berhasil diperbarui!' });
-      setApiKey(''); // Clear the input field
-      await loadSettings(); // Reload to update hasApiKey state
-    } catch (err: any) {
-      setMessage({
-        type: 'error',
-        text: err.response?.data?.error?.message || err.message || 'Gagal menyimpan pengaturan AI.',
-      });
+      setApiKey('');
+      await loadSettings();
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message ||
+        (err instanceof Error ? err.message : 'Gagal menyimpan pengaturan AI.');
+      setMessage({ type: 'error', text: msg });
+      toast.error('Gagal menyimpan pengaturan', msg);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Trigger Anomaly Detection
   const handleTriggerAnomaly = async () => {
     if (!isOwner) return;
 
@@ -114,32 +117,28 @@ export const AISettingsPage: React.FC = () => {
       const res = await aiSettingsService.detectAnomaly();
       setAnomalyResult({
         count: res.anomalies_count,
-        alerts: res.alerts_created,
+        alerts: Array.isArray(res.alerts_created) ? res.alerts_created : [],
       });
-      setMessage({
-        type: 'success',
-        text: `Deteksi anomali selesai. ${res.anomalies_count} anomali ditemukan.`,
-      });
-    } catch (err: any) {
-      setMessage({
-        type: 'error',
-        text: err.response?.data?.error?.message || err.message || 'Gagal memproses deteksi anomali.',
-      });
+      toast.success(`Deteksi anomali selesai (${res.anomalies_count} anomali)`);
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message ||
+        (err instanceof Error ? err.message : 'Gagal memproses deteksi anomali.');
+      setMessage({ type: 'error', text: msg });
+      toast.error(msg);
     } finally {
       setIsCheckingAnomalies(false);
     }
   };
 
-
   if (isLoading) {
     return (
-      <div className="max-w-4xl mx-auto p-6 space-y-6">
-        {/* Header Skeleton */}
+      <div className="space-y-6">
         <div className="space-y-2">
-          <div className="h-8 w-48 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-          <div className="h-4 w-72 bg-slate-100 dark:bg-slate-800/60 rounded animate-pulse" />
+          <div className="h-8 w-48 max-w-full bg-slate-200 dark:bg-slate-800 rounded-lg animate-pulse" />
+          <div className="h-4 w-full max-w-xs bg-slate-100 dark:bg-slate-800/60 rounded-lg animate-pulse" />
         </div>
-        
         <CardSkeleton />
         <CardSkeleton />
         <CardSkeleton />
@@ -148,64 +147,59 @@ export const AISettingsPage: React.FC = () => {
   }
 
   return (
-    <div className="max-w-4xl mx-auto p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-text-primary flex items-center gap-2">
-            <Bot className="w-7 h-7 text-indigo-600" />
-            Asisten AI & Pengaturan LLM
-          </h1>
-          <p className="text-sm text-text-secondary mt-1">
-            Konfigurasikan asisten kecerdasan buatan (LLM) untuk memperluas fungsionalitas pencatatan keuangan Anda.
-          </p>
-        </div>
-        <div className="text-xs bg-indigo-50 text-indigo-600 dark:bg-indigo-950/20 dark:text-indigo-400 font-medium px-3 py-1.5 rounded-full flex items-center gap-1.5 self-start">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>Fitur AI bersifat Opsional</span>
-        </div>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Asisten AI & Pengaturan LLM"
+        subtitle="Konfigurasikan model bahasa untuk membantu kategorisasi transaksi, koreksi OCR, dan chat penasihat."
+        badge={
+          <Badge variant="ai">
+            <Sparkles className="h-3 w-3" />
+            Fitur Opsional
+          </Badge>
+        }
+      />
 
       {message && (
         <div
-          className={`p-4 rounded-lg border text-sm flex gap-3 ${
+          className={`p-4 rounded-2xl border text-sm flex gap-3 ${
             message.type === 'success'
-              ? 'bg-green-50 text-green-800 border-green-200 dark:bg-green-950/20 dark:text-green-400 dark:border-green-900/30'
-              : 'bg-red-50 text-red-800 border-red-200 dark:bg-red-950/20 dark:text-red-400 dark:border-red-900/30'
+              ? 'bg-emerald-50 text-emerald-800 border-emerald-200 dark:bg-emerald-950/30 dark:text-emerald-300 dark:border-emerald-900/40'
+              : 'bg-rose-50 text-rose-800 border-rose-200 dark:bg-rose-950/30 dark:text-rose-300 dark:border-rose-900/40'
           }`}
         >
           {message.type === 'success' ? (
-            <ShieldCheck className="w-5 h-5 shrink-0 text-green-600 dark:text-green-400" />
+            <ShieldCheck className="w-5 h-5 shrink-0 text-emerald-600 dark:text-emerald-400" />
           ) : (
-            <AlertTriangle className="w-5 h-5 shrink-0 text-red-600 dark:text-red-400" />
+            <AlertTriangle className="w-5 h-5 shrink-0 text-rose-600 dark:text-rose-400" />
           )}
           <span>{message.text}</span>
         </div>
       )}
 
       {!isOwner && (
-        <div className="p-4 bg-amber-50 text-amber-800 border border-amber-200 rounded-lg text-sm flex gap-3 dark:bg-amber-950/20 dark:text-amber-400 dark:border-amber-900/30">
+        <div className="p-4 bg-amber-50 text-amber-800 border border-amber-200 rounded-2xl text-sm flex gap-3 dark:bg-amber-950/20 dark:text-amber-300 dark:border-amber-900/40">
           <AlertTriangle className="w-5 h-5 shrink-0 text-amber-600 dark:text-amber-400" />
           <div>
             <p className="font-semibold">Akses Terbatas (Viewer Only)</p>
-            <p className="mt-0.5 text-xs text-amber-700/90 dark:text-amber-400/90">
-              Sebagai Pasangan (spouse_viewer), Anda hanya dapat menggunakan fitur AI Advisor yang aktif, namun tidak dapat mengubah konfigurasi API key atau pengaturan fitur AI.
+            <p className="mt-0.5 text-xs opacity-90">
+              Sebagai Pasangan, Anda dapat menggunakan AI Advisor yang aktif namun tidak dapat mengubah konfigurasi API key.
             </p>
           </div>
         </div>
       )}
 
       <form onSubmit={handleSave} className="space-y-6">
-        {/* Global Master Switch */}
-        <Card className="p-6">
-          <div className="flex items-center justify-between">
+        <Card>
+          <div className="flex items-center justify-between gap-4">
             <div className="space-y-0.5">
-              <h2 className="text-base font-semibold text-text-primary">Master Switch AI</h2>
-              <p className="text-xs text-text-secondary">
-                Aktifkan atau matikan seluruh modul kecerdasan buatan di dalam sistem secara instan.
+              <h2 className="font-display text-base font-bold text-slate-900 dark:text-white">
+                Master Switch AI
+              </h2>
+              <p className="text-xs text-slate-500 dark:text-slate-400">
+                Aktifkan atau matikan seluruh modul kecerdasan buatan secara instan.
               </p>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer">
+            <label className="relative inline-flex items-center cursor-pointer shrink-0">
               <input
                 type="checkbox"
                 checked={aiEnabled}
@@ -213,255 +207,223 @@ export const AISettingsPage: React.FC = () => {
                 onChange={(e) => setAiEnabled(e.target.checked)}
                 className="sr-only peer"
               />
-              <div className="w-11 h-6 bg-slate-200 dark:bg-slate-800 rounded-full peer peer-focus:ring-2 peer-focus:ring-indigo-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+              <div className="w-11 h-6 bg-slate-200 dark:bg-slate-700 rounded-full peer peer-focus:ring-2 peer-focus:ring-indigo-500 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600" />
             </label>
           </div>
         </Card>
 
         {aiEnabled && (
           <>
-            {/* LLM Provider Configuration */}
-            <Card className="p-6 space-y-4">
-              <h2 className="text-base font-semibold text-text-primary flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-                <Cpu className="w-5 h-5 text-indigo-500" />
-                Penyedia Model & Kredensial (LLM Provider)
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-text-secondary">AI Provider</label>
-                  <select
-                    value={aiProvider}
-                    disabled={!isOwner}
-                    onChange={(e) => {
-                      const val = e.target.value as 'openai' | 'anthropic' | 'local';
-                      setAiProvider(val);
-                      if (val === 'local') setAiModel('default');
-                      else if (val === 'openai') setAiModel('gpt-4o-mini');
-                      else if (val === 'anthropic') setAiModel('claude-3-5-sonnet-20241022');
-                    }}
-                    className="w-full text-sm bg-bg-base text-text-primary border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                  >
-                    <option value="local">Local Simulator (Tanpa API Key - Mock)</option>
-                    <option value="openai">OpenAI (ChatGPT API)</option>
-                    <option value="anthropic">Anthropic (Claude API)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-1.5">
-                  <label className="text-xs font-semibold text-text-secondary">Model Name</label>
-                  <Input
-                    type="text"
-                    value={aiModel}
-                    disabled={!isOwner || aiProvider === 'local'}
-                    onChange={(e) => setAiModel(e.target.value)}
-                    placeholder="Contoh: gpt-4o, claude-3-5-sonnet"
-                  />
-                </div>
-              </div>
-
-              {aiProvider !== 'local' && (
-                <div className="space-y-2 pt-2">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-text-secondary flex items-center gap-1.5">
-                      <Key className="w-3.5 h-3.5 text-slate-400" />
-                      API Key
-                    </label>
-                    {hasApiKey && (
-                      <span className="text-[10px] font-medium bg-emerald-50 text-emerald-600 dark:bg-emerald-950/20 dark:text-emerald-400 px-2 py-0.5 rounded-full flex items-center gap-1">
-                        <Check className="w-2.5 h-2.5" /> Key Tersimpan
-                      </span>
-                    )}
-                  </div>
-                  <div className="relative">
-                    <input
-                      type={showApiKey ? 'text' : 'password'}
-                      value={apiKey}
-                      disabled={!isOwner}
-                      onChange={(e) => setApiKey(e.target.value)}
-                      placeholder={hasApiKey ? '•••••••••••••••••••••••• (Ketik untuk memperbarui)' : 'Masukkan API Key Anda'}
-                      className="w-full text-sm bg-bg-base text-text-primary border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 pr-10 focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setShowApiKey(!showApiKey)}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
-                    >
-                      {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                    </button>
-                  </div>
-                  <p className="text-[10px] text-text-secondary">
-                    *API Key Anda akan disimpan secara terenkripsi menggunakan modul enkripsi aman di Server.
-                  </p>
-                </div>
-              )}
-            </Card>
-
-            {/* Feature Flags Configuration */}
-            <Card className="p-6 space-y-4">
-              <h2 className="text-base font-semibold text-text-primary flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
-                <Settings className="w-5 h-5 text-indigo-500" />
-                Konfigurasi Fitur AI Pintar
-              </h2>
-
+            <Card>
               <div className="space-y-4">
-                {/* OCR Escalation */}
-                <div className="flex items-start justify-between gap-4 p-3 hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-lg transition-colors">
-                  <div className="space-y-0.5">
-                    <label className="text-sm font-semibold text-text-primary cursor-pointer select-none">
-                      OCR Escalation & AI Correction
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+                  <Cpu className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  Penyedia Model & Kredensial (LLM)
+                </h2>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      AI Provider
                     </label>
-                    <p className="text-xs text-text-secondary">
-                      Secara otomatis mengirimkan data gambar tanda terima ke LLM untuk dikoreksi jika tingkat kepercayaan OCR rendah (&lt; 70%).
-                    </p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={ocrEscalation}
+                    <select
+                      value={aiProvider}
                       disabled={!isOwner}
-                      onChange={(e) => setOcrEscalation(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-slate-200 dark:bg-slate-800 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
-                  </label>
-                </div>
+                      onChange={(e) => {
+                        const val = e.target.value as 'openai' | 'anthropic' | 'gemini' | 'local';
+                        setAiProvider(val);
+                        if (val === 'local') setAiModel('default');
+                        else if (val === 'openai') setAiModel('gpt-4o-mini');
+                        else if (val === 'anthropic') setAiModel('claude-3-5-sonnet-20241022');
+                        else if (val === 'gemini') setAiModel('gemini-2.5-flash');
+                      }}
+                      className="w-full h-10 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl px-3 focus:outline-none focus:border-indigo-500"
+                    >
+                      <option value="local">Local Simulator (Tanpa API Key)</option>
+                      <option value="openai">OpenAI (ChatGPT Vision API)</option>
+                      <option value="anthropic">Anthropic (Claude Vision API)</option>
+                      <option value="gemini">Google Gemini (Vision &amp; Chat API)</option>
+                    </select>
+                  </div>
 
-                {/* Auto Categorization */}
-                <div className="flex items-start justify-between gap-4 p-3 hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-lg transition-colors">
-                  <div className="space-y-0.5">
-                    <label className="text-sm font-semibold text-text-primary cursor-pointer select-none">
-                      Auto-Categorization
+                  <div className="space-y-1.5">
+                    <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                      Model Name
                     </label>
-                    <p className="text-xs text-text-secondary">
-                      Analisis merchant dan catatan transaksi baru menggunakan model bahasa untuk menentukan kategori yang paling tepat secara otomatis.
-                    </p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={autoCategorization}
-                      disabled={!isOwner}
-                      onChange={(e) => setAutoCategorization(e.target.checked)}
-                      className="sr-only peer"
+                    <Input
+                      type="text"
+                      value={aiModel}
+                      disabled={!isOwner || aiProvider === 'local'}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      placeholder="Contoh: gpt-4o-mini, claude-3-5-sonnet"
                     />
-                    <div className="w-9 h-5 bg-slate-200 dark:bg-slate-800 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
-                  </label>
-                </div>
-
-                {/* Advisor Chat */}
-                <div className="flex items-start justify-between gap-4 p-3 hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-lg transition-colors">
-                  <div className="space-y-0.5">
-                    <label className="text-sm font-semibold text-text-primary cursor-pointer select-none">
-                      AI Advisor Chat
-                    </label>
-                    <p className="text-xs text-text-secondary">
-                      Aktifkan tombol chat penasihat keuangan interaktif pada pojok kanan bawah dasbor Anda.
-                    </p>
                   </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={advisorEnabled}
-                      disabled={!isOwner}
-                      onChange={(e) => setAdvisorEnabled(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-slate-200 dark:bg-slate-800 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
-                  </label>
                 </div>
 
-                {/* Anomaly Detection */}
-                <div className="flex items-start justify-between gap-4 p-3 hover:bg-slate-50 dark:hover:bg-slate-800/30 rounded-lg transition-colors">
-                  <div className="space-y-0.5">
-                    <label className="text-sm font-semibold text-text-primary cursor-pointer select-none">
-                      Weekly Anomaly Detection
-                    </label>
-                    <p className="text-xs text-text-secondary">
-                      Analisis data transaksi secara berkala untuk mendeteksi lonjakan pengeluaran (&gt; 2x rata-rata kategori) atau transaksi &gt; Rp 5.000.000.
-                    </p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                    <input
-                      type="checkbox"
-                      checked={anomalyEnabled}
-                      disabled={!isOwner}
-                      onChange={(e) => setAnomalyEnabled(e.target.checked)}
-                      className="sr-only peer"
-                    />
-                    <div className="w-9 h-5 bg-slate-200 dark:bg-slate-800 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
-                  </label>
-                </div>
-              </div>
-            </Card>
-
-            {/* Anomaly Trigger Card */}
-            {anomalyEnabled && (
-              <Card className="p-6 space-y-4 border border-indigo-100 dark:border-indigo-900/30 bg-indigo-50/10 dark:bg-indigo-950/5">
-                <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                  <div className="space-y-1">
-                    <h3 className="text-sm font-bold text-text-primary">Deteksi Anomali Manual</h3>
-                    <p className="text-xs text-text-secondary">
-                      Jalankan mesin deteksi anomali pada transaksi terbaru Anda secara manual sekarang untuk langsung menghasilkan alert.
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    disabled={!isOwner || isCheckingAnomalies}
-                    onClick={handleTriggerAnomaly}
-                    className="flex items-center gap-1.5 shrink-0"
-                  >
-                    {isCheckingAnomalies ? (
-                      <RotateCw className="w-4 h-4 animate-spin" />
-                    ) : (
-                      <Play className="w-4 h-4" />
-                    )}
-                    <span>Jalankan Deteksi</span>
-                  </Button>
-                </div>
-
-                {anomalyResult && (
-                  <div className="p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-lg text-xs space-y-2 border border-slate-100 dark:border-slate-800">
-                    <p className="font-semibold text-text-primary flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
-                      <ShieldCheck className="w-4 h-4" /> Hasil Deteksi:
-                    </p>
-                    <ul className="list-disc list-inside space-y-1 text-text-secondary">
-                      <li>Jumlah anomali terdeteksi: <strong>{anomalyResult.count}</strong></li>
-                      {anomalyResult.alerts.length > 0 && (
-                        <li>
-                          Alert baru dibuat:{' '}
-                          <div className="mt-1 flex flex-wrap gap-1">
-                            {anomalyResult.alerts.map((al, idx) => (
-                              <span
-                                key={idx}
-                                className="bg-red-50 text-red-700 dark:bg-red-950/20 dark:text-red-400 font-medium px-2 py-0.5 rounded border border-red-100 dark:border-red-900/20"
-                              >
-                                {al}
-                              </span>
-                            ))}
-                          </div>
-                        </li>
+                {aiProvider !== 'local' && (
+                  <div className="space-y-2 pt-2">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                        <Key className="w-3.5 h-3.5 text-slate-400" />
+                        API Key
+                      </label>
+                      {hasApiKey && (
+                        <Badge variant="success">
+                          <Check className="w-3 h-3" /> Key Tersimpan
+                        </Badge>
                       )}
-                    </ul>
+                    </div>
+                    <div className="relative">
+                      <input
+                        type={showApiKey ? 'text' : 'password'}
+                        value={apiKey}
+                        disabled={!isOwner}
+                        onChange={(e) => setApiKey(e.target.value)}
+                        placeholder={
+                          hasApiKey
+                            ? '•••••••••••••••••••••••• (Ketik untuk memperbarui)'
+                            : 'Masukkan API Key Anda'
+                        }
+                        className="w-full h-10 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl px-3 pr-10 focus:outline-none focus:border-indigo-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowApiKey(!showApiKey)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                      >
+                        {showApiKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-[11px] text-slate-400">
+                      Disimpan pada konfigurasi brankas server lokal untuk pemanggilan worker AI.
+                    </p>
                   </div>
                 )}
+              </div>
+            </Card>
+
+            <Card>
+              <div className="space-y-4">
+                <h2 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
+                  <Settings className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  Konfigurasi Fitur AI Pintar
+                </h2>
+
+                <div className="space-y-2">
+                  {[
+                    {
+                      label: 'OCR Escalation & Koreksi AI',
+                      desc: 'Kirim data gambar struk ke LLM bila kepercayaan OCR di bawah 70%.',
+                      checked: ocrEscalation,
+                      onChange: setOcrEscalation,
+                    },
+                    {
+                      label: 'Auto-Categorization',
+                      desc: 'Tentukan kategori transaksi baru otomatis berdasarkan merchant dan catatan.',
+                      checked: autoCategorization,
+                      onChange: setAutoCategorization,
+                    },
+                    {
+                      label: 'AI Advisor Chat',
+                      desc: 'Aktifkan laci chat asisten keuangan interaktif di seluruh halaman aplikasi.',
+                      checked: advisorEnabled,
+                      onChange: setAdvisorEnabled,
+                    },
+                    {
+                      label: 'Weekly Anomaly Detection',
+                      desc: 'Deteksi lonjakan pengeluaran tidak wajar secara berkala.',
+                      checked: anomalyEnabled,
+                      onChange: setAnomalyEnabled,
+                    },
+                  ].map((item) => (
+                    <div
+                      key={item.label}
+                      className="flex items-start justify-between gap-4 p-3 hover:bg-slate-50 dark:hover:bg-slate-800/40 rounded-xl transition-colors"
+                    >
+                      <div className="space-y-0.5">
+                        <p className="text-sm font-semibold text-slate-900 dark:text-white">
+                          {item.label}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">{item.desc}</p>
+                      </div>
+                      <label className="relative inline-flex items-center cursor-pointer shrink-0 mt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={item.checked}
+                          disabled={!isOwner}
+                          onChange={(e) => item.onChange(e.target.checked)}
+                          className="sr-only peer"
+                        />
+                        <div className="w-9 h-5 bg-slate-200 dark:bg-slate-700 rounded-full peer peer-checked:bg-indigo-600 peer-checked:after:translate-x-full after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all" />
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </Card>
+
+            {anomalyEnabled && (
+              <Card className="border-indigo-200/80 dark:border-indigo-900/40 bg-indigo-50/30 dark:bg-indigo-950/15">
+                <div className="space-y-4">
+                  <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+                    <div className="space-y-1">
+                      <h3 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                        Deteksi Anomali Manual
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
+                        Jalankan mesin deteksi anomali pada transaksi terbaru sekarang untuk menghasilkan peringatan.
+                      </p>
+                    </div>
+                    <Button
+                      variant="secondary"
+                      disabled={!isOwner || isCheckingAnomalies}
+                      onClick={() => void handleTriggerAnomaly()}
+                    >
+                      {isCheckingAnomalies ? (
+                        <RotateCw className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Play className="w-4 h-4" />
+                      )}
+                      Jalankan Deteksi
+                    </Button>
+                  </div>
+
+                  {anomalyResult && (
+                    <div className="p-3.5 bg-white dark:bg-slate-900 rounded-xl text-xs space-y-2 border border-slate-200 dark:border-slate-800">
+                      <p className="font-semibold flex items-center gap-1.5 text-indigo-600 dark:text-indigo-400">
+                        <ShieldCheck className="w-4 h-4" /> Hasil Deteksi:
+                      </p>
+                      <ul className="list-disc list-inside space-y-1 text-slate-600 dark:text-slate-300">
+                        <li>
+                          Jumlah anomali terdeteksi: <strong>{anomalyResult.count}</strong>
+                        </li>
+                        {(anomalyResult.alerts ?? []).length > 0 && (
+                          <li>
+                            Peringatan baru dibuat:
+                            <div className="mt-1.5 flex flex-wrap gap-1.5">
+                              {(anomalyResult.alerts ?? []).map((al, idx) => (
+                                <Badge key={idx} variant="danger">
+                                  {al}
+                                </Badge>
+                              ))}
+                            </div>
+                          </li>
+                        )}
+                      </ul>
+                    </div>
+                  )}
+                </div>
               </Card>
             )}
           </>
         )}
 
-        {/* Footer Disclaimer & Actions */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-slate-200 dark:border-slate-800 pt-6">
-          <div className="text-[11px] text-text-secondary font-medium">
-            🤖 Saran AI — bukan nasihat keuangan profesional
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-t border-slate-200 dark:border-slate-800 pt-5">
+          <div className="text-xs text-slate-500 dark:text-slate-400">
+            Catatan: Saran AI hanya referensi analisis dan bukan nasihat keuangan profesional.
           </div>
           {isOwner && (
-            <Button
-              type="submit"
-              disabled={isSaving}
-              className="px-6 self-end md:self-auto"
-            >
+            <Button type="submit" isLoading={isSaving}>
               {isSaving ? 'Menyimpan...' : 'Simpan Pengaturan'}
             </Button>
           )}
@@ -470,4 +432,5 @@ export const AISettingsPage: React.FC = () => {
     </div>
   );
 };
+
 export default AISettingsPage;

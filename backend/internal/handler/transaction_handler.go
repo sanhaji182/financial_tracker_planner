@@ -39,6 +39,7 @@ func (h *TransactionHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		txGroup.POST("/:id/attachments", middleware.RoleMiddleware("owner"), h.UploadAttachment)
 		txGroup.POST("/:id/split", middleware.RoleMiddleware("owner"), h.Split)
 		txGroup.POST("/upload", middleware.RoleMiddleware("owner"), h.UploadDocument)
+		txGroup.PUT("/confirm-bulk", middleware.RoleMiddleware("owner"), h.ConfirmBulkDrafts)
 		txGroup.PUT("/confirm/:id", middleware.RoleMiddleware("owner"), h.ConfirmDraft)
 	}
 }
@@ -403,5 +404,32 @@ func (h *TransactionHandler) ConfirmDraft(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Draft transaction confirmed successfully",
 		"data":    res,
+	})
+}
+
+func (h *TransactionHandler) ConfirmBulkDrafts(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var req dto.BulkConfirmDraftsRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.handleValidationError(c, err)
+		return
+	}
+
+	ip := c.ClientIP()
+	ua := c.Request.UserAgent()
+
+	res, err := h.txService.BulkConfirmParsedTransactions(c.Request.Context(), userID, req, &ip, &ua)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "BAD_REQUEST", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message":         "Draft transactions confirmed successfully",
+		"confirmed_count": len(res),
+		"data":            res,
 	})
 }

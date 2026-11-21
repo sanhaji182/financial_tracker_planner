@@ -1,9 +1,14 @@
 import os
-from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Request
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from app.services.ocr_service import process_ocr_receipt
+from app.services.ocr_service import PDFPasswordError, extract_document_text, process_ocr_receipt
 from app.services.pdf_service import parse_pdf_mutasi
+from app.services.snapshot_service import (
+    parse_account_snapshot,
+    parse_debt_payment,
+    parse_debt_snapshot,
+)
 
 app = FastAPI(
     title="Financial OS - Python Worker",
@@ -73,9 +78,47 @@ async def ocr_receipt(
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to process receipt OCR")
 
+def validate_image_or_pdf(file: UploadFile) -> None:
+    content_type = file.content_type or ""
+    filename_lower = (file.filename or "").lower()
+    is_valid = (
+        content_type.startswith("image/")
+        or content_type == "application/pdf"
+        or filename_lower.endswith((".png", ".jpg", ".jpeg", ".webp", ".pdf"))
+    )
+    if not is_valid:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid file type. Must be an image (PNG, JPG, JPEG, WEBP) or PDF",
+        )
+
+
+@app.post("/ocr/document")
+async def ocr_document(
+    file: UploadFile = File(...),
+    x_worker_secret: str = Header(None)
+):
+    """
+    Accepts any image or PDF (digital or scanned) and extracts full OCR text.
+    """
+    verify_service_auth(x_worker_secret)
+    validate_image_or_pdf(file)
+
+    try:
+        file_bytes = await read_file_with_limit(file)
+        return extract_document_text(file_bytes, file.filename or "")
+    except PDFPasswordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to extract document OCR text")
+
+
 @app.post("/parse/pdf-statement")
 async def parse_pdf_statement(
     file: UploadFile = File(...),
+    pdf_password: str = Form(None),
     x_worker_secret: str = Header(None)
 ):
     """
@@ -91,12 +134,113 @@ async def parse_pdf_statement(
 
     try:
         file_bytes = await read_file_with_limit(file)
-        res = parse_pdf_mutasi(file_bytes)
+        res = parse_pdf_mutasi(file_bytes, pdf_password=pdf_password)
         return res
+    except PDFPasswordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
     except HTTPException:
         raise
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to parse PDF statement")
+
+
+@app.post("/parse/debt-snapshot")
+async def parse_debt_snapshot_endpoint(
+    file: UploadFile = File(...),
+    pdf_password: str = Form(None),
+    x_worker_secret: str = Header(None),
+    x_ai_provider: str = Header(None),
+    x_ai_model: str = Header(None),
+    x_ai_api_key: str = Header(None),
+):
+    """
+    Accepts a PayLater / Credit Card / Loan screenshot or PDF statement and extracts debt fields.
+    """
+    verify_service_auth(x_worker_secret)
+    validate_image_or_pdf(file)
+
+    try:
+        file_bytes = await read_file_with_limit(file)
+        return await parse_debt_snapshot(
+            file_bytes=file_bytes,
+            filename=file.filename or "",
+            pdf_password=pdf_password,
+            provider=x_ai_provider or "local",
+            model_name=x_ai_model or "default",
+            api_key=x_ai_api_key,
+        )
+    except PDFPasswordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to parse debt snapshot")
+
+
+@app.post("/parse/debt-payment")
+async def parse_debt_payment_endpoint(
+    file: UploadFile = File(...),
+    pdf_password: str = Form(None),
+    x_worker_secret: str = Header(None),
+    x_ai_provider: str = Header(None),
+    x_ai_model: str = Header(None),
+    x_ai_api_key: str = Header(None),
+):
+    """
+    Accepts a debt payment receipt screenshot or PDF and extracts payment details.
+    """
+    verify_service_auth(x_worker_secret)
+    validate_image_or_pdf(file)
+
+    try:
+        file_bytes = await read_file_with_limit(file)
+        return await parse_debt_payment(
+            file_bytes=file_bytes,
+            filename=file.filename or "",
+            pdf_password=pdf_password,
+            provider=x_ai_provider or "local",
+            model_name=x_ai_model or "default",
+            api_key=x_ai_api_key,
+        )
+    except PDFPasswordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to parse debt payment proof")
+
+
+@app.post("/parse/account-snapshot")
+async def parse_account_snapshot_endpoint(
+    file: UploadFile = File(...),
+    pdf_password: str = Form(None),
+    x_worker_secret: str = Header(None),
+    x_ai_provider: str = Header(None),
+    x_ai_model: str = Header(None),
+    x_ai_api_key: str = Header(None),
+):
+    """
+    Accepts a bank/e-wallet balance screenshot or PDF statement and extracts account balance fields.
+    """
+    verify_service_auth(x_worker_secret)
+    validate_image_or_pdf(file)
+
+    try:
+        file_bytes = await read_file_with_limit(file)
+        return await parse_account_snapshot(
+            file_bytes=file_bytes,
+            filename=file.filename or "",
+            pdf_password=pdf_password,
+            provider=x_ai_provider or "local",
+            model_name=x_ai_model or "default",
+            api_key=x_ai_api_key,
+        )
+    except PDFPasswordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to parse account snapshot")
 
 # Pydantic schemas for AI endpoints
 from pydantic import BaseModel
@@ -137,7 +281,8 @@ async def enhance_ocr(
             image_base64=req.image_base64,
             provider=x_ai_provider or "local",
             model_name=x_ai_model or "default",
-            api_key=x_ai_api_key
+            api_key=x_ai_api_key,
+            filename=req.filename,
         )
         return res
     except Exception:

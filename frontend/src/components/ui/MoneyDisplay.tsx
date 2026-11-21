@@ -13,8 +13,9 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
   className = '',
   colorSemantic = false,
 }) => {
-  const isNegative = value < 0;
-  const absValue = Math.abs(value);
+  const safeVal = Number.isFinite(value) ? value : 0;
+  const isNegative = safeVal < 0;
+  const absValue = Math.abs(safeVal);
 
   const formatValue = (val: number) => {
     return new Intl.NumberFormat('id-ID', {
@@ -27,16 +28,17 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
 
   let colorClass = '';
   if (colorSemantic) {
-    if (value > 0) {
+    if (safeVal > 0) {
       colorClass = 'text-emerald-600 dark:text-emerald-400';
-    } else if (value < 0) {
+    } else if (safeVal < 0) {
       colorClass = 'text-rose-600 dark:text-rose-400';
     }
   }
 
   return (
-    <span className={`font-mono tracking-tight ${colorClass} ${className}`}>
-      {isNegative ? '-' : ''}{formattedStr}
+    <span className={`font-mono tabular-nums tracking-tight ${colorClass} ${className}`}>
+      {isNegative ? '-' : ''}
+      {formattedStr}
     </span>
   );
 };

@@ -24,6 +24,7 @@ type AuthService interface {
 	InviteSpouse(ctx context.Context, ownerID string, req dto.InviteSpouseRequest) (*dto.InviteLink, error)
 	RegisterSpouse(ctx context.Context, inviteToken string, req dto.RegisterRequest) (*dto.AuthResponse, error)
 	ChangePassword(ctx context.Context, userID string, req dto.ChangePasswordRequest) error
+	DeleteAccount(ctx context.Context, userID string, req dto.DeleteAccountRequest) error
 	GetMe(ctx context.Context, userID string) (*model.User, error)
 }
 
@@ -303,4 +304,34 @@ func (s *authService) generateTokenPair(ctx context.Context, user *model.User) (
 
 func (s *authService) GetMe(ctx context.Context, userID string) (*model.User, error) {
 	return s.userRepo.GetUserByID(ctx, userID)
+}
+
+func (s *authService) DeleteAccount(ctx context.Context, userID string, req dto.DeleteAccountRequest) error {
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil {
+		return errors.New("user not found")
+	}
+
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(req.Password)); err != nil {
+		return errors.New("incorrect password")
+	}
+
+	now := time.Now()
+	user.DeletedAt = &now
+	user.IsActive = false
+	anonymizedEmail := fmt.Sprintf("deleted_%d_%s", now.Unix(), user.Email)
+	if len(anonymizedEmail) > 255 {
+		anonymizedEmail = anonymizedEmail[:255]
+	}
+	user.Email = anonymizedEmail
+
+	if err := s.userRepo.UpdateUser(ctx, user); err != nil {
+		return fmt.Errorf("failed to delete account: %w", err)
+	}
+
+	if err := s.userRepo.RevokeAllUserTokens(ctx, userID); err != nil {
+		return fmt.Errorf("failed to revoke user sessions: %w", err)
+	}
+
+	return nil
 }

@@ -41,17 +41,24 @@ export interface InsightsListResponse {
   insights: MonthlyInsight[];
 }
 
+const normalizeInsightsResponse = (data: InsightsListResponse): InsightsListResponse => ({
+  ...data,
+  insights: Array.isArray(data?.insights) ? data.insights : [],
+});
+
 const insightsService = {
   getInsights: async (month?: string): Promise<InsightsListResponse> => {
     const params = month ? `?month=${month}` : '';
     const res = await api.get<any>(`/insights${params}`);
-    return res.data.data;
+    const payload = res.data?.data ?? res.data;
+    return normalizeInsightsResponse(payload);
   },
 
   generateInsights: async (month?: string): Promise<InsightsListResponse> => {
     const params = month ? `?month=${month}` : '';
     const res = await api.post<any>(`/insights/generate${params}`);
-    return res.data.data;
+    const payload = res.data?.data ?? res.data;
+    return normalizeInsightsResponse(payload);
   },
 };
 

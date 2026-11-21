@@ -86,7 +86,11 @@ export const billService = {
 
   async getBillByID(id: string): Promise<Bill> {
     const res = await api.get(`/bills/${id}`);
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      payments: Array.isArray(data?.payments) ? data.payments : [],
+    };
   },
 
   async createBill(req: CreateBillRequest): Promise<Bill> {

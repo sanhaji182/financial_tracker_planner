@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Moon, Sun } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Moon, Sun, ArrowRight, Smartphone } from 'lucide-react';
 import { authService } from '../services/auth';
 import { useAuthStore } from '../stores/authStore';
 import { useThemeStore } from '../stores/useThemeStore';
@@ -21,12 +21,10 @@ export const LoginPage: React.FC = () => {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Validation states
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
 
-  // Redirect if already logged in
-  const from = (location.state as any)?.from?.pathname || '/';
+  const from = (location.state as { from?: { pathname?: string } } | null)?.from?.pathname || '/';
 
   useEffect(() => {
     if (isAuthenticated) {
@@ -34,7 +32,6 @@ export const LoginPage: React.FC = () => {
     }
   }, [isAuthenticated, navigate, from]);
 
-  // Realtime email validation
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setEmail(value);
@@ -47,7 +44,6 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  // Realtime password validation
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
     setPassword(value);
@@ -65,7 +61,6 @@ export const LoginPage: React.FC = () => {
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    // Final checks
     if (!email || emailError) {
       setEmailError(emailError || 'Email wajib diisi');
       return;
@@ -79,14 +74,16 @@ export const LoginPage: React.FC = () => {
     try {
       const data = await authService.login({ email, password });
       setSuccessMsg('Login berhasil! Mengalihkan...');
-      
-      // Delay navigation slightly to let success message show
+
       setTimeout(() => {
         setAuth(data.user, data.access_token);
         navigate(from, { replace: true });
-      }, 1000);
-    } catch (err: any) {
-      const msg = err.response?.data?.error?.message || 'Login gagal, periksa kembali email & password Anda';
+      }, 600);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: { message?: string } } } };
+      const msg =
+        axiosErr.response?.data?.error?.message ||
+        'Login gagal, periksa kembali email & password Anda';
       setErrorMsg(msg);
     } finally {
       setIsSubmitting(false);
@@ -94,135 +91,173 @@ export const LoginPage: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center bg-gradient-to-tr from-slate-100 via-white to-slate-200 p-4 transition-colors duration-300 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-      
+    <div className="relative flex min-h-[100dvh] items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 pt-safe pb-safe overflow-hidden transition-colors duration-200">
+      {/* Subtle airy ambient accents */}
+      <div className="pointer-events-none absolute -top-40 -left-40 h-96 w-96 rounded-full bg-indigo-100/70 dark:bg-indigo-950/30 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-sky-100/70 dark:bg-sky-950/30 blur-3xl" />
+
       {/* Top right theme toggle */}
-      <div className="absolute right-4 top-4">
-        <Button
-          variant="ghost"
-          size="sm"
+      <div className="absolute right-4 top-4 z-10">
+        <button
+          type="button"
           onClick={toggleTheme}
-          className="rounded-full bg-white/80 shadow-md backdrop-blur-sm dark:bg-slate-900/80"
+          aria-label={theme === 'dark' ? 'Aktifkan Light Mode' : 'Aktifkan Dark Mode'}
+          className="p-2.5 rounded-full bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow transition-all text-slate-600 dark:text-slate-300"
         >
-          {theme === 'dark' ? <Sun className="h-5 w-5 text-yellow-500" /> : <Moon className="h-5 w-5 text-slate-700" />}
-        </Button>
+          {theme === 'dark' ? (
+            <Sun className="h-4 w-4 text-amber-400" />
+          ) : (
+            <Moon className="h-4 w-4 text-slate-600" />
+          )}
+        </button>
       </div>
 
-      <div className="w-full max-w-md">
+      <div className="relative z-10 w-full max-w-[420px] animate-fade-in">
         {/* App Logo & Branding */}
-        <div className="mb-8 text-center">
-          <div className="inline-flex h-12 w-12 items-center justify-center rounded-xl bg-primary text-white shadow-lg shadow-primary/30">
-            <span className="text-2xl font-bold tracking-tight">F</span>
-          </div>
-          <h2 className="mt-4 text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white">
-            Financial OS
+        <div className="mb-7 text-center">
+          <img
+            src="/icons/icon-192.png"
+            alt="Logo Keuangan Bersama"
+            className="mx-auto h-14 w-14 rounded-2xl shadow-lg shadow-indigo-600/25 object-cover"
+          />
+          <h2 className="mt-4 font-display text-2xl font-extrabold tracking-tight text-slate-900 dark:text-white">
+            Keuangan <span className="text-indigo-600 dark:text-indigo-400">Bersama</span>
           </h2>
-          <p className="mt-2 text-sm text-slate-500 dark:text-slate-400">
-            Kelola Keuangan Keluarga Lebih Cerdas & Integratif
+          <p className="mt-1.5 text-sm text-slate-500 dark:text-slate-400">
+            Kelola keuangan keluarga lebih jernih & terencana
           </p>
         </div>
 
         {/* Login Card */}
-        <div className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white/80 p-8 shadow-xl backdrop-blur-md transition-colors duration-300 dark:border-slate-800/80 dark:bg-slate-900/85">
-          <h3 className="text-xl font-bold text-slate-900 dark:text-white">Masuk</h3>
-          <p className="mb-6 text-xs text-slate-400 dark:text-slate-500">Masukkan akun Anda untuk masuk ke sistem</p>
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-7 sm:p-8 shadow-xl shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
+          <div className="mb-6">
+            <h3 className="font-display text-lg font-bold text-slate-900 dark:text-white">
+              Masuk ke Akun
+            </h3>
+            <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+              Masukkan kredensial Anda untuk melanjutkan
+            </p>
+          </div>
 
-          {/* Success Banner */}
           {successMsg && (
-            <div className="mb-4 flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm text-green-700 dark:bg-green-950/30 dark:text-green-400">
-              <CheckCircle2 className="h-5 w-5 shrink-0" />
+            <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-emerald-50 border border-emerald-200/80 p-3 text-xs font-medium text-emerald-700 dark:bg-emerald-950/30 dark:border-emerald-900/50 dark:text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
               <span>{successMsg}</span>
             </div>
           )}
 
-          {/* Error Banner */}
           {errorMsg && (
-            <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
-              <AlertCircle className="h-5 w-5 shrink-0" />
+            <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-xs font-medium text-rose-700 dark:bg-rose-950/30 dark:border-rose-900/50 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email Field */}
-            <div className="space-y-1">
-              <Input
-                label="Alamat Email"
-                id="email"
-                type="email"
-                placeholder="nama@email.com"
-                value={email}
-                onChange={handleEmailChange}
-                error={emailError || undefined}
-                required
-              />
-            </div>
+            <Input
+              label="Alamat Email"
+              id="email"
+              type="email"
+              placeholder="nama@email.com"
+              value={email}
+              onChange={handleEmailChange}
+              error={emailError || undefined}
+              containerClassName="mb-0"
+              required
+            />
 
-            {/* Password Field */}
-            <div className="space-y-1">
-              <div className="relative">
-                <Input
-                  label="Password"
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="••••••••"
-                  value={password}
-                  onChange={handlePasswordChange}
-                  error={passwordError || undefined}
-                  required
-                />
+            <Input
+              label="Password"
+              id="password"
+              type={showPassword ? 'text' : 'password'}
+              placeholder="••••••••"
+              value={password}
+              onChange={handlePasswordChange}
+              error={passwordError || undefined}
+              containerClassName="mb-0"
+              required
+              rightElement={
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-[38px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
+                  className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
                 >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 </button>
-              </div>
-            </div>
+              }
+            />
 
-            {/* Remember Me */}
-            <div className="flex items-center justify-between text-sm">
-              <label className="flex items-center gap-2 font-medium text-slate-600 dark:text-slate-400">
+            <div className="flex items-center justify-between text-xs pt-1">
+              <label className="flex items-center gap-2 font-medium text-slate-600 dark:text-slate-400 cursor-pointer select-none">
                 <input
                   type="checkbox"
                   checked={rememberMe}
                   onChange={(e) => setRememberMe(e.target.checked)}
-                  className="h-4 w-4 rounded border-slate-300 text-primary focus:ring-primary dark:border-slate-700"
+                  className="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500 dark:border-slate-700"
                 />
-                Ingat saya
+                Ingat sesi saya
               </label>
-              <Link
-                to="/forgot-password"
-                className="font-medium text-primary hover:underline"
-              >
-                Lupa password?
-              </Link>
+              <span className="text-slate-400 dark:text-slate-500">Sesi terenkripsi</span>
             </div>
 
-            {/* Submit Button */}
             <Button
               type="submit"
-              className="mt-6 w-full"
+              className="w-full mt-2"
+              size="lg"
               disabled={isSubmitting || !!emailError || !!passwordError}
             >
               {isSubmitting ? (
                 <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Masuk...
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Memproses...
                 </>
               ) : (
-                'Masuk ke Dashboard'
+                <>
+                  <span>Masuk ke Dashboard</span>
+                  <ArrowRight className="h-4 w-4" />
+                </>
               )}
             </Button>
           </form>
 
-          {/* Footer Register Link */}
-          <div className="mt-6 text-center text-sm text-slate-600 dark:text-slate-400">
-            Belum punya akun?{' '}
-            <Link to="/register" className="font-semibold text-primary hover:underline">
-              Daftar Sekarang
-            </Link>
+          <div className="my-5 flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500">
+            <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+            <span>atau</span>
+            <span className="h-px flex-1 bg-slate-200 dark:bg-slate-800" />
+          </div>
+
+          <div className="space-y-2">
+            <Button
+              type="button"
+              variant="secondary"
+              className="w-full flex items-center justify-center gap-2 border-emerald-200 bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300 dark:hover:bg-emerald-950/70"
+              onClick={async () => {
+                const authData = await authService.enterLocalOfflineMode();
+                setAuth(authData.user, authData.access_token);
+                navigate('/', { replace: true });
+              }}
+            >
+              <Smartphone className="h-4 w-4 shrink-0" />
+              <span>Gunakan Offline di HP (Tanpa Server)</span>
+            </Button>
+            <p className="text-[11px] leading-relaxed text-center text-slate-500 dark:text-slate-400">
+              Seluruh catatan transaksi, rekening, utang &amp; scan OCR berjalan 100% di memori perangkat tanpa koneksi internet.
+            </p>
+          </div>
+
+          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 text-center text-xs text-slate-500 dark:text-slate-400 space-y-2">
+            <div>
+              Belum punya akun keluarga?{' '}
+              <Link to="/register" className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
+                Daftar Sekarang
+              </Link>
+            </div>
+            <div>
+              <Link to="/privacy" className="text-slate-400 dark:text-slate-500 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline">
+                Kebijakan Privasi
+              </Link>
+            </div>
           </div>
         </div>
       </div>

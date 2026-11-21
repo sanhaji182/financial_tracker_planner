@@ -1,4 +1,4 @@
-FROM node:20-alpine
+FROM node:22-alpine
 
 # Set proxy for build environment dynamically
 ARG http_proxy
@@ -11,8 +11,11 @@ WORKDIR /app
 # Copy dependency files
 COPY frontend/package.json frontend/package-lock.json* ./
 
-# Install dependencies
-RUN npm install
+# Install dependencies (retry-friendly settings for slow/flaky networks)
+RUN npm install --no-audit --no-fund \
+    --fetch-retries=6 \
+    --fetch-retry-maxtimeout=180000 \
+    --fetch-timeout=900000
 
 # Copy source code
 COPY frontend/ ./

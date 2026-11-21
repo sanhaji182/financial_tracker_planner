@@ -1,5 +1,14 @@
-import axios from 'axios';
+import axios, { type AxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../stores/authStore';
+import { isLocalOfflineMode } from './appMode';
+import { handleLocalApiRequest } from '../offline/localApiAdapter';
+import { readCloudGetCache, saveCloudGetCache } from '../offline/storage';
+import {
+  clearStoredRefreshToken,
+  getStoredRefreshToken,
+  isNativeMobile,
+  setStoredRefreshToken,
+} from './mobile';
 
 const api = axios.create({
   baseURL: (import.meta.env.VITE_API_URL as string) || 'http://localhost:8080/api/v1',
@@ -10,12 +19,77 @@ const api = axios.create({
   withCredentials: true,
 });
 
-// Request interceptor to add authorization header
+function buildCloudCacheKey(config: AxiosRequestConfig): string {
+  const url = String(config.url || '');
+  const params = config.params ? JSON.stringify(config.params) : '';
+  return `${url}?${params}`;
+}
+
+function isNetworkFailure(err: unknown): boolean {
+  const axiosErr = err as { response?: unknown; code?: string; message?: string };
+  if (axiosErr?.response) return false;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return true;
+  const code = String(axiosErr?.code || '');
+  if (code === 'ERR_NETWORK' || code === 'ECONNABORTED' || code === 'ETIMEDOUT') return true;
+  const msg = err instanceof Error ? err.message : String(axiosErr?.message || '');
+  return /network|offline|timeout|failed to fetch|econnrefused/i.test(msg);
+}
+
+const rawDefaultAdapter = api.defaults.adapter ?? axios.defaults.adapter;
+const networkAdapter = rawDefaultAdapter ? axios.getAdapter(rawDefaultAdapter) : null;
+
+api.defaults.adapter = async (config) => {
+  if (isLocalOfflineMode()) {
+    return handleLocalApiRequest(config);
+  }
+
+  if (!networkAdapter) {
+    throw new Error('Axios network adapter is not available');
+  }
+
+  const method = (config.method || 'get').toUpperCase();
+  const urlStr = String(config.url || '');
+  const isCacheableGet =
+    method === 'GET' &&
+    config.responseType !== 'blob' &&
+    config.responseType !== 'arraybuffer' &&
+    !urlStr.includes('/auth/');
+  const cacheKey = isCacheableGet ? buildCloudCacheKey(config) : '';
+
+  try {
+    const response = await networkAdapter(config);
+    if (isCacheableGet && response.status >= 200 && response.status < 300) {
+      saveCloudGetCache(cacheKey, response.data);
+    }
+    return response;
+  } catch (err) {
+    if (isCacheableGet && isNetworkFailure(err)) {
+      const cached = readCloudGetCache(cacheKey);
+      if (cached !== null) {
+        return {
+          data: cached,
+          status: 200,
+          statusText: 'OK (Offline Cache)',
+          headers: {},
+          config,
+        };
+      }
+    }
+    throw err;
+  }
+};
+
+// Request interceptor to add authorization and mobile platform headers
 api.interceptors.request.use(
   (config) => {
     const token = useAuthStore.getState().accessToken;
-    if (token && config.headers) {
-      config.headers.Authorization = `Bearer ${token}`;
+    if (config.headers) {
+      if (token) {
+        config.headers.Authorization = `Bearer ${token}`;
+      }
+      if (isNativeMobile()) {
+        config.headers['X-Client-Platform'] = 'mobile';
+      }
     }
     return config;
   },
@@ -59,8 +133,9 @@ api.interceptors.response.use(
   async (error) => {
     const originalRequest = error.config;
 
-    // Jangan coba refresh token untuk endpoint auth (login/register gagal, dsb.)
+    // Jangan coba refresh token untuk endpoint auth atau saat Mode Offline lokal aktif
     if (
+      !isLocalOfflineMode() &&
       error.response?.status === 401 &&
       !originalRequest._retry &&
       !isAuthEndpoint(originalRequest?.url)
@@ -88,13 +163,25 @@ api.interceptors.response.use(
       isRefreshing = true;
 
       try {
+        const nativeMobile = isNativeMobile();
+        const storedRefresh = nativeMobile ? await getStoredRefreshToken() : null;
+        if (nativeMobile && !storedRefresh) {
+          throw new Error('Missing mobile refresh token');
+        }
+
         const response = await axios.post(
           `${api.defaults.baseURL}/auth/refresh`,
-          {},
-          { withCredentials: true }
+          nativeMobile && storedRefresh ? { refresh_token: storedRefresh } : {},
+          {
+            withCredentials: true,
+            headers: nativeMobile ? { 'X-Client-Platform': 'mobile' } : undefined,
+          }
         );
 
-        const { access_token, user } = response.data.data;
+        const { access_token, refresh_token, user } = response.data.data;
+        if (nativeMobile && refresh_token) {
+          await setStoredRefreshToken(refresh_token);
+        }
 
         useAuthStore.getState().setAuth(user, access_token);
         processQueue(null, access_token);
@@ -103,6 +190,9 @@ api.interceptors.response.use(
         return api(originalRequest);
       } catch (refreshError) {
         processQueue(refreshError, null);
+        if (isNativeMobile()) {
+          await clearStoredRefreshToken();
+        }
         useAuthStore.getState().clearAuth();
 
         if (

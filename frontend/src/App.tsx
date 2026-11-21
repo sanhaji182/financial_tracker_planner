@@ -3,8 +3,12 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AppShell } from './components/layout/AppShell';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
+import { OfflineBanner } from './components/shared/OfflineBanner';
+import { MobileRuntimeBridge } from './components/shared/MobileRuntimeBridge';
+import { Toaster } from './components/ui/Toaster';
 import { authService } from './services/auth';
 import { useAuthStore } from './stores/authStore';
+import { syncAppModeFromNative } from './utils/appMode';
 
 // Lazy load route pages
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -41,6 +45,8 @@ const ScenariosPage = React.lazy(() => import('./pages/ScenariosPage').then(m =>
 const AutomationPage = React.lazy(() => import('./pages/AutomationPage').then(m => ({ default: m.AutomationPage })));
 const CurrencyPage = React.lazy(() => import('./pages/CurrencyPage').then(m => ({ default: m.CurrencyPage })));
 const AISettingsPage = React.lazy(() => import('./pages/AISettingsPage'));
+const PrivacyPolicyPage = React.lazy(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
+const AccountSettingsPage = React.lazy(() => import('./pages/AccountSettingsPage').then(m => ({ default: m.AccountSettingsPage })));
 const AdvisorChatDrawer = React.lazy(() => import('./components/drawers/AdvisorChatDrawer').then(m => ({ default: m.AdvisorChatDrawer })));
 
 const queryClient = new QueryClient({
@@ -59,8 +65,9 @@ const App: React.FC = () => {
   React.useEffect(() => {
     let active = true;
 
-    authService
-      .restoreSession()
+    syncAppModeFromNative()
+      .catch(() => 'cloud')
+      .then(() => authService.restoreSession())
       .then((data) => {
         if (active) setAuth(data.user, data.access_token);
       })
@@ -76,42 +83,45 @@ const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <React.Suspense fallback={
-          <div className="min-h-screen flex flex-col bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400">
-            {/* Topbar skeleton */}
-            <div className="h-14 bg-white dark:bg-slate-850 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 animate-pulse">
-              <div className="h-6 bg-slate-200 dark:bg-slate-700 w-32 rounded"></div>
-              <div className="h-8 bg-slate-200 dark:bg-slate-700 w-8 rounded-full"></div>
-            </div>
-            <div className="flex flex-1">
-              {/* Sidebar skeleton */}
-              <div className="w-[260px] hidden lg:block bg-white dark:bg-slate-850 border-r border-slate-200 dark:border-slate-800 p-4 space-y-4 animate-pulse">
-                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-full rounded"></div>
-                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-full rounded"></div>
-                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-full rounded"></div>
+        <MobileRuntimeBridge />
+        <OfflineBanner />
+        <React.Suspense
+          fallback={
+            <div className="min-h-[100dvh] flex bg-bg-subtle text-slate-500">
+              <div className="w-[252px] hidden lg:block bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 p-4 space-y-4 animate-pulse">
+                <div className="h-9 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl" />
+                <div className="h-8 bg-slate-100 dark:bg-slate-800 rounded-xl" />
               </div>
-              {/* Content skeleton */}
-              <div className="flex-1 p-6 space-y-6">
-                <div className="h-8 bg-slate-200 dark:bg-slate-700 w-48 rounded animate-pulse"></div>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
-                  <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
-                  <div className="h-32 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
+              <div className="flex-1 flex flex-col">
+                <div className="h-16 bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between px-6 animate-pulse">
+                  <div className="h-5 bg-slate-100 dark:bg-slate-800 w-36 rounded-lg" />
+                  <div className="h-8 bg-slate-100 dark:bg-slate-800 w-8 rounded-full" />
                 </div>
-                <div className="h-64 bg-slate-200 dark:bg-slate-700 rounded-2xl animate-pulse"></div>
+                <div className="flex-1 p-6 space-y-6">
+                  <div className="h-8 bg-slate-200/70 dark:bg-slate-800 w-56 rounded-lg animate-pulse" />
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                    <div className="h-28 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800 animate-pulse" />
+                    <div className="h-28 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800 animate-pulse" />
+                    <div className="h-28 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800 animate-pulse" />
+                  </div>
+                  <div className="h-64 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200/60 dark:border-slate-800 animate-pulse" />
+                </div>
               </div>
             </div>
-          </div>
-        }>
+          }
+        >
           <Routes>
-            {/* Public Auth Routes */}
+            {/* Public Auth & Legal Routes */}
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/register-spouse/:token" element={<RegisterSpousePage />} />
+            <Route path="/privacy" element={<PrivacyPolicyPage />} />
 
             {/* Protected Main App Layout */}
-            <Route 
-              path="/" 
+            <Route
+              path="/"
               element={
                 <ProtectedRoute>
                   <AppShell />
@@ -119,51 +129,55 @@ const App: React.FC = () => {
               }
             >
               <Route index element={<DashboardPage />} />
-              <Route 
-                path="spouse" 
+              <Route
+                path="spouse"
                 element={
                   <ProtectedRoute allowedRoles={['spouse_viewer', 'owner']}>
                     <SpouseDashboard />
                   </ProtectedRoute>
-                } 
-                />
-              <Route 
-                path="transactions" 
+                }
+              />
+              <Route
+                path="transactions"
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <TransactionsPage />
                   </ProtectedRoute>
-                } 
+                }
               />
-              <Route 
-                path="transactions/upload" 
+              <Route
+                path="transactions/upload"
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <UploadPage />
                   </ProtectedRoute>
-                } 
+                }
               />
-              <Route 
-                path="accounts" 
+              <Route
+                path="accounts"
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <AccountsPage />
                   </ProtectedRoute>
-                } 
+                }
               />
-              <Route path="settings/categories" element={<CategoriesPage />} />
-              
-              {/* Owner-Only Routes */}
-              <Route 
-                path="invite-spouse" 
+              <Route
+                path="settings/categories"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <CategoriesPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="invite-spouse"
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <InviteSpousePage />
                   </ProtectedRoute>
-                } 
+                }
               />
 
-              {/* Fallback endpoints for dashboard subitems under scaffolding */}
               <Route path="debts" element={<DebtsPage />} />
               <Route path="debts/:id" element={<DebtDetailPage />} />
               <Route path="debts/avalanche" element={<DebtAvalanchePage />} />
@@ -180,32 +194,34 @@ const App: React.FC = () => {
               <Route path="scenarios" element={<ScenariosPage />} />
               <Route path="alerts" element={<AlertCenterPage />} />
               <Route path="documents" element={<DocumentCenterPage />} />
-              <Route path="admin/audit-log" element={<AuditLogPage />} />
+              <Route
+                path="admin/audit-log"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <AuditLogPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="journal" element={<JournalPage />} />
               <Route path="tasks" element={<TasksPage />} />
-              <Route 
-                path="settings/backup" 
+              <Route
+                path="settings/backup"
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <BackupPage />
                   </ProtectedRoute>
-                } 
+                }
               />
-              <Route 
-                path="settings/automation" 
-                element={<AutomationPage />} 
-              />
-              <Route 
-                path="settings/currencies" 
-                element={<CurrencyPage />} 
-              />
-              <Route 
-                path="settings/ai" 
+              <Route path="settings/automation" element={<AutomationPage />} />
+              <Route path="settings/currencies" element={<CurrencyPage />} />
+              <Route path="settings/account" element={<AccountSettingsPage />} />
+              <Route
+                path="settings/ai"
                 element={
                   <ProtectedRoute allowedRoles={['owner']}>
                     <AISettingsPage />
                   </ProtectedRoute>
-                } 
+                }
               />
               <Route path="settings" element={<Navigate to="/settings/automation" replace />} />
               <Route path="404" element={<NotFound />} />
@@ -213,8 +229,11 @@ const App: React.FC = () => {
             </Route>
           </Routes>
         </React.Suspense>
-        {/* Floating AI Advisor Chat — shown only when enabled in AI Settings */}
-        <AdvisorChatDrawer />
+
+        <Toaster />
+        <React.Suspense fallback={null}>
+          <AdvisorChatDrawer />
+        </React.Suspense>
       </BrowserRouter>
     </QueryClientProvider>
   );

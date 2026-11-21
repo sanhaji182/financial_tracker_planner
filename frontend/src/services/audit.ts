@@ -17,13 +17,13 @@ const auditService = {
     if (filters?.date_to) params.append('date_to', filters.date_to);
 
     const query = params.toString();
-    const res = await api.get<{ data: AuditLog[] }>(`/audit-logs${query ? '?' + query : ''}`);
-    return res.data.data;
+    const res = await api.get<{ data: AuditLog[] | null }>(`/audit-logs${query ? '?' + query : ''}`);
+    return Array.isArray(res.data?.data) ? res.data.data : [];
   },
 
   getEntityAuditLogs: async (entityType: string, entityId: string): Promise<AuditLog[]> => {
-    const res = await api.get<{ data: AuditLog[] }>(`/audit-logs/${entityType}/${entityId}`);
-    return res.data.data;
+    const res = await api.get<{ data: AuditLog[] | null }>(`/audit-logs/${entityType}/${entityId}`);
+    return Array.isArray(res.data?.data) ? res.data.data : [];
   },
 };
 

@@ -29,14 +29,18 @@ export const forecastService = {
     const params: Record<string, string> = {};
     if (month) params.month = month;
     const res = await api.get('/forecast/monthly', { params });
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      daily_projections: Array.isArray(data?.daily_projections) ? data.daily_projections : [],
+    };
   },
 
   async getDailyProjections(month?: string): Promise<DailyProjection[]> {
     const params: Record<string, string> = {};
     if (month) params.month = month;
     const res = await api.get('/forecast/daily', { params });
-    return res.data.data || [];
+    return Array.isArray(res.data?.data) ? res.data.data : [];
   },
 };
 export default forecastService;

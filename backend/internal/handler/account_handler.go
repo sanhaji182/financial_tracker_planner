@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -29,6 +31,7 @@ func (h *AccountHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		accountsGroup.GET("/summary", h.Summary)
 		accountsGroup.GET("/:id", h.Detail)
 		accountsGroup.POST("", h.Create)
+		accountsGroup.POST("/scan", h.ScanDocument)
 		accountsGroup.PUT("/:id", h.Update)
 		accountsGroup.DELETE("/:id", h.Delete)
 	}
@@ -162,6 +165,55 @@ func (h *AccountHandler) Delete(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Account deleted successfully",
+	})
+}
+
+func (h *AccountHandler) ScanDocument(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "BAD_REQUEST", "message": "File is required"},
+		})
+		return
+	}
+	defer file.Close()
+
+	fileBytes, err := io.ReadAll(io.LimitReader(file, service.MaxScanFileSize+1))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "INTERNAL_SERVER_ERROR", "message": "Failed to read file"},
+		})
+		return
+	}
+	if len(fileBytes) > service.MaxScanFileSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": gin.H{"code": "FILE_TOO_LARGE", "message": "Ukuran file melebihi batas maksimal 10MB."},
+		})
+		return
+	}
+
+	pdfPassword := c.PostForm("pdf_password")
+
+	res, err := h.accountService.ScanAccountDocument(c.Request.Context(), userID, header.Filename, fileBytes, pdfPassword)
+	if err != nil {
+		var scanErr *service.WorkerScanError
+		if errors.As(err, &scanErr) {
+			c.JSON(scanErr.StatusCode, gin.H{
+				"error": gin.H{"code": scanErr.Code, "message": scanErr.Message},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "INTERNAL_SERVER_ERROR", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Document scanned successfully",
+		"data":    res,
 	})
 }
 

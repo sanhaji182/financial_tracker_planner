@@ -18,7 +18,11 @@ export interface SharedSummaryResponse {
 export const sharedViewService = {
   async getSharedSummary(): Promise<SharedSummaryResponse> {
     const res = await api.get('/shared-view/summary');
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      upcoming_bills: Array.isArray(data?.upcoming_bills) ? data.upcoming_bills : [],
+    };
   },
 
   async getSharedAssets(): Promise<Asset[]> {

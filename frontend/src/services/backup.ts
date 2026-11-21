@@ -9,12 +9,13 @@ export interface BackupResponse {
 const backupService = {
 	getBackups: async (): Promise<BackupResponse[]> => {
 		const res = await api.get<any>('/backup/list');
-		return res.data.data || [];
+		const payload = res.data?.data ?? res.data;
+		return Array.isArray(payload) ? payload : [];
 	},
 
 	createBackup: async (): Promise<BackupResponse> => {
 		const res = await api.post<any>('/backup/create');
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	restoreBackup: async (fileName: string, password: string): Promise<{ message: string }> => {
@@ -22,7 +23,7 @@ const backupService = {
 			file_name: fileName,
 			password: password,
 		});
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	downloadBackupFile: async (fileName: string): Promise<void> => {

@@ -83,17 +83,21 @@ const subscriptionsService = {
 
 	updateSubscription: async (id: string, payload: UpdateSubscriptionPayload): Promise<{ message: string }> => {
 		const res = await api.put<any>(`/subscriptions/${id}`, payload);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	deleteSubscription: async (id: string): Promise<{ message: string }> => {
 		const res = await api.delete<any>(`/subscriptions/${id}`);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	getSummary: async (): Promise<SubscriptionSummary> => {
 		const res = await api.get<any>('/subscriptions/summary');
-		return res.data.data;
+		const data = res.data.data;
+		return {
+			...data,
+			warnings: Array.isArray(data?.warnings) ? data.warnings : [],
+		};
 	}
 };
 

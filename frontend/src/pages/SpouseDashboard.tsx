@@ -1,34 +1,42 @@
 import React from 'react';
 import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
-import { useSearchParams } from 'react-router-dom';
-import { 
-  useSharedSummary, 
-  useSharedAssets, 
-  useSharedDebts 
+import { useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  useSharedSummary,
+  useSharedAssets,
+  useSharedDebts,
+  useSharedBills,
 } from '../hooks/useSharedView';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
-import { 
-  Eye, 
-  Home, 
-  CreditCard, 
-  Car, 
-  User, 
-  Folder, 
-  Coins, 
+import { Button } from '../components/ui/Button';
+import { StatCard } from '../components/ui/StatCard';
+import {
+  Eye,
+  Home,
+  CreditCard,
+  Car,
+  User,
+  Folder,
+  Coins,
   LayoutDashboard,
-  CalendarDays, 
+  CalendarDays,
   FileText,
-  Lock
+  Lock,
+  Clock,
+  TrendingUp,
+  Layers,
 } from 'lucide-react';
 
 export const SpouseDashboard: React.FC = () => {
+  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const activeTab = searchParams.get('tab') || 'summary';
 
   const { data: summary, isLoading: isSummaryLoading } = useSharedSummary();
   const { data: assets, isLoading: isAssetsLoading } = useSharedAssets();
   const { data: debts, isLoading: isDebtsLoading } = useSharedDebts();
+  const { data: sharedBills, isLoading: isBillsLoading } = useSharedBills();
 
   const handleTabChange = (tabName: string) => {
     setSearchParams({ tab: tabName });
@@ -36,194 +44,175 @@ export const SpouseDashboard: React.FC = () => {
 
   const getAssetIcon = (type: string) => {
     switch (type) {
-      case 'savings': return <Coins className="h-4 w-4 text-emerald-500" />;
-      case 'property': return <Home className="h-4 w-4 text-indigo-500" />;
-      case 'vehicle': return <Car className="h-4 w-4 text-blue-500" />;
-      default: return <Folder className="h-4 w-4 text-slate-400" />;
+      case 'savings':
+        return <Coins className="h-4 w-4 text-emerald-500" />;
+      case 'property':
+        return <Home className="h-4 w-4 text-indigo-500" />;
+      case 'vehicle':
+        return <Car className="h-4 w-4 text-sky-500" />;
+      default:
+        return <Folder className="h-4 w-4 text-slate-400" />;
     }
   };
 
   const getDebtIcon = (type: string) => {
     switch (type) {
-      case 'kpr': return <Home className="h-4 w-4 text-amber-500" />;
-      case 'credit_card': return <CreditCard className="h-4 w-4 text-rose-500" />;
-      case 'installment': return <Car className="h-4 w-4 text-indigo-500" />;
-      default: return <User className="h-4 w-4 text-emerald-500" />;
+      case 'kpr':
+        return <Home className="h-4 w-4 text-amber-500" />;
+      case 'credit_card':
+        return <CreditCard className="h-4 w-4 text-rose-500" />;
+      case 'installment':
+        return <Car className="h-4 w-4 text-indigo-500" />;
+      default:
+        return <User className="h-4 w-4 text-emerald-500" />;
     }
   };
 
   const getDebtLabel = (type: string) => {
     switch (type) {
-      case 'kpr': return 'KPR';
-      case 'credit_card': return 'Kartu Kredit';
-      case 'installment': return 'Cicilan';
-      default: return 'Lain-lain';
+      case 'kpr':
+        return 'KPR';
+      case 'credit_card':
+        return 'Kartu Kredit';
+      case 'installment':
+        return 'Cicilan';
+      default:
+        return 'Lain-lain';
     }
   };
 
-
-  const isPageLoading = isSummaryLoading || isAssetsLoading || isDebtsLoading;
+  const isPageLoading = isSummaryLoading || isAssetsLoading || isDebtsLoading || isBillsLoading;
 
   if (isPageLoading) {
     return (
       <div className="space-y-6">
-        {/* Header Skeleton */}
-        <div className="h-14 bg-indigo-50/50 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-950 rounded-xl animate-pulse" />
-        
-        {/* Summary Card Grid Skeleton */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <CardSkeleton />
+        <div className="h-16 bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-2xl animate-pulse" />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <CardSkeleton />
           <CardSkeleton />
           <CardSkeleton />
         </div>
-
-        {/* Charts/Tables Skeleton */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="lg:col-span-2">
-            <ChartSkeleton />
-          </div>
-          <div>
-            <CardSkeleton />
-          </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <ChartSkeleton />
+          <CardSkeleton />
         </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Spouse Viewer Header Badge */}
-      <div className="p-4 bg-indigo-50 border border-indigo-100 rounded-xl dark:bg-indigo-950/20 dark:border-indigo-950 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-sm">
-        <div className="flex items-center gap-2.5">
-          <div className="p-2 bg-indigo-500 text-white rounded-lg">
+    <div className="space-y-6 animate-fade-in">
+      {/* Spouse Viewer Banner */}
+      <div className="p-4 sm:p-5 bg-indigo-50/80 border border-indigo-200/70 rounded-2xl dark:bg-indigo-950/25 dark:border-indigo-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 bg-indigo-600 text-white rounded-xl shadow-sm shrink-0">
             <Eye className="h-5 w-5" />
           </div>
           <div>
-            <h2 className="text-sm font-black text-indigo-900 dark:text-indigo-400">
+            <h2 className="font-display text-sm sm:text-base font-bold text-slate-900 dark:text-white">
               Melihat sebagai Pasangan — {summary?.owner_name || 'Owner'}
             </h2>
-            <p className="text-[11px] font-semibold text-indigo-500 opacity-90">
-              Akses Mode Terbatas (Read-Only) • Data terproteksi enkripsi keluarga.
+            <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+              Mode Baca Saja (Read-Only) • Hanya menampilkan aset, utang, dan ringkasan yang dibagikan keluarga.
             </p>
           </div>
         </div>
-        <span className="self-start sm:self-center bg-indigo-100 dark:bg-indigo-950 text-indigo-800 dark:text-indigo-400 text-[10px] font-black px-2.5 py-1 rounded uppercase tracking-wider">
+        <Badge variant="transfer" className="self-start sm:self-center">
           Spouse Viewer Mode
-        </span>
+        </Badge>
       </div>
 
       {/* Tabs */}
-      <div className="flex border-b border-slate-200 dark:border-slate-800 gap-1 overflow-x-auto">
-        <button
-          onClick={() => handleTabChange('summary')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all shrink-0 ${
-            activeTab === 'summary' 
-              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-              : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <LayoutDashboard className="h-4 w-4" /> Ringkasan
-        </button>
-        <button
-          onClick={() => handleTabChange('assets')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all shrink-0 ${
-            activeTab === 'assets' 
-              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-              : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <Coins className="h-4 w-4" /> Aset Bersama
-        </button>
-        <button
-          onClick={() => handleTabChange('debts')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all shrink-0 ${
-            activeTab === 'debts' 
-              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-              : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <CreditCard className="h-4 w-4" /> Utang Bersama
-        </button>
-        <button
-          onClick={() => handleTabChange('bills')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all shrink-0 ${
-            activeTab === 'bills' 
-              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-              : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <CalendarDays className="h-4 w-4" /> Tagihan
-        </button>
-        <button
-          onClick={() => handleTabChange('reports')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all shrink-0 ${
-            activeTab === 'reports' 
-              ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' 
-              : 'border-transparent text-slate-400 hover:text-slate-600'
-          }`}
-        >
-          <FileText className="h-4 w-4" /> Laporan Bulanan
-        </button>
+      <div className="inline-flex flex-wrap rounded-xl bg-slate-100 dark:bg-slate-800/80 p-1 gap-1 max-w-full overflow-x-auto">
+        {[
+          { id: 'summary', label: 'Ringkasan', icon: LayoutDashboard },
+          { id: 'assets', label: 'Aset Bersama', icon: Coins },
+          { id: 'debts', label: 'Utang Bersama', icon: CreditCard },
+          { id: 'bills', label: 'Tagihan', icon: CalendarDays },
+          { id: 'reports', label: 'Laporan Bulanan', icon: FileText },
+        ].map((tab) => {
+          const Icon = tab.icon;
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => handleTabChange(tab.id)}
+              className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold transition-all shrink-0 ${
+                active
+                  ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                  : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+              }`}
+            >
+              <Icon className="h-4 w-4" />
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
       {/* Tab Content */}
       <div className="space-y-6">
         {activeTab === 'summary' && (
           <div className="space-y-6">
-            {/* Top Summary Stats */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <Card className="p-5 flex flex-col justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Aset Bersama</span>
-                <span className="text-2xl font-black mt-2 text-slate-900 dark:text-white font-mono">
-                  {summary?.formatted_total_assets}
-                </span>
-              </Card>
-
-              <Card className="p-5 flex flex-col justify-between">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Total Utang Keluarga</span>
-                <span className="text-2xl font-black mt-2 text-rose-600 dark:text-rose-400 font-mono">
-                  {summary?.formatted_total_debts}
-                </span>
-              </Card>
-
-              <Card className="p-5 flex flex-col justify-between bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/10">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-indigo-500">Net Worth Bersama</span>
-                <span className="text-2xl font-black mt-2 text-indigo-700 dark:text-indigo-400 font-mono">
-                  {summary?.formatted_net_worth}
-                </span>
-              </Card>
+              <StatCard
+                label="Total Aset Bersama"
+                value={summary?.formatted_total_assets || 'Rp 0'}
+                icon={<Layers className="h-5 w-5" />}
+                iconTone="emerald"
+              />
+              <StatCard
+                label="Total Utang Keluarga"
+                value={summary?.formatted_total_debts || 'Rp 0'}
+                icon={<CreditCard className="h-5 w-5" />}
+                iconTone="rose"
+                highlight="rose"
+              />
+              <StatCard
+                label="Net Worth Bersama"
+                value={summary?.formatted_net_worth || 'Rp 0'}
+                icon={<TrendingUp className="h-5 w-5" />}
+                iconTone="indigo"
+                highlight="indigo"
+              />
             </div>
 
-            {/* Row 2: Bills & Forecast */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Upcoming Bills */}
-              <Card className="p-6 space-y-4">
-                <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-                  <CalendarDays className="h-4 w-4 text-indigo-500" />
-                  Tagihan Jatuh Tempo (7 Hari)
-                </h3>
+              <Card
+                title="Tagihan Jatuh Tempo (7 Hari)"
+                extra={<CalendarDays className="h-4 w-4 text-indigo-500" />}
+              >
                 <div className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {summary?.upcoming_bills.length === 0 ? (
-                    <p className="py-6 text-center text-xs text-slate-400 font-bold">
-                      Tidak ada tagihan jatuh tempo dalam 7 hari.
+                  {!summary?.upcoming_bills || summary.upcoming_bills.length === 0 ? (
+                    <p className="py-6 text-center text-xs text-slate-400 font-medium">
+                      Tidak ada tagihan jatuh tempo dalam 7 hari ke depan.
                     </p>
                   ) : (
-                    summary?.upcoming_bills.map((bill) => (
-                      <div key={bill.id} className="py-3 flex justify-between items-center first:pt-0 last:pb-0">
+                    summary.upcoming_bills.map((bill) => (
+                      <div
+                        key={bill.id}
+                        className="py-3 flex justify-between items-center first:pt-0 last:pb-0"
+                      >
                         <div>
-                          <span className="text-xs font-bold text-slate-800 dark:text-slate-200">{bill.name}</span>
-                          <span className="text-[10px] text-slate-400 block font-semibold">
-                            Due: {new Date(bill.due_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short' })}
+                          <span className="text-xs font-semibold text-slate-900 dark:text-slate-100">
+                            {bill.name}
+                          </span>
+                          <span className="text-[11px] text-slate-400 block">
+                            Jatuh tempo:{' '}
+                            {new Date(bill.due_date).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'short',
+                            })}
                           </span>
                         </div>
-                        <div className="text-right">
-                          <span className="text-xs font-mono font-bold text-slate-900 dark:text-white">
+                        <div className="text-right space-y-0.5">
+                          <span className="text-xs font-money font-bold text-slate-900 dark:text-white block">
                             {bill.formatted_amount}
                           </span>
-                          <span className="block text-[9px] font-black text-amber-600">
-                            ⏳ {bill.days_remaining} hari lagi
-                          </span>
+                          <Badge variant="warning">
+                            <Clock className="h-3 w-3" /> {bill.days_remaining} hari lagi
+                          </Badge>
                         </div>
                       </div>
                     ))
@@ -231,70 +220,108 @@ export const SpouseDashboard: React.FC = () => {
                 </div>
               </Card>
 
-              {/* Forecast */}
-              <Card className="p-6 space-y-4 flex flex-col justify-between">
+              <Card
+                title="Proyeksi Kas Akhir Bulan"
+                extra={<TrendingUp className="h-4 w-4 text-emerald-500" />}
+              >
                 <div className="space-y-4">
-                  <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
-                    📊 Proyeksi Kas Akhir Bulan
-                  </h3>
-                  <div className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl space-y-1">
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Saldo Bersama Akhir Bulan</span>
-                    <span className="text-xl font-black font-mono text-slate-900 dark:text-white">
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-xl space-y-1 border border-slate-100 dark:border-slate-800">
+                    <span className="text-[11px] font-semibold text-slate-500 uppercase tracking-wider block">
+                      Saldo Bersama Akhir Bulan
+                    </span>
+                    <span className="font-display text-2xl font-extrabold font-money text-slate-900 dark:text-white block">
                       {summary?.forecast_end_month.formatted_value}
                     </span>
                   </div>
-                </div>
-                <div className="flex gap-2 p-3 bg-indigo-50/50 dark:bg-indigo-950/10 border border-indigo-100 dark:border-indigo-950 rounded-lg text-xs leading-relaxed font-semibold text-indigo-800 dark:text-indigo-400">
-                  <Lock className="h-4 w-4 shrink-0 mt-0.5" />
-                  <span>
-                    Anda berada dalam mode Read-Only. Untuk menambah transaksi atau mengubah spec target aset, minta Owner keluarga untuk melakukan input data.
-                  </span>
+                  <div className="flex gap-2.5 p-3.5 bg-indigo-50/70 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-xl text-xs leading-relaxed text-indigo-800 dark:text-indigo-300">
+                    <Lock className="h-4 w-4 shrink-0 mt-0.5" />
+                    <span>
+                      Anda berada dalam mode Read-Only. Hubungi Owner keluarga jika ada transaksi atau aset baru yang perlu dicatat.
+                    </span>
+                  </div>
                 </div>
               </Card>
             </div>
           </div>
         )}
 
-        {/* Tab 2: Shared Assets Table */}
         {activeTab === 'assets' && (
-          <Card className="p-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Daftar Portofolio Aset Bersama</h3>
-              <Badge variant="success">Read-Only</Badge>
+          <Card
+            title="Daftar Portofolio Aset Bersama"
+            noPadding
+            extra={<Badge variant="success">Read-Only</Badge>}
+          >
+            {/* Mobile Card View */}
+            <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+              {!assets || assets.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 font-medium px-4">
+                  Belum ada aset bersama yang dibagikan.
+                </div>
+              ) : (
+                assets.map((asset) => (
+                  <div key={asset.id} className="p-4 space-y-1.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex items-center gap-2 font-semibold text-sm text-slate-900 dark:text-white">
+                        {getAssetIcon(asset.type)}
+                        <span className="truncate">{asset.name}</span>
+                      </div>
+                      <span className="font-money font-bold text-sm text-slate-900 dark:text-white shrink-0">
+                        {asset.formatted_value}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-slate-500">
+                      <span className="capitalize">{asset.type}</span>
+                      <span className="font-medium text-indigo-600 dark:text-indigo-400 truncate">
+                        {asset.linked_account_name || '-'}
+                      </span>
+                    </div>
+                    {asset.notes && <p className="text-[11px] text-slate-400">{asset.notes}</p>}
+                  </div>
+                ))
+              )}
             </div>
-            <div className="overflow-x-auto">
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="pb-3 pr-2">Nama Aset</th>
-                    <th className="pb-3 pr-2">Kategori</th>
-                    <th className="pb-3 pr-2">Linked Account</th>
-                    <th className="pb-3 pr-2 text-right">Nilai Saat Ini</th>
-                    <th className="pb-3 text-right">Notes</th>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
+                    <th className="py-3 px-4">Nama Aset</th>
+                    <th className="py-3 px-4">Kategori</th>
+                    <th className="py-3 px-4">Rekening Terkait</th>
+                    <th className="py-3 px-4 text-right">Nilai Saat Ini</th>
+                    <th className="py-3 px-4 text-right">Catatan</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {!assets || assets.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-8 text-center text-slate-400 font-bold">
-                        Belum ada aset bersama yang didaftarkan atau dibagikan.
+                      <td colSpan={5} className="py-8 text-center text-slate-400 font-medium">
+                        Belum ada aset bersama yang dibagikan.
                       </td>
                     </tr>
                   ) : (
                     assets.map((asset) => (
-                      <tr key={asset.id} className="border-b border-slate-50 dark:border-slate-800/40 hover:bg-slate-50/50">
-                        <td className="py-3 pr-2 font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <tr
+                        key={asset.id}
+                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                           {getAssetIcon(asset.type)}
                           {asset.name}
                         </td>
-                        <td className="py-3 pr-2 capitalize text-slate-500 font-semibold">{asset.type}</td>
-                        <td className="py-3 pr-2 font-semibold text-indigo-500">
+                        <td className="py-3.5 px-4 capitalize text-slate-500 font-medium">
+                          {asset.type}
+                        </td>
+                        <td className="py-3.5 px-4 font-medium text-indigo-600 dark:text-indigo-400">
                           {asset.linked_account_name || '-'}
                         </td>
-                        <td className="py-3 pr-2 font-mono font-bold text-slate-900 dark:text-white text-right">
+                        <td className="py-3.5 px-4 font-money font-bold text-slate-900 dark:text-white text-right">
                           {asset.formatted_value}
                         </td>
-                        <td className="py-3 text-slate-400 font-semibold text-right">{asset.notes || '-'}</td>
+                        <td className="py-3.5 px-4 text-slate-500 text-right">
+                          {asset.notes || '-'}
+                        </td>
                       </tr>
                     ))
                   )}
@@ -304,48 +331,88 @@ export const SpouseDashboard: React.FC = () => {
           </Card>
         )}
 
-        {/* Tab 3: Shared Debts Table */}
         {activeTab === 'debts' && (
-          <Card className="p-6 space-y-4">
-            <div className="flex justify-between items-center">
-              <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Daftar Utang & Cicilan Keluarga</h3>
-              <Badge variant="success">Read-Only</Badge>
+          <Card
+            title="Daftar Utang & Cicilan Keluarga"
+            noPadding
+            extra={<Badge variant="success">Read-Only</Badge>}
+          >
+            {/* Mobile Card View */}
+            <div className="md:hidden divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+              {!debts || debts.length === 0 ? (
+                <div className="py-8 text-center text-slate-400 font-medium px-4">
+                  Belum ada kontrak utang terdaftar.
+                </div>
+              ) : (
+                debts.map((debt) => (
+                  <div key={debt.id} className="p-4 space-y-1.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex items-center gap-2 font-semibold text-sm text-slate-900 dark:text-white">
+                        {getDebtIcon(debt.type)}
+                        <span className="truncate">{debt.name}</span>
+                      </div>
+                      <span className="font-money font-bold text-sm text-rose-600 dark:text-rose-400 shrink-0">
+                        {debt.formatted_outstanding}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-slate-500">
+                      <span>{getDebtLabel(debt.type)}</span>
+                      <span>{debt.creditor || '-'}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2 text-[11px] text-slate-400">
+                      <span>
+                        Bunga: {debt.interest_rate !== undefined ? `${debt.interest_rate}% p.a.` : '-'}
+                      </span>
+                      <span className="font-money">
+                        Cicilan: {debt.formatted_minimum_payment || '-'}
+                      </span>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
-            <div className="overflow-x-auto">
+
+            {/* Desktop Table View */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="pb-3 pr-2">Nama Kontrak</th>
-                    <th className="pb-3 pr-2">Jenis</th>
-                    <th className="pb-3 pr-2">Kreditur</th>
-                    <th className="pb-3 pr-2 text-right">Suku Bunga</th>
-                    <th className="pb-3 pr-2 text-right">Cicilan / Bln</th>
-                    <th className="pb-3 text-right">Sisa Outstanding</th>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
+                    <th className="py-3 px-4">Nama Kontrak</th>
+                    <th className="py-3 px-4">Jenis</th>
+                    <th className="py-3 px-4">Kreditur</th>
+                    <th className="py-3 px-4 text-right">Bunga</th>
+                    <th className="py-3 px-4 text-right">Cicilan / Bln</th>
+                    <th className="py-3 px-4 text-right">Sisa Outstanding</th>
                   </tr>
                 </thead>
-                <tbody>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                   {!debts || debts.length === 0 ? (
                     <tr>
-                      <td colSpan={6} className="py-8 text-center text-slate-400 font-bold">
+                      <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
                         Belum ada kontrak utang terdaftar.
                       </td>
                     </tr>
                   ) : (
                     debts.map((debt) => (
-                      <tr key={debt.id} className="border-b border-slate-50 dark:border-slate-800/40 hover:bg-slate-50/50">
-                        <td className="py-3 pr-2 font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                      <tr
+                        key={debt.id}
+                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <td className="py-3.5 px-4 font-semibold text-slate-900 dark:text-white flex items-center gap-2">
                           {getDebtIcon(debt.type)}
                           {debt.name}
                         </td>
-                        <td className="py-3 pr-2 text-slate-500 font-semibold capitalize">{getDebtLabel(debt.type)}</td>
-                        <td className="py-3 pr-2 text-slate-400 font-semibold">{debt.creditor || '-'}</td>
-                        <td className="py-3 pr-2 font-mono text-right text-slate-700 dark:text-slate-300">
+                        <td className="py-3.5 px-4 text-slate-600 dark:text-slate-300 font-medium">
+                          {getDebtLabel(debt.type)}
+                        </td>
+                        <td className="py-3.5 px-4 text-slate-500">{debt.creditor || '-'}</td>
+                        <td className="py-3.5 px-4 font-money text-right text-slate-700 dark:text-slate-300">
                           {debt.interest_rate !== undefined ? `${debt.interest_rate}% p.a.` : '-'}
                         </td>
-                        <td className="py-3 pr-2 font-mono text-right text-slate-700 dark:text-slate-300">
+                        <td className="py-3.5 px-4 font-money text-right text-slate-700 dark:text-slate-300">
                           {debt.formatted_minimum_payment || '-'}
                         </td>
-                        <td className="py-3 font-mono font-bold text-rose-500 text-right">
+                        <td className="py-3.5 px-4 font-money font-bold text-rose-600 dark:text-rose-400 text-right">
                           {debt.formatted_outstanding}
                         </td>
                       </tr>
@@ -357,22 +424,60 @@ export const SpouseDashboard: React.FC = () => {
           </Card>
         )}
 
-        {/* Tab 4: Tagihan */}
         {activeTab === 'bills' && (
-          <Card className="p-6 space-y-4">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Kalender Tagihan Bulanan</h3>
-            <div className="p-6 bg-slate-50 dark:bg-slate-900 rounded-xl text-center text-xs text-slate-400 font-bold">
-              Tagihan jatuh tempo bulanan telah dipetakan di tab Ringkasan. Hubungkan kalender eksternal di versi Owner untuk integrasi penuh.
+          <Card
+            title="Daftar Tagihan Keluarga"
+            noPadding
+            extra={<Badge variant="success">Read-Only</Badge>}
+          >
+            <div className="divide-y divide-slate-100 dark:divide-slate-800 px-5 py-2">
+              {!sharedBills || sharedBills.length === 0 ? (
+                <p className="py-8 text-center text-xs text-slate-400 font-medium">
+                  Belum ada tagihan bersama yang terdaftar.
+                </p>
+              ) : (
+                sharedBills.map((bill) => (
+                  <div
+                    key={bill.id}
+                    className="py-3.5 flex justify-between items-center gap-4"
+                  >
+                    <div>
+                      <span className="text-xs font-semibold text-slate-900 dark:text-white block">
+                        {bill.name}
+                      </span>
+                      <span className="text-[11px] text-slate-400">
+                        Jatuh tempo:{' '}
+                        {new Date(bill.due_date).toLocaleDateString('id-ID', {
+                          day: 'numeric',
+                          month: 'short',
+                          year: 'numeric',
+                        })}
+                      </span>
+                    </div>
+                    <div className="text-right space-y-1 shrink-0">
+                      <span className="text-xs font-money font-bold text-slate-900 dark:text-white block">
+                        {bill.formatted_amount}
+                      </span>
+                      <Badge variant={bill.days_remaining <= 3 ? 'danger' : 'warning'}>
+                        <Clock className="h-3 w-3" /> {bill.days_remaining} hari lagi
+                      </Badge>
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </Card>
         )}
 
-        {/* Tab 5: Laporan */}
         {activeTab === 'reports' && (
-          <Card className="p-6 space-y-4">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Laporan Keuangan Bulanan (Monthly Reports)</h3>
-            <div className="p-6 bg-slate-50 dark:bg-slate-900 rounded-xl text-center text-xs text-slate-400 font-bold">
-              Laporan penutupan buku bulanan (Closing Reports) belum diterbitkan oleh Owner keluarga.
+          <Card title="Laporan Keuangan Bulanan">
+            <div className="p-6 bg-slate-50 dark:bg-slate-800/60 rounded-xl text-center space-y-3">
+              <p className="text-xs text-slate-500 font-medium">
+                Lihat snapshot laporan bulanan yang telah dikonfirmasi oleh Owner secara lengkap.
+              </p>
+              <Button variant="secondary" size="sm" onClick={() => navigate('/closing')}>
+                Buka Laporan Tutup Buku
+              </Button>
             </div>
           </Card>
         )}
@@ -380,4 +485,5 @@ export const SpouseDashboard: React.FC = () => {
     </div>
   );
 };
+
 export default SpouseDashboard;

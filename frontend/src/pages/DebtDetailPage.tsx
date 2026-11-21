@@ -1,26 +1,41 @@
-import React, { useState, useEffect } from 'react';
-import { CardSkeleton } from '../components/ui/Skeleton';
+import React, { useEffect, useId, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useDebtDetail, useDeleteDebt, useRecordPayment } from '../hooks/useDebts';
 import { useAccounts } from '../hooks/useAccounts';
+import { debtsService, type DebtScanResponse } from '../services/debts';
 import { useAuthStore } from '../stores/authStore';
+import { toast } from '../stores/useToastStore';
+import { getTodayLocalDate } from '../utils/date';
 import { MoneyDisplay } from '../components/ui/MoneyDisplay';
 import { Card } from '../components/ui/Card';
+import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
+import { PageHeader } from '../components/ui/PageHeader';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { CardSkeleton } from '../components/ui/Skeleton';
+import { DocumentScanBanner } from '../components/ui/DocumentScanBanner';
 import { DebtFormModal } from '../components/modals/DebtFormModal';
-import { 
-  ArrowLeft, 
-  Trash2, 
-  Edit, 
-  Loader2, 
-  Coins, 
-  AlertCircle
+import {
+  Trash2,
+  Edit,
+  Loader2,
+  Coins,
+  AlertCircle,
 } from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 
 export const DebtDetailPage: React.FC = () => {
+  const formId = useId();
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const { user } = useAuthStore();
@@ -31,41 +46,106 @@ export const DebtDetailPage: React.FC = () => {
   const deleteMutation = useDeleteDebt();
   const recordPaymentMutation = useRecordPayment();
 
-  // Modals / forms state
   const [formOpen, setFormOpen] = useState(false);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [payModalOpen, setPayModalOpen] = useState(false);
 
-  // Pay Form States
-  const [payAmount, setPayAmount] = useState<number>(0);
-  const [payDate, setPayDate] = useState(new Date().toISOString().split('T')[0]);
+  const [payAmount, setPayAmount] = useState<string>('');
+  const [payDate, setPayDate] = useState(getTodayLocalDate());
   const [isExtra, setIsExtra] = useState(false);
   const [payNotes, setPayNotes] = useState('');
   const [payAccountId, setPayAccountId] = useState('');
   const [payError, setPayError] = useState<string | null>(null);
+  const [payScanSummary, setPayScanSummary] = useState<string | null>(null);
 
-  // Set default values when paying modal opens
   useEffect(() => {
-    if (debt) {
+    if (debt && payModalOpen) {
       const minPay = debt.minimum_payment || 0;
       const rem = debt.outstanding_balance;
-      setPayAmount(rem < minPay ? rem : minPay);
+      const suggested = rem < minPay ? rem : minPay;
+      setPayAmount(suggested > 0 ? String(suggested) : '');
+      setPayDate(getTodayLocalDate());
       setPayAccountId(debt.account_id || '');
       setPayNotes('');
       setIsExtra(false);
       setPayError(null);
+      setPayScanSummary(null);
     }
-  }, [debt, payModalOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [debt?.id, payModalOpen]);
+
+  const matchPaymentAccountId = (hint: string): string => {
+    const clean = hint.trim().toLowerCase();
+    if (!clean || !accounts) return '';
+    const match = accounts.find(
+      (a) =>
+        a.bank_provider?.toLowerCase() === clean ||
+        a.bank_provider?.toLowerCase().includes(clean) ||
+        a.name.toLowerCase().includes(clean)
+    );
+    return match?.id || '';
+  };
+
+  const handlePaymentScanResult = (res: DebtScanResponse) => {
+    const p = res.parsed_payment;
+    if (!p) return;
+
+    if (p.amount > 0) setPayAmount(String(p.amount));
+    if (p.payment_date && /^\d{4}-\d{2}-\d{2}$/.test(p.payment_date)) {
+      setPayDate(p.payment_date);
+    }
+    const matchedId = p.matched_account_id || matchPaymentAccountId(p.source_account_hint);
+    if (matchedId) {
+      setPayAccountId(matchedId);
+    }
+    const noteVal = p.notes || (p.reference_number ? `Ref: ${p.reference_number}` : '');
+    if (noteVal) {
+      setPayNotes(noteVal);
+    }
+    setPayScanSummary(
+      p.amount > 0
+        ? `Rp ${Math.round(p.amount).toLocaleString('id-ID')}${p.payment_date ? ` • ${p.payment_date}` : ''}`
+        : null
+    );
+    toast.success('Detail pembayaran terisi dari hasil scan');
+  };
+
+  const chartData = useMemo(() => {
+    if (!debt) return [];
+    const points: Array<{ date: string; balance: number }> = [
+      { date: 'Awal', balance: debt.original_amount },
+    ];
+    if (debt.payments && debt.payments.length > 0) {
+      const sortedPayments = [...debt.payments].reverse();
+      sortedPayments.forEach((p, idx) => {
+        const dateStr = new Date(p.payment_date).toLocaleDateString('id-ID', {
+          month: 'short',
+          year: '2-digit',
+        });
+        points.push({
+          date: `${dateStr} (#${idx + 1})`,
+          balance: p.remaining_balance,
+        });
+      });
+    } else {
+      points.push({ date: 'Saat Ini', balance: debt.outstanding_balance });
+    }
+    return points;
+  }, [debt]);
 
   if (!id) return null;
 
   const handleDelete = async () => {
     try {
       await deleteMutation.mutateAsync(id);
+      toast.success('Kontrak utang dihapus');
       setDeleteConfirmOpen(false);
       navigate('/debts');
-    } catch (err) {
-      alert('Gagal menghapus utang');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menghapus utang';
+      toast.error('Gagal menghapus utang', msg);
     }
   };
 
@@ -73,7 +153,8 @@ export const DebtDetailPage: React.FC = () => {
     e.preventDefault();
     setPayError(null);
 
-    if (payAmount <= 0) {
+    const parsedPayAmount = parseFloat(payAmount);
+    if (isNaN(parsedPayAmount) || parsedPayAmount <= 0) {
       setPayError('Nominal pembayaran harus lebih dari 0');
       return;
     }
@@ -86,65 +167,64 @@ export const DebtDetailPage: React.FC = () => {
       await recordPaymentMutation.mutateAsync({
         id,
         req: {
-          amount: payAmount,
+          amount: parsedPayAmount,
           payment_date: new Date(payDate).toISOString(),
           is_extra_payment: isExtra,
-          notes: payNotes ? payNotes : undefined,
+          notes: payNotes || undefined,
           account_id: payAccountId,
         },
       });
+      toast.success('Pembayaran cicilan berhasil dicatat');
       setPayModalOpen(false);
-    } catch (err: any) {
-      setPayError(err.response?.data?.error?.message || 'Gagal mencatat pembayaran');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal mencatat pembayaran';
+      setPayError(msg);
     }
   };
-
-  // Compile pelunasan progress data for chart
-  // We want to show outstanding balance stepping down over time.
-  const chartData: any[] = [];
-  if (debt) {
-    // Add start state
-    chartData.push({
-      date: 'Original',
-      balance: debt.original_amount,
-    });
-
-    if (debt.payments && debt.payments.length > 0) {
-      // Sort payments ASC by date for chart progression
-      const sortedPayments = [...debt.payments].reverse();
-      sortedPayments.forEach((p, idx) => {
-        const dateStr = new Date(p.payment_date).toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
-        chartData.push({
-          date: `${dateStr} (#${idx + 1})`,
-          balance: p.remaining_balance,
-        });
-      });
-    } else {
-      // Add current state if no payments
-      chartData.push({
-        date: 'Current',
-        balance: debt.outstanding_balance,
-      });
-    }
-  }
 
   const isPaidOff = debt?.status === 'paid_off';
   const payLoading = recordPaymentMutation.isPending;
 
   return (
-    <div className="space-y-6">
-      {/* Back to list */}
-      <button 
-        onClick={() => navigate('/debts')}
-        className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Kembali ke Daftar Utang
-      </button>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title={debt?.name || 'Detail Kontrak Utang'}
+        subtitle={debt ? `${debt.creditor || 'Pemberi Kredit'} • ${debt.type.toUpperCase()}` : undefined}
+        badge={
+          debt ? (
+            <Badge variant={isPaidOff ? 'success' : 'danger'}>
+              {isPaidOff ? 'Lunas' : 'Aktif'}
+            </Badge>
+          ) : undefined
+        }
+        backTo="/debts"
+        backLabel="Kembali ke Daftar Utang"
+        actions={
+          isOwner && debt ? (
+            <>
+              {!isPaidOff && (
+                <Button onClick={() => setPayModalOpen(true)}>
+                  <Coins className="h-4 w-4" />
+                  Bayar Cicilan
+                </Button>
+              )}
+              <Button variant="secondary" onClick={() => setFormOpen(true)}>
+                <Edit className="h-4 w-4" />
+                Edit
+              </Button>
+              <Button variant="danger" onClick={() => setDeleteConfirmOpen(true)}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </>
+          ) : undefined
+        }
+      />
 
       {isLoading ? (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <div className="space-y-6 lg:col-span-1">
+          <div className="lg:col-span-1">
             <CardSkeleton />
           </div>
           <div className="lg:col-span-2">
@@ -152,180 +232,176 @@ export const DebtDetailPage: React.FC = () => {
           </div>
         </div>
       ) : error || !debt ? (
-        <div className="text-center p-8 bg-white border border-slate-200 rounded-xl text-red-500">
+        <Card className="p-8 text-center text-rose-600 dark:text-rose-400 font-semibold">
           Gagal memuat detail utang.
-        </div>
+        </Card>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Column 1: Info Card */}
           <div className="space-y-6 lg:col-span-1">
-            <Card className="p-6 relative overflow-hidden">
-              {isPaidOff && (
-                <div className="absolute top-0 right-0 bg-emerald-500 text-white text-[10px] font-black px-3 py-1 uppercase tracking-wider rounded-bl-lg">
-                  Lunas 🎉
-                </div>
-              )}
-              <h2 className="text-xl font-black text-slate-900 dark:text-white">
-                {debt.name}
-              </h2>
-              <span className="text-xs font-bold text-slate-400 capitalize">{debt.creditor || 'Pemberi Kredit'}</span>
-              
-              <div className="mt-6 space-y-4 text-sm">
+            <Card className="p-6">
+              <div className="space-y-5 text-sm">
                 <div>
-                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Sisa Saldo Utang</span>
-                  <MoneyDisplay 
-                    value={debt.outstanding_balance} 
-                    className="text-2xl font-black font-mono text-slate-900 dark:text-white mt-1" 
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block">
+                    Sisa Saldo Utang
+                  </span>
+                  <MoneyDisplay
+                    value={debt.outstanding_balance}
+                    className="font-display text-3xl font-extrabold text-slate-900 dark:text-white mt-1 block"
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 border-t border-slate-100 dark:border-slate-800 pt-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 dark:border-slate-800 pt-4">
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Pinjaman Awal</span>
-                    <MoneyDisplay value={debt.original_amount} className="font-bold text-slate-700 dark:text-slate-300 font-mono" />
+                    <span className="text-xs font-medium text-slate-400 block">Pinjaman Awal</span>
+                    <MoneyDisplay
+                      value={debt.original_amount}
+                      className="font-semibold text-slate-800 dark:text-slate-200 font-money mt-0.5 block"
+                    />
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Suku Bunga</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                    <span className="text-xs font-medium text-slate-400 block">Suku Bunga</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5 block">
                       {debt.interest_rate !== undefined ? `${debt.interest_rate}% p.a.` : '-'}
                     </span>
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 border-t border-slate-100 dark:border-slate-800 pt-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 dark:border-slate-800 pt-4">
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Cicilan Minimum</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300 font-mono">
+                    <span className="text-xs font-medium text-slate-400 block">Cicilan Minimum</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 font-money mt-0.5 block">
                       {debt.formatted_minimum_payment || '-'}
                     </span>
                   </div>
                   <div>
-                    <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Tenor Bulan</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300">
-                      {debt.tenor_months !== undefined ? `${debt.tenor_months} Bln` : '-'}
+                    <span className="text-xs font-medium text-slate-400 block">Tenor</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5 block">
+                      {debt.tenor_months !== undefined ? `${debt.tenor_months} Bulan` : '-'}
                     </span>
                   </div>
                 </div>
 
-                <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-2">
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-bold">Jatuh Tempo</span>
-                    <span className="font-bold text-slate-700 dark:text-slate-300">
+                <div className="border-t border-slate-100 dark:border-slate-800 pt-4 space-y-2.5 text-xs">
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 dark:text-slate-400">Jatuh Tempo</span>
+                    <span className="font-semibold text-slate-800 dark:text-slate-200">
                       {debt.due_day ? `Tiap Tanggal ${debt.due_day}` : '-'}
                     </span>
                   </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-bold">Sumber Pembayaran</span>
-                    <span className="font-bold text-indigo-500">{debt.account_name || '-'}</span>
-                  </div>
-                  <div className="flex justify-between items-center text-xs">
-                    <span className="text-slate-400 font-bold">Tipe Kontrak</span>
-                    <span className="font-bold capitalize text-slate-700 dark:text-slate-300">{debt.type}</span>
+                  <div className="flex justify-between items-center">
+                    <span className="text-slate-500 dark:text-slate-400">Rekening Sumber</span>
+                    <span className="font-semibold text-indigo-600 dark:text-indigo-400">
+                      {debt.account_name || '-'}
+                    </span>
                   </div>
                 </div>
 
                 {debt.notes && (
-                  <div className="bg-slate-50 dark:bg-slate-900 p-3 rounded-lg text-xs space-y-1">
-                    <span className="font-bold text-slate-400 uppercase tracking-wider">Catatan</span>
-                    <p className="font-semibold text-slate-600 dark:text-slate-400">{debt.notes}</p>
+                  <div className="bg-slate-50 dark:bg-slate-800/60 p-3.5 rounded-xl text-xs space-y-1 border border-slate-100 dark:border-slate-800">
+                    <span className="font-semibold text-slate-500 uppercase tracking-wider text-[11px]">
+                      Catatan
+                    </span>
+                    <p className="text-slate-700 dark:text-slate-300 leading-relaxed">{debt.notes}</p>
                   </div>
                 )}
               </div>
-
-              {/* Mutate Actions (Owner only) */}
-              {isOwner && (
-                <div className="mt-8 flex gap-2.5">
-                  {!isPaidOff && (
-                    <Button onClick={() => setPayModalOpen(true)} className="flex-1 flex items-center justify-center gap-1">
-                      <Coins className="h-4 w-4" /> Bayar Cicilan
-                    </Button>
-                  )}
-                  <Button variant="secondary" onClick={() => setFormOpen(true)} className="px-3 border border-slate-200 hover:bg-slate-50">
-                    <Edit className="h-4 w-4" />
-                  </Button>
-                  <Button variant="danger" onClick={() => setDeleteConfirmOpen(true)} className="px-3">
-                    <Trash2 className="h-4 w-4" />
-                  </Button>
-                </div>
-              )}
             </Card>
           </div>
 
           {/* Column 2 & 3: Chart & History */}
           <div className="lg:col-span-2 space-y-6">
-            
-            {/* Chart Progress */}
-            <Card className="p-6 space-y-4">
-              <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Progress Penurunan outstanding utang</h3>
+            <Card title="Progres Penurunan Sisa Utang" subtitle="Simulasi pergerakan saldo dari awal kontrak">
               <div className="h-56 w-full">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                  <BarChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                    <XAxis dataKey="date" stroke="#94A3B8" fontSize={10} tickLine={false} />
-                    <YAxis 
-                      stroke="#94A3B8" 
-                      fontSize={10} 
-                      tickLine={false} 
+                    <XAxis dataKey="date" stroke="#94A3B8" fontSize={11} tickLine={false} />
+                    <YAxis
+                      stroke="#94A3B8"
+                      fontSize={11}
+                      tickLine={false}
                       tickFormatter={(v) => {
-                        if (v >= 1000000000) return `${(v / 1000000000).toFixed(1)}B`;
+                        if (v >= 1000000000) return `${(v / 1000000000).toFixed(1)}M`;
                         if (v >= 1000000) return `${(v / 1000000).toFixed(0)}jt`;
-                        return v;
+                        return String(v);
                       }}
                     />
-                    <Tooltip 
-                      formatter={(value: any) => [new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value), 'Outstanding']}
-                      contentStyle={{ backgroundColor: '#1E293B', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '11px' }}
+                    <Tooltip
+                      formatter={(value) => [
+                        new Intl.NumberFormat('id-ID', {
+                          style: 'currency',
+                          currency: 'IDR',
+                          maximumFractionDigits: 0,
+                        }).format(Number(value || 0)),
+                        'Sisa Saldo',
+                      ]}
+                      contentStyle={{
+                        backgroundColor: '#FFFFFF',
+                        borderRadius: '12px',
+                        border: '1px solid #E2E8F0',
+                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                        color: '#0F172A',
+                        fontSize: '12px',
+                      }}
                     />
-                    <Bar dataKey="balance" fill="#F43F5E" radius={[4, 4, 0, 0]} barSize={32} />
+                    <Bar dataKey="balance" fill="#F43F5E" radius={[6, 6, 0, 0]} barSize={32} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
             </Card>
 
-            {/* History Table */}
-            <Card className="p-6 space-y-4">
-              <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Riwayat Transaksi Pembayaran</h3>
+            <Card title="Riwayat Pembayaran Cicilan" noPadding>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
                   <thead>
-                    <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                      <th className="pb-3 pr-2">Tanggal</th>
-                      <th className="pb-3 pr-2">Jumlah Bayar</th>
-                      <th className="pb-3 pr-2">Pokok</th>
-                      <th className="pb-3 pr-2">Bunga</th>
-                      <th className="pb-3 pr-2">Sisa Saldo</th>
-                      <th className="pb-3">Catatan</th>
+                    <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
+                      <th className="py-3 px-4">Tanggal</th>
+                      <th className="py-3 px-4">Jumlah Bayar</th>
+                      <th className="py-3 px-4">Pokok</th>
+                      <th className="py-3 px-4">Bunga</th>
+                      <th className="py-3 px-4">Sisa Saldo</th>
+                      <th className="py-3 px-4">Catatan</th>
                     </tr>
                   </thead>
-                  <tbody>
+                  <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
                     {!debt.payments || debt.payments.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="py-6 text-center text-slate-400 font-bold">
+                        <td colSpan={6} className="py-8 text-center text-slate-400 font-medium">
                           Belum ada transaksi pembayaran untuk utang ini.
                         </td>
                       </tr>
                     ) : (
-                      debt.payments.map((p: any) => (
-                        <tr key={p.id} className="border-b border-slate-50 dark:border-slate-800/40 hover:bg-slate-50/50">
-                          <td className="py-3 pr-2 font-semibold">
-                            {new Date(p.payment_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+                      debt.payments.map((p) => (
+                        <tr
+                          key={p.id}
+                          className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
+                        >
+                          <td className="py-3 px-4 font-medium text-slate-700 dark:text-slate-200">
+                            {new Date(p.payment_date).toLocaleDateString('id-ID', {
+                              day: 'numeric',
+                              month: 'short',
+                              year: 'numeric',
+                            })}
                             {p.is_extra_payment && (
-                              <span className="ml-1 bg-emerald-50 text-emerald-700 px-1 rounded text-[9px] font-bold">Extra</span>
+                              <Badge variant="success" className="ml-2">
+                                Ekstra
+                              </Badge>
                             )}
                           </td>
-                          <td className="py-3 pr-2 font-mono font-bold text-slate-900 dark:text-white">
+                          <td className="py-3 px-4 font-money font-semibold text-slate-900 dark:text-white">
                             {p.formatted_amount}
                           </td>
-                          <td className="py-3 pr-2 font-mono text-slate-600 dark:text-slate-400">
+                          <td className="py-3 px-4 font-money text-slate-600 dark:text-slate-300">
                             {p.formatted_principal || '-'}
                           </td>
-                          <td className="py-3 pr-2 font-mono text-amber-600">
+                          <td className="py-3 px-4 font-money text-amber-600 dark:text-amber-400">
                             {p.formatted_interest || '-'}
                           </td>
-                          <td className="py-3 pr-2 font-mono font-bold text-rose-500">
+                          <td className="py-3 px-4 font-money font-semibold text-rose-600 dark:text-rose-400">
                             {p.formatted_remaining}
                           </td>
-                          <td className="py-3 text-slate-400 max-w-[120px] truncate">
+                          <td className="py-3 px-4 text-slate-500 max-w-[140px] truncate">
                             {p.notes || '-'}
                           </td>
                         </tr>
@@ -343,39 +419,56 @@ export const DebtDetailPage: React.FC = () => {
       <Modal
         isOpen={payModalOpen}
         onClose={() => setPayModalOpen(false)}
-        title="Catat Pembayaran Cicilan / Utang"
+        title="Catat Pembayaran Cicilan"
         footerActions={
           <>
             <Button variant="ghost" onClick={() => setPayModalOpen(false)} disabled={payLoading}>
               Batal
             </Button>
-            <Button onClick={handleRecordPaymentSubmit} disabled={payLoading}>
-              {payLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Record Payment'}
+            <Button type="submit" form={formId} disabled={payLoading}>
+              {payLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Simpan Pembayaran'}
             </Button>
           </>
         }
       >
+        <DocumentScanBanner
+          title="Scan Bukti Pembayaran"
+          subtitle="Upload screenshot transfer/e-wallet atau bukti bayar untuk mengisi nominal, tanggal, dan rekening sumber otomatis."
+          onScan={(file, pdfPassword) =>
+            debtsService.scanDebtDocument(file, { mode: 'payment', pdfPassword })
+          }
+          onResult={handlePaymentScanResult}
+          summaryText={payScanSummary}
+          resetKey={payModalOpen}
+        />
+
         {payError && (
-          <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
+          <div className="mb-4 flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:border-rose-900/50 dark:text-rose-400">
             <AlertCircle className="h-5 w-5 shrink-0" />
             <span>{payError}</span>
           </div>
         )}
 
-        <form onSubmit={handleRecordPaymentSubmit} className="space-y-4">
+        <form id={formId} onSubmit={handleRecordPaymentSubmit} className="space-y-4">
           <div className="relative">
             <Input
-              label={isExtra ? "Nominal Pembayaran Ekstra" : "Nominal Pembayaran"}
+              label={isExtra ? 'Nominal Pembayaran Ekstra' : 'Nominal Pembayaran'}
               id="pay-amount"
               type="number"
+              min="1"
+              step="any"
               value={payAmount}
-              onChange={(e: any) => setPayAmount(parseFloat(e.target.value) || 0)}
+              onChange={(e) => setPayAmount(e.target.value)}
               required
-              className="text-lg font-bold font-mono"
+              className="text-lg font-bold font-money"
             />
-            {payAmount > 0 && (
-              <span className="absolute right-3 bottom-2 text-xs text-slate-400 font-mono">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(payAmount)}
+            {parseFloat(payAmount) > 0 && (
+              <span className="mt-1 block text-xs text-slate-500 font-money">
+                {new Intl.NumberFormat('id-ID', {
+                  style: 'currency',
+                  currency: 'IDR',
+                  maximumFractionDigits: 0,
+                }).format(parseFloat(payAmount))}
               </span>
             )}
           </div>
@@ -385,74 +478,72 @@ export const DebtDetailPage: React.FC = () => {
             id="pay-date"
             type="date"
             value={payDate}
-            onChange={(e: any) => setPayDate(e.target.value)}
+            onChange={(e) => setPayDate(e.target.value)}
             required
           />
 
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-              Pilih Rekening Pembayaran (Sumber Dana)
+          <div className="flex flex-col gap-1.5">
+            <label
+              htmlFor="pay-account"
+              className="text-xs font-semibold text-slate-600 dark:text-slate-300"
+            >
+              Rekening Sumber Pembayaran
             </label>
             <select
+              id="pay-account"
               value={payAccountId}
               onChange={(e) => setPayAccountId(e.target.value)}
-              className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 dark:border-slate-800 dark:text-white"
+              required
+              className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:bg-slate-900 dark:border-slate-800 dark:text-white"
             >
               <option value="">-- Pilih Rekening Sumber --</option>
-              {accounts && accounts.map((a: any) => (
-                <option key={a.id} value={a.id}>{a.name} ({a.formatted_balance})</option>
+              {accounts?.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.formatted_balance})
+                </option>
               ))}
             </select>
           </div>
 
-          <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300 py-1">
+          <label className="flex items-center gap-2.5 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-300 py-1">
             <input
               type="checkbox"
               checked={isExtra}
               onChange={(e) => setIsExtra(e.target.checked)}
               className="w-4 h-4 text-emerald-600 border-slate-300 rounded focus:ring-emerald-500"
             />
-            Pembayaran Ekstra (Memotong porsi pokok utang langsung)
+            Pembayaran Ekstra (memotong pokok pinjaman langsung)
           </label>
 
           <Input
             label="Catatan Pembayaran (Opsional)"
             id="pay-notes"
-            placeholder="e.g. Pembayaran cicilan bulan Juli"
+            placeholder="Contoh: Pembayaran cicilan bulan ini"
             value={payNotes}
-            onChange={(e: any) => setPayNotes(e.target.value)}
+            onChange={(e) => setPayNotes(e.target.value)}
           />
         </form>
       </Modal>
 
-      {/* Debt Form Modal */}
       <DebtFormModal
         isOpen={formOpen}
         onClose={() => setFormOpen(false)}
         editDebt={debt}
       />
 
-      {/* Delete Confirmation Modal */}
-      <Modal
+      <ConfirmDialog
         isOpen={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
+        onConfirm={handleDelete}
         title="Hapus Kontrak Utang"
-        footerActions={
-          <>
-            <Button variant="ghost" onClick={() => setDeleteConfirmOpen(false)}>
-              Batal
-            </Button>
-            <Button variant="danger" onClick={handleDelete}>
-              Ya, Hapus
-            </Button>
-          </>
-        }
-      >
-        <p className="text-sm text-slate-600 dark:text-slate-400">
-          Apakah Anda yakin ingin menghapus kontrak utang ini? Seluruh data riwayat pembayaran terkait juga akan terhapus.
-        </p>
-      </Modal>
+        description={`Apakah Anda yakin ingin menghapus kontrak "${debt?.name || ''}"? Seluruh riwayat pembayaran terkait juga akan terhapus.`}
+        confirmLabel="Ya, Hapus"
+        cancelLabel="Batal"
+        variant="danger"
+        isLoading={deleteMutation.isPending}
+      />
     </div>
   );
 };
+
 export default DebtDetailPage;

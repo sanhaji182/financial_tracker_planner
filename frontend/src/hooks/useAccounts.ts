@@ -1,18 +1,23 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { accountsService } from '../services/accounts';
 import type { CreateAccountRequest, UpdateAccountRequest } from '../services/accounts';
+import { useAuthStore } from '../stores/authStore';
 
 export const useAccounts = () => {
+  const user = useAuthStore((s) => s.user);
   return useQuery({
     queryKey: ['accounts'],
     queryFn: accountsService.getAccounts,
+    enabled: user?.role === 'owner',
   });
 };
 
 export const useAccountSummary = () => {
+  const user = useAuthStore((s) => s.user);
   return useQuery({
     queryKey: ['accounts', 'summary'],
     queryFn: accountsService.getAccountSummary,
+    enabled: user?.role === 'owner',
   });
 };
 

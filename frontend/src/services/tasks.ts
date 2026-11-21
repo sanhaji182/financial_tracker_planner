@@ -55,12 +55,12 @@ const tasksService = {
 
 	updateTask: async (id: string, payload: UpdateTaskPayload): Promise<{ message: string }> => {
 		const res = await api.put<any>(`/tasks/${id}`, payload);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	deleteTask: async (id: string): Promise<{ message: string }> => {
 		const res = await api.delete<any>(`/tasks/${id}`);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	}
 };
 

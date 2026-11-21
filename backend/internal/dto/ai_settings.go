@@ -15,7 +15,7 @@ type AISettingsResponse struct {
 
 type UpdateAISettingsRequest struct {
 	AIEnabled                 bool   `json:"ai_enabled"`
-	AIProvider                string `json:"ai_provider" binding:"required,oneof=openai anthropic local"`
+	AIProvider                string `json:"ai_provider" binding:"required,oneof=openai anthropic gemini local"`
 	AIModel                   string `json:"ai_model" binding:"required"`
 	OCREscalationEnabled      bool   `json:"ocr_escalation_enabled"`
 	AutoCategorizationEnabled bool   `json:"auto_categorization_enabled"`

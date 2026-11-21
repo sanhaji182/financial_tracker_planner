@@ -2,7 +2,7 @@ import api from '../utils/api';
 
 export interface AISettings {
   ai_enabled: boolean;
-  ai_provider: 'openai' | 'anthropic' | 'local';
+  ai_provider: 'openai' | 'anthropic' | 'gemini' | 'local';
   ai_model: string;
   ocr_escalation_enabled: boolean;
   auto_categorization_enabled: boolean;
@@ -13,7 +13,7 @@ export interface AISettings {
 
 export interface UpdateAISettingsRequest {
   ai_enabled: boolean;
-  ai_provider: 'openai' | 'anthropic' | 'local';
+  ai_provider: 'openai' | 'anthropic' | 'gemini' | 'local';
   ai_model: string;
   ocr_escalation_enabled: boolean;
   auto_categorization_enabled: boolean;
@@ -49,6 +49,10 @@ export const aiSettingsService = {
 
   detectAnomaly: async (): Promise<AnomalyCheckResponse> => {
     const response = await api.post<{ data: AnomalyCheckResponse }>('/ai/detect-anomaly');
-    return response.data.data;
+    const data = response.data.data;
+    return {
+      ...data,
+      alerts_created: Array.isArray(data?.alerts_created) ? data.alerts_created : [],
+    };
   },
 };

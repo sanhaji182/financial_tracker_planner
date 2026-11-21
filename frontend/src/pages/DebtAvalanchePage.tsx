@@ -1,195 +1,277 @@
 import React, { useState } from 'react';
-import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
-import { useNavigate } from 'react-router-dom';
 import { useAvalancheSimulation } from '../hooks/useDebts';
 import { Card } from '../components/ui/Card';
-import { 
-  ArrowLeft, 
-  Zap
-} from 'lucide-react';
-import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, CartesianGrid } from 'recharts';
+import { PageHeader } from '../components/ui/PageHeader';
+import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
+import { Zap } from 'lucide-react';
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  Legend,
+  CartesianGrid,
+} from 'recharts';
+
+const EXTRA_PRESETS = [
+  { label: 'Rp 0', value: 0 },
+  { label: '+500 rb', value: 500000 },
+  { label: '+1 jt', value: 1000000 },
+  { label: '+2 jt', value: 2000000 },
+  { label: '+5 jt', value: 5000000 },
+];
 
 export const DebtAvalanchePage: React.FC = () => {
-  const navigate = useNavigate();
-  const [extraAmount, setExtraAmount] = useState<number>(1000000); // default Rp 1.000.000
-
+  const [extraAmount, setExtraAmount] = useState<number>(1000000);
+  const [extraAmountInput, setExtraAmountInput] = useState<string>('1000000');
   const { data: simulation, isLoading } = useAvalancheSimulation(extraAmount);
 
-  const formatRupiah = (val: number) => {
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val);
-  };
+  const formatRupiah = (val: number) =>
+    new Intl.NumberFormat('id-ID', {
+      style: 'currency',
+      currency: 'IDR',
+      maximumFractionDigits: 0,
+    }).format(val);
 
-  // Compile data for chart payoff comparison
-  const chartData = simulation?.schedules_with_extra.map(se => {
-    // Find matching without extra schedule
-    const swe = simulation.schedules_without_extra.find(s => s.debt_id === se.debt_id);
+  const schedulesWithExtra = simulation?.schedules_with_extra ?? [];
+  const schedulesWithoutExtra = simulation?.schedules_without_extra ?? [];
+
+  const chartData = schedulesWithExtra.map((se) => {
+    const swe = schedulesWithoutExtra.find((s) => s.debt_id === se.debt_id);
     return {
       name: se.debt_name,
-      'Dengan Extra (Bulan)': se.payoff_month_index,
-      'Tanpa Extra (Bulan)': swe ? swe.payoff_month_index : se.payoff_month_index,
+      'Dengan Ekstra (Bulan)': se.payoff_month_index,
+      'Tanpa Ekstra (Bulan)': swe ? swe.payoff_month_index : se.payoff_month_index,
     };
-  }) || [];
+  });
 
   return (
-    <div className="space-y-6">
-      {/* Back to list */}
-      <button 
-        onClick={() => navigate('/debts')}
-        className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Kembali ke Daftar Utang
-      </button>
-
-      <div>
-        <h1 className="text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-          <Zap className="h-7 w-7 text-amber-500 fill-amber-500" />
-          Simulator Debt Avalanche
-        </h1>
-        <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Metode pelunasan utang tercepat secara matematis. Bayar minimum semua utang, lalu pusatkan dana ekstra pada utang berbunga tertinggi.
-        </p>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Simulator Debt Avalanche"
+        subtitle="Bayar minimum semua utang dan fokuskan dana ekstra ke utang berbunga tertinggi untuk menghemat total bunga."
+        backTo="/debts"
+        backLabel="Kembali ke Daftar Utang"
+      />
 
       {/* Input Extra Payment Card */}
-      <Card className="p-6">
-        <h3 className="text-sm font-bold text-slate-700 dark:text-slate-300 mb-4">Atur Anggaran Ekstra Bulanan Anda</h3>
+      <Card>
         <div className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-            <span className="text-xs text-slate-400 font-semibold uppercase tracking-wider">
-              Dana Tambahan per Bulan
-            </span>
-            <div className="flex items-center gap-2">
-              <span className="text-lg font-black text-slate-900 dark:text-white font-mono">
+            <div>
+              <h3 className="font-display text-sm font-bold text-slate-900 dark:text-white">
+                Atur Anggaran Ekstra Bulanan
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                Geser slider, pilih nominal cepat, atau masukkan angka secara langsung.
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              <span className="font-display text-xl font-extrabold text-indigo-600 dark:text-indigo-400 font-money">
                 {formatRupiah(extraAmount)}
               </span>
-              <input 
+              <input
                 type="number"
-                value={extraAmount}
-                onChange={(e) => setExtraAmount(Math.max(0, parseInt(e.target.value) || 0))}
-                className="w-32 h-9 rounded-lg border border-slate-200 bg-bg-base px-2 py-1 text-xs text-text-primary focus:outline-none dark:border-slate-800 dark:text-white font-mono"
+                min="0"
+                value={extraAmountInput}
+                onChange={(e) => {
+                  const raw = e.target.value;
+                  setExtraAmountInput(raw);
+                  const parsed = parseInt(raw, 10);
+                  setExtraAmount(!isNaN(parsed) && parsed >= 0 ? parsed : 0);
+                }}
+                className="w-36 h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold font-money text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
               />
             </div>
           </div>
-          {/* Slider input */}
-          <input 
+
+          <input
             type="range"
             min="0"
             max="10000000"
             step="100000"
-            value={extraAmount}
-            onChange={(e) => setExtraAmount(parseInt(e.target.value))}
-            className="w-full accent-amber-500"
+            value={Math.min(extraAmount, 10000000)}
+            onChange={(e) => {
+              const val = parseInt(e.target.value, 10);
+              setExtraAmount(val);
+              setExtraAmountInput(String(val));
+            }}
+            className="w-full accent-indigo-600 cursor-pointer"
           />
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            {EXTRA_PRESETS.map((preset) => {
+              const active = extraAmount === preset.value;
+              return (
+                <button
+                  key={preset.value}
+                  type="button"
+                  onClick={() => {
+                    setExtraAmount(preset.value);
+                    setExtraAmountInput(String(preset.value));
+                  }}
+                  className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all ${
+                    active
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </Card>
 
-
-      {/* Simulator Response Content */}
       {isLoading ? (
         <div className="space-y-6">
           <CardSkeleton />
           <ChartSkeleton />
         </div>
-      ) : !simulation || simulation.schedules_with_extra.length === 0 ? (
-        <Card className="p-8 text-center text-slate-400 font-semibold">
-          Tambahkan utang aktif berbunga terlebih dahulu untuk mensimulasikan strategi Avalanche.
+      ) : !simulation || schedulesWithExtra.length === 0 ? (
+        <Card className="p-8 text-center text-slate-500 font-medium">
+          Tambahkan utang aktif terlebih dahulu untuk mensimulasikan strategi pelunasan Avalanche.
         </Card>
       ) : (
         <div className="space-y-6">
-          {/* Simulation Callout Alert */}
-          <div className="p-6 bg-gradient-to-r from-amber-500 to-amber-600 rounded-2xl text-white shadow-lg space-y-3.5">
-            <div className="flex items-center gap-2">
-              <Zap className="h-6 w-6 text-white fill-white animate-bounce" />
-              <h2 className="text-lg font-black">Rencana Pelunasan Teroptimal Terhitung!</h2>
+          {/* Summary Callout */}
+          <div className="p-6 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl text-white shadow-md space-y-4">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 rounded-xl bg-white/15">
+                <Zap className="h-5 w-5 text-amber-300 fill-amber-300" />
+              </div>
+              <h2 className="font-display text-lg font-bold">
+                Rencana Pelunasan Optimal Terhitung
+              </h2>
             </div>
-            <p className="text-sm font-semibold max-w-2xl leading-relaxed opacity-95">
-              Dengan mengalokasikan pembayaran ekstra sebesar <span className="font-bold underline">{formatRupiah(extraAmount)}</span>/bulan, semua utang Anda diproyeksikan akan lunas <span className="font-extrabold text-white text-base bg-white/20 px-1.5 py-0.5 rounded">{simulation.savings_months} bulan lebih cepat</span> dan menghemat bunga pinjaman sebesar <span className="font-extrabold text-white text-base bg-white/20 px-1.5 py-0.5 rounded">{simulation.formatted_savings_interest}</span>!
+
+            <p className="text-sm leading-relaxed text-indigo-50 max-w-2xl">
+              Dengan alokasi ekstra <strong className="text-white">{formatRupiah(extraAmount)}/bulan</strong>,
+              seluruh utang diproyeksikan lunas{' '}
+              <span className="inline-block bg-white/20 px-2 py-0.5 rounded-md font-bold text-white">
+                {simulation.savings_months} bulan lebih cepat
+              </span>{' '}
+              dan menghemat bunga sebesar{' '}
+              <span className="inline-block bg-white/20 px-2 py-0.5 rounded-md font-bold text-white">
+                {simulation.formatted_savings_interest}
+              </span>
+              .
             </p>
 
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/20 pt-4 text-xs font-bold">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/15 pt-4">
               <div>
-                <span className="opacity-80 text-[10px] block mb-0.5 uppercase tracking-wider">Lunas Dengan Extra</span>
-                <span className="text-lg font-black font-mono">{simulation.months_to_payoff} Bulan</span>
+                <span className="text-indigo-200 text-[11px] uppercase tracking-wider font-medium block">
+                  Lunas Dengan Ekstra
+                </span>
+                <span className="font-display text-lg font-bold font-money mt-0.5 block">
+                  {simulation.months_to_payoff} Bulan
+                </span>
               </div>
               <div>
-                <span className="opacity-80 text-[10px] block mb-0.5 uppercase tracking-wider">Lunas Tanpa Extra</span>
-                <span className="text-lg font-black font-mono">{simulation.months_to_payoff_without_extra} Bulan</span>
+                <span className="text-indigo-200 text-[11px] uppercase tracking-wider font-medium block">
+                  Lunas Tanpa Ekstra
+                </span>
+                <span className="font-display text-lg font-bold font-money mt-0.5 block">
+                  {simulation.months_to_payoff_without_extra} Bulan
+                </span>
               </div>
               <div>
-                <span className="opacity-80 text-[10px] block mb-0.5 uppercase tracking-wider">Bunga Dengan Extra</span>
-                <span className="text-lg font-black font-mono">{simulation.formatted_total_interest}</span>
+                <span className="text-indigo-200 text-[11px] uppercase tracking-wider font-medium block">
+                  Bunga Dengan Ekstra
+                </span>
+                <span className="font-display text-lg font-bold font-money mt-0.5 block">
+                  {simulation.formatted_total_interest}
+                </span>
               </div>
               <div>
-                <span className="opacity-80 text-[10px] block mb-0.5 uppercase tracking-wider">Bunga Tanpa Extra</span>
-                <span className="text-lg font-black font-mono">{simulation.formatted_interest_without_extra}</span>
+                <span className="text-indigo-200 text-[11px] uppercase tracking-wider font-medium block">
+                  Bunga Tanpa Ekstra
+                </span>
+                <span className="font-display text-lg font-bold font-money mt-0.5 block">
+                  {simulation.formatted_interest_without_extra}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Payoff Comparison Chart */}
-          <Card className="p-6 space-y-4">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Perbandingan Kecepatan Lunas (Dalam Bulan)</h3>
+          {/* Chart */}
+          <Card title="Perbandingan Kecepatan Lunas (Bulan)">
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -25, bottom: 0 }}>
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
-                  <XAxis dataKey="name" stroke="#94A3B8" fontSize={10} tickLine={false} />
-                  <YAxis stroke="#94A3B8" fontSize={10} tickLine={false} />
-                  <Tooltip contentStyle={{ backgroundColor: '#1E293B', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '11px' }} />
-                  <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '11px', fontWeight: 'bold' }} />
-                  <Bar dataKey="Dengan Extra (Bulan)" fill="#F59E0B" radius={[4, 4, 0, 0]} barSize={24} />
-                  <Bar dataKey="Tanpa Extra (Bulan)" fill="#94A3B8" radius={[4, 4, 0, 0]} barSize={24} />
+                  <XAxis dataKey="name" stroke="#94A3B8" fontSize={11} tickLine={false} />
+                  <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: '#FFFFFF',
+                      borderRadius: '12px',
+                      border: '1px solid #E2E8F0',
+                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                      color: '#0F172A',
+                      fontSize: '12px',
+                    }}
+                  />
+                  <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '12px', fontWeight: 600 }} />
+                  <Bar dataKey="Dengan Ekstra (Bulan)" fill="#4F46E5" radius={[6, 6, 0, 0]} barSize={24} />
+                  <Bar dataKey="Tanpa Ekstra (Bulan)" fill="#CBD5E1" radius={[6, 6, 0, 0]} barSize={24} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
           </Card>
 
           {/* Comparison Table */}
-          <Card className="p-6 space-y-4">
-            <h3 className="text-sm font-bold text-slate-500 uppercase tracking-wider">Rincian Perbandingan Tiap Kontrak Utang</h3>
+          <Card title="Rincian Perbandingan Tiap Kontrak Utang" noPadding>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs border-collapse">
                 <thead>
-                  <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase tracking-wider">
-                    <th className="pb-3 pr-2">Nama Utang</th>
-                    <th className="pb-3 pr-2 text-right">Lunas Tanpa Extra</th>
-                    <th className="pb-3 pr-2 text-right">Lunas Dengan Extra</th>
-                    <th className="pb-3 pr-2 text-right">Penyelamatan Waktu</th>
-                    <th className="pb-3 pr-2 text-right">Bunga Tanpa Extra</th>
-                    <th className="pb-3 pr-2 text-right">Bunga Dengan Extra</th>
-                    <th className="pb-3 text-right">Hemat Bunga</th>
+                  <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
+                    <th className="py-3 px-4">Nama Utang</th>
+                    <th className="py-3 px-4 text-right">Tanpa Ekstra</th>
+                    <th className="py-3 px-4 text-right">Dengan Ekstra</th>
+                    <th className="py-3 px-4 text-right">Hemat Waktu</th>
+                    <th className="py-3 px-4 text-right">Bunga Tanpa Ekstra</th>
+                    <th className="py-3 px-4 text-right">Bunga Dengan Ekstra</th>
+                    <th className="py-3 px-4 text-right">Hemat Bunga</th>
                   </tr>
                 </thead>
-                <tbody>
-                  {simulation.schedules_with_extra.map((se) => {
-                    const swe = simulation.schedules_without_extra.find(s => s.debt_id === se.debt_id);
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {schedulesWithExtra.map((se) => {
+                    const swe = schedulesWithoutExtra.find(
+                      (s) => s.debt_id === se.debt_id
+                    );
                     const payoffNoExtra = swe ? swe.payoff_month_index : se.payoff_month_index;
                     const interestNoExtra = swe ? swe.total_interest_paid : se.total_interest_paid;
                     const diffMonths = payoffNoExtra - se.payoff_month_index;
                     const diffInterest = interestNoExtra - se.total_interest_paid;
 
                     return (
-                      <tr key={se.debt_id} className="border-b border-slate-50 dark:border-slate-800/40 hover:bg-slate-50/50">
-                        <td className="py-3 pr-2 font-bold text-slate-900 dark:text-white">
+                      <tr
+                        key={se.debt_id}
+                        className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
+                      >
+                        <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
                           {se.debt_name}
                         </td>
-                        <td className="py-3 pr-2 font-mono text-right text-slate-600 dark:text-slate-400">
+                        <td className="py-3 px-4 font-money text-right text-slate-600 dark:text-slate-300">
                           {payoffNoExtra} bln
                         </td>
-                        <td className="py-3 pr-2 font-mono text-right font-bold text-amber-600">
+                        <td className="py-3 px-4 font-money text-right font-semibold text-indigo-600 dark:text-indigo-400">
                           {se.payoff_month_index} bln
                         </td>
-                        <td className="py-3 pr-2 font-mono text-right font-bold text-emerald-600">
+                        <td className="py-3 px-4 font-money text-right font-semibold text-emerald-600 dark:text-emerald-400">
                           {diffMonths > 0 ? `-${diffMonths} bln` : '0 bln'}
                         </td>
-                        <td className="py-3 pr-2 font-mono text-right text-slate-600 dark:text-slate-400">
+                        <td className="py-3 px-4 font-money text-right text-slate-600 dark:text-slate-300">
                           {formatRupiah(interestNoExtra)}
                         </td>
-                        <td className="py-3 pr-2 font-mono text-right text-slate-900 dark:text-white">
+                        <td className="py-3 px-4 font-money text-right text-slate-900 dark:text-white">
                           {se.formatted_total_interest}
                         </td>
-                        <td className="py-3 font-mono text-right font-bold text-emerald-600">
+                        <td className="py-3 px-4 font-money text-right font-semibold text-emerald-600 dark:text-emerald-400">
                           {formatRupiah(diffInterest)}
                         </td>
                       </tr>
@@ -204,4 +286,5 @@ export const DebtAvalanchePage: React.FC = () => {
     </div>
   );
 };
+
 export default DebtAvalanchePage;

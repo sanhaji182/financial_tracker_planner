@@ -11,7 +11,7 @@ import (
 func CORS() gin.HandlerFunc {
 	configuredOrigins := os.Getenv("CORS_ALLOWED_ORIGINS")
 	if configuredOrigins == "" {
-		configuredOrigins = "http://localhost:5173,http://localhost:3000,http://localhost:8080"
+		configuredOrigins = "http://localhost:5173,http://localhost:3000,http://localhost:8080,https://localhost,capacitor://localhost,http://localhost"
 	}
 	allowedOrigins := make(map[string]struct{})
 	for _, value := range strings.Split(configuredOrigins, ",") {
@@ -31,7 +31,7 @@ func CORS() gin.HandlerFunc {
 			c.Writer.Header().Set("Vary", "Origin")
 		}
 		c.Writer.Header().Set("Access-Control-Allow-Credentials", "true")
-		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With")
+		c.Writer.Header().Set("Access-Control-Allow-Headers", "Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, accept, origin, Cache-Control, X-Requested-With, X-Client-Platform")
 		c.Writer.Header().Set("Access-Control-Allow-Methods", "POST, OPTIONS, GET, PUT, DELETE")
 
 		if c.Request.Method == "OPTIONS" {

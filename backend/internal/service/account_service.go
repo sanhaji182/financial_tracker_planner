@@ -17,14 +17,23 @@ type AccountService interface {
 	UpdateAccount(ctx context.Context, accountID string, userID string, req dto.UpdateAccountRequest) (*dto.AccountResponse, error)
 	DeleteAccount(ctx context.Context, accountID string, userID string) error
 	GetAccountSummary(ctx context.Context, userID string) (*dto.AccountSummaryResponse, error)
+	ScanAccountDocument(ctx context.Context, userID string, fileName string, fileBytes []byte, pdfPassword string) (*dto.AccountScanResponse, error)
 }
 
 type accountService struct {
 	accountRepo repository.AccountRepository
+	aiService   AISettingsService
 }
 
-func NewAccountService(accountRepo repository.AccountRepository) AccountService {
-	return &accountService{accountRepo: accountRepo}
+func NewAccountService(accountRepo repository.AccountRepository, aiService ...AISettingsService) AccountService {
+	var ai AISettingsService
+	if len(aiService) > 0 {
+		ai = aiService[0]
+	}
+	return &accountService{
+		accountRepo: accountRepo,
+		aiService:   ai,
+	}
 }
 
 func maskAccountNumber(num string) string {
@@ -191,4 +200,30 @@ func (s *accountService) GetAccountSummary(ctx context.Context, userID string) (
 
 	res := dto.ToAccountSummaryResponse(summary)
 	return &res, nil
+}
+
+func (s *accountService) ScanAccountDocument(ctx context.Context, userID string, fileName string, fileBytes []byte, pdfPassword string) (*dto.AccountScanResponse, error) {
+	if err := validateScanFile(fileName, fileBytes); err != nil {
+		return nil, err
+	}
+
+	var scanRes dto.AccountScanResponse
+	if err := callWorkerSnapshotMultipart(ctx, userID, s.aiService, "/parse/account-snapshot", fileName, fileBytes, pdfPassword, &scanRes); err != nil {
+		return nil, err
+	}
+
+	if scanRes.ParsedAccount != nil {
+		if accounts, err := s.accountRepo.GetAllByUser(ctx, userID); err == nil && len(accounts) > 0 {
+			matchedID, matchedName := matchUserAccount(
+				accounts,
+				scanRes.ParsedAccount.BankProvider,
+				scanRes.ParsedAccount.AccountNumber,
+				scanRes.ParsedAccount.Name,
+			)
+			scanRes.MatchedAccountID = matchedID
+			scanRes.MatchedAccountName = matchedName
+		}
+	}
+
+	return &scanRes, nil
 }

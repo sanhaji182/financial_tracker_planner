@@ -118,6 +118,44 @@ export interface AvalancheSimulationResponse {
   schedules_without_extra: AvalanchePaymentScheduleResponse[];
 }
 
+export interface DebtScanParsedData {
+  name: string;
+  type: 'kpr' | 'credit_card' | 'installment' | 'personal_loan' | 'other';
+  creditor: string;
+  original_amount: number;
+  outstanding_balance: number;
+  minimum_payment?: number | null;
+  interest_rate?: number | null;
+  due_day?: number | null;
+  tenor_months?: number | null;
+  currency: string;
+  notes: string;
+}
+
+export interface DebtPaymentScanParsedData {
+  amount: number;
+  payment_date: string;
+  source_account_hint: string;
+  creditor_hint: string;
+  reference_number: string;
+  notes: string;
+  matched_account_id?: string;
+  matched_account_name?: string;
+}
+
+export interface DebtScanResponse {
+  mode: 'debt' | 'payment';
+  engine: string;
+  extraction_method: string;
+  raw_text: string;
+  parsed_debt?: DebtScanParsedData;
+  parsed_payment?: DebtPaymentScanParsedData;
+  confidence_scores: Record<string, number>;
+  overall_confidence: number;
+  needs_review: boolean;
+  warnings: string[];
+}
+
 export const debtsService = {
   async getDebts(): Promise<Debt[]> {
     const res = await api.get('/debts');
@@ -126,7 +164,11 @@ export const debtsService = {
 
   async getDebt(id: string): Promise<Debt> {
     const res = await api.get(`/debts/${id}`);
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      payments: Array.isArray(data?.payments) ? data.payments : [],
+    };
   },
 
   async createDebt(req: CreateDebtRequest): Promise<Debt> {
@@ -155,6 +197,34 @@ export const debtsService = {
 
   async simulateAvalanche(extra: number): Promise<AvalancheSimulationResponse> {
     const res = await api.get(`/debts/avalanche?extra=${extra}`);
+    const data = res.data.data;
+    return {
+      ...data,
+      schedules_with_extra: Array.isArray(data?.schedules_with_extra)
+        ? data.schedules_with_extra
+        : [],
+      schedules_without_extra: Array.isArray(data?.schedules_without_extra)
+        ? data.schedules_without_extra
+        : [],
+    };
+  },
+
+  async scanDebtDocument(
+    file: File,
+    options?: { mode?: 'debt' | 'payment'; pdfPassword?: string }
+  ): Promise<DebtScanResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (options?.mode) {
+      formData.append('mode', options.mode);
+    }
+    if (options?.pdfPassword) {
+      formData.append('pdf_password', options.pdfPassword);
+    }
+    const res = await api.post('/debts/scan', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
     return res.data.data;
   },
 };

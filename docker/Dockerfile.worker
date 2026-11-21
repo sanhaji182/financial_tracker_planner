@@ -6,10 +6,13 @@ ARG https_proxy
 ENV http_proxy=$http_proxy
 ENV https_proxy=$https_proxy
 
-# Install system dependencies (Tesseract OCR)
+# Install system dependencies (Tesseract OCR ind+eng + Poppler for scanned PDF)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    tesseract-ocr-ind \
+    tesseract-ocr-eng \
     libtesseract-dev \
+    poppler-utils \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 

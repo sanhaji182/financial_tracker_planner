@@ -1,0 +1,32 @@
+{
+  "name": "Keuangan Bersama — Kelola Keuangan Keluarga",
+  "short_name": "Keuangan Bersama",
+  "description": "Aplikasi pengelolaan kekayaan, arus kas, tagihan, utang, dan perencanaan keuangan keluarga bersama.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F8FAFC",
+  "theme_color": "#4F46E5",
+  "lang": "id",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.png",
+      "sizes": "64x64",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ]
+}

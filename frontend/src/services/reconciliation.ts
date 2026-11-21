@@ -23,7 +23,13 @@ export interface ReconciliationResponse {
 export const reconciliationService = {
   async startReconciliation(data: ReconciliationStartRequest): Promise<ReconciliationResponse> {
     const res = await api.post('/reconciliation/start', data);
-    return res.data.data;
+    const body = res.data.data;
+    return {
+      ...body,
+      unmatched_transactions: Array.isArray(body?.unmatched_transactions)
+        ? body.unmatched_transactions
+        : [],
+    };
   },
 
   async confirmReconciliation(data: ReconciliationConfirmRequest): Promise<void> {

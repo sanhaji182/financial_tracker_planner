@@ -26,7 +26,12 @@ export interface InvestmentSummaryResponse {
 export const investmentService = {
   async getInvestmentSummary(): Promise<InvestmentSummaryResponse> {
     const res = await api.get('/investment/summary');
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      breakdown: Array.isArray(data?.breakdown) ? data.breakdown : [],
+      trend: Array.isArray(data?.trend) ? data.trend : [],
+    };
   },
 };
 export default investmentService;

@@ -145,12 +145,22 @@ export const transactionsService = {
     });
 
     const res = await api.get(`/transactions?${params.toString()}`);
-    return res.data;
+    const body = res.data;
+    return {
+      ...body,
+      data: Array.isArray(body?.data) ? body.data : [],
+    };
   },
 
   async getTransaction(id: string): Promise<Transaction> {
     const res = await api.get(`/transactions/${id}`);
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      splits: Array.isArray(data?.splits) ? data.splits : [],
+      attachments: Array.isArray(data?.attachments) ? data.attachments : [],
+      audit_logs: Array.isArray(data?.audit_logs) ? data.audit_logs : [],
+    };
   },
 
   async createTransaction(req: CreateTransactionRequest): Promise<Transaction> {
@@ -211,6 +221,16 @@ export const transactionsService = {
     const res = await api.put(`/transactions/confirm/${id}`, req);
     return res.data.data;
   },
+
+  async confirmBulkDrafts(
+    drafts: BulkConfirmDraftItem[]
+  ): Promise<{ confirmed_count: number; data: Transaction[] }> {
+    const res = await api.put('/transactions/confirm-bulk', { drafts });
+    return {
+      confirmed_count: res.data.confirmed_count ?? 0,
+      data: Array.isArray(res.data?.data) ? res.data.data : [],
+    };
+  },
 };
 
 export interface ParsedOCRItem {
@@ -229,6 +249,8 @@ export interface ParsedOCRData {
 }
 
 export interface OCRResponse {
+  raw_text?: string;
+  engine?: string;
   parsed_data: ParsedOCRData;
   confidence_scores: Record<string, number>;
   overall_confidence: number;
@@ -236,6 +258,7 @@ export interface OCRResponse {
 }
 
 export interface ParsedPDFTransaction {
+  draft_id?: string;
   date: string;
   description: string;
   debit: number;
@@ -248,11 +271,14 @@ export interface PDFStatementResponse {
   period: string;
   transactions: ParsedPDFTransaction[];
   confidence: number;
+  extraction_method?: string;
 }
 
 export interface DocumentUploadParseResponse {
   type: 'ocr' | 'pdf_parse';
   draft_transaction_id?: string;
+  draft_transaction_ids?: string[];
+  attachment_id?: string;
   parsed_ocr?: OCRResponse;
   parsed_pdf?: PDFStatementResponse;
   suggested_category_id?: string;
@@ -268,5 +294,16 @@ export interface ConfirmDraftTransactionRequest {
   category_id?: string;
   description?: string;
   notes?: string;
-  source: 'ocr' | 'pdf_parse';
+  source: 'ocr' | 'pdf_parse' | 'ai_suggested';
+}
+
+export interface BulkConfirmDraftItem {
+  id: string;
+  account_id: string;
+  category_id?: string;
+  date?: string;
+  amount?: number;
+  type?: 'income' | 'expense' | 'transfer';
+  description?: string;
+  notes?: string;
 }

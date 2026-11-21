@@ -7,9 +7,21 @@
     "dev": "vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "cap:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "android:bundle": "npm run cap:sync && cd android && ./gradlew bundleRelease"
   },
   "dependencies": {
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/camera": "^8.2.6",
+    "@capacitor/core": "^8.6.2",
+    "@capacitor/filesystem": "^8.1.5",
+    "@capacitor/preferences": "^8.0.1",
+    "@capacitor/share": "^8.0.3",
+    "@capacitor/splash-screen": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4",
     "@tanstack/react-query": "^5.101.2",
     "autoprefixer": "^10.5.2",
     "axios": "^1.18.1",
@@ -23,6 +35,8 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/cli": "^8.6.2",
     "@playwright/test": "^1.61.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",

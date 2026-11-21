@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { useCreateAsset, useUpdateAsset } from '../../hooks/useAssets';
 import { useAccounts } from '../../hooks/useAccounts';
-import type { Asset } from '../../services/assets';
+import type { Asset, CreateAssetRequest, UpdateAssetRequest } from '../../services/assets';
+import { toast } from '../../stores/useToastStore';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
@@ -18,16 +19,18 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   onClose,
   editAsset,
 }) => {
-  const isEditMode = !!editAsset;
+  const formId = useId();
+  const isEditMode = Boolean(editAsset);
   const createMutation = useCreateAsset();
   const updateMutation = useUpdateAsset();
   const { data: accounts } = useAccounts();
 
-  // Form states
   const [name, setName] = useState('');
-  const [type, setType] = useState<'savings' | 'property' | 'vehicle' | 'investment' | 'cash' | 'e_wallet' | 'deposit' | 'other'>('savings');
-  const [currentValue, setCurrentValue] = useState<number>(0);
-  const [purchaseValue, setPurchaseValue] = useState<number | ''>('');
+  const [type, setType] = useState<
+    'savings' | 'property' | 'vehicle' | 'investment' | 'cash' | 'e_wallet' | 'deposit' | 'other'
+  >('savings');
+  const [currentValue, setCurrentValue] = useState<string>('');
+  const [purchaseValue, setPurchaseValue] = useState<string>('');
   const [purchaseDate, setPurchaseDate] = useState('');
   const [linkedAccountId, setLinkedAccountId] = useState('');
   const [isShared, setIsShared] = useState(false);
@@ -35,12 +38,10 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
   const [notes, setNotes] = useState('');
   const [currency, setCurrency] = useState('IDR');
 
-  // Metadata states
   const [address, setAddress] = useState('');
   const [plateNumber, setPlateNumber] = useState('');
   const [model, setModel] = useState('');
 
-  // Validation / Error
   const [nameError, setNameError] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -48,16 +49,17 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
     if (editAsset) {
       setName(editAsset.name);
       setType(editAsset.type);
-      setCurrentValue(editAsset.current_value);
-      setPurchaseValue(editAsset.purchase_value !== undefined ? editAsset.purchase_value : '');
+      setCurrentValue(String(editAsset.current_value));
+      setPurchaseValue(
+        editAsset.purchase_value !== undefined ? String(editAsset.purchase_value) : ''
+      );
       setPurchaseDate(editAsset.purchase_date ? editAsset.purchase_date.split('T')[0] : '');
       setLinkedAccountId(editAsset.linked_account_id || '');
       setIsShared(editAsset.is_shared);
       setIsLiquid(editAsset.is_liquid);
       setNotes(editAsset.notes || '');
       setCurrency(editAsset.currency || 'IDR');
-      
-      // Parse metadata
+
       const meta = editAsset.metadata || {};
       setAddress(meta.address || '');
       setPlateNumber(meta.plate_number || '');
@@ -65,7 +67,7 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
     } else {
       setName('');
       setType('savings');
-      setCurrentValue(0);
+      setCurrentValue('');
       setPurchaseValue('');
       setPurchaseDate('');
       setLinkedAccountId('');
@@ -81,14 +83,9 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
     setErrorMsg(null);
   }, [editAsset, isOpen]);
 
-  // If type changes, auto-set is_liquid defaults
   useEffect(() => {
     if (!isEditMode && isOpen) {
-      if (['savings', 'cash', 'e_wallet'].includes(type)) {
-        setIsLiquid(true);
-      } else {
-        setIsLiquid(false);
-      }
+      setIsLiquid(['savings', 'cash', 'e_wallet'].includes(type));
     }
   }, [type, isOpen, isEditMode]);
 
@@ -101,56 +98,80 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       return;
     }
 
-    // Assemble metadata
-    const metadata: any = {};
-    if (type === 'property' && address) {
-      metadata.address = address;
+    const parsedCurrent = parseFloat(currentValue);
+    if (!isLinked && (currentValue.trim() === '' || isNaN(parsedCurrent) || parsedCurrent < 0)) {
+      setErrorMsg('Nilai aset saat ini harus bernilai nol atau positif');
+      return;
     }
+
+    let parsedPurchase: number | undefined;
+    if (purchaseValue.trim() !== '') {
+      const val = parseFloat(purchaseValue);
+      if (isNaN(val) || val < 0) {
+        setErrorMsg('Nilai beli awal harus bernilai nol atau positif');
+        return;
+      }
+      parsedPurchase = val;
+    }
+
+    const metadata: Record<string, string> = {};
+    if (type === 'property' && address) metadata.address = address;
     if (type === 'vehicle') {
       if (plateNumber) metadata.plate_number = plateNumber;
       if (model) metadata.model = model;
     }
 
-    const payload: any = {
+    const commonPayload = {
       name,
-      type,
-      current_value: currentValue,
-      purchase_value: purchaseValue !== '' ? purchaseValue : undefined,
+      current_value: isLinked ? 0 : parsedCurrent,
+      purchase_value: parsedPurchase,
       purchase_date: purchaseDate ? new Date(purchaseDate).toISOString() : undefined,
-      linked_account_id: linkedAccountId ? linkedAccountId : undefined,
       is_shared: isShared,
       is_liquid: isLiquid,
-      currency: currency,
-      notes: notes ? notes : undefined,
+      currency,
+      notes: notes || undefined,
       metadata: Object.keys(metadata).length > 0 ? metadata : undefined,
     };
 
     try {
-      if (isEditMode) {
+      if (isEditMode && editAsset) {
+        const updateReq: UpdateAssetRequest & { currency?: string } = commonPayload;
         await updateMutation.mutateAsync({
-          id: editAsset!.id,
-          req: payload,
+          id: editAsset.id,
+          req: updateReq,
         });
+        toast.success('Data aset diperbarui', name);
       } else {
-        await createMutation.mutateAsync(payload);
+        const createReq: CreateAssetRequest & { currency?: string } = {
+          ...commonPayload,
+          type,
+          linked_account_id: linkedAccountId || undefined,
+        };
+        await createMutation.mutateAsync(createReq);
+        toast.success('Aset baru ditambahkan', name);
       }
       onClose();
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.error?.message || 'Gagal menyimpan aset');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menyimpan aset';
+      setErrorMsg(msg);
     }
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
+  const isLinked = Boolean(linkedAccountId);
+  const numericCurrentValue = parseFloat(currentValue);
 
   const modalFooter = (
     <>
       <Button variant="ghost" onClick={onClose} disabled={isPending}>
         Batal
       </Button>
-      <Button onClick={handleSubmit} disabled={isPending}>
+      <Button type="submit" form={formId} disabled={isPending}>
         {isPending ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
             Menyimpan...
           </>
         ) : (
@@ -159,8 +180,6 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       </Button>
     </>
   );
-
-  const isLinked = !!linkedAccountId;
 
   return (
     <Modal
@@ -171,18 +190,17 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
       size="md"
     >
       {errorMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
           <AlertCircle className="h-5 w-5 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Nama Aset */}
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
         <Input
           label="Nama Aset"
           id="asset-name"
-          placeholder="e.g. Rumah Sentul, Mobil HRV, Logam Mulia"
+          placeholder="Contoh: Rumah Sentul, Mobil HRV, Logam Mulia"
           value={name}
           onChange={(e) => {
             setName(e.target.value);
@@ -192,98 +210,105 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
           required
         />
 
-        {/* Tipe Aset (Hanya bisa dipilih saat buat baru) */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-            Tipe Aset
-          </label>
-          <select
-            value={type}
-            onChange={(e) => setType(e.target.value as any)}
-            disabled={isEditMode}
-            className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 disabled:opacity-50 dark:border-slate-800 dark:text-white"
-          >
-            <option value="savings">🏦 Tabungan & Rekening Bank</option>
-            <option value="property">🏠 Properti / Rumah / Tanah</option>
-            <option value="vehicle">🚗 Kendaraan (Mobil/Motor)</option>
-            <option value="investment">📈 Investasi / Saham / Reksa Dana / Emas</option>
-            <option value="cash">💵 Uang Tunai (Cash)</option>
-            <option value="e_wallet">📱 E-Wallet / Gopay / OVO</option>
-            <option value="deposit">🏧 Deposito Berjangka</option>
-            <option value="other">📦 Lain-lain</option>
-          </select>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Tipe Aset
+            </label>
+            <select
+              value={type}
+              onChange={(e) => setType(e.target.value as typeof type)}
+              disabled={isEditMode}
+              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+            >
+              <option value="savings">Tabungan &amp; Rekening Bank</option>
+              <option value="property">Properti / Rumah / Tanah</option>
+              <option value="vehicle">Kendaraan</option>
+              <option value="investment">Investasi / Saham / Emas</option>
+              <option value="cash">Uang Tunai</option>
+              <option value="e_wallet">E-Wallet</option>
+              <option value="deposit">Deposito Berjangka</option>
+              <option value="other">Lain-lain</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Mata Uang
+            </label>
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              disabled={isEditMode}
+              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 disabled:opacity-50"
+            >
+              <option value="IDR">IDR (Rp)</option>
+              <option value="USD">USD ($)</option>
+              <option value="SGD">SGD (S$)</option>
+              <option value="EUR">EUR (€)</option>
+            </select>
+          </div>
         </div>
 
-        {/* Mata Uang */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-            Mata Uang
-          </label>
-          <select
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            disabled={isEditMode}
-            className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 disabled:opacity-50 dark:border-slate-800 dark:text-white"
-          >
-            <option value="IDR">🇮🇩 IDR (Rp)</option>
-            <option value="USD">🇺🇸 USD ($)</option>
-            <option value="SGD">🇸🇬 SGD (S$)</option>
-            <option value="EUR">🇪🇺 EUR (€)</option>
-          </select>
-        </div>
-
-        {/* Linked Bank Account (Optional) */}
         {!isEditMode && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
               Tautkan ke Rekening / Akun (Opsional)
             </label>
             <select
               value={linkedAccountId}
               onChange={(e) => setLinkedAccountId(e.target.value)}
-              className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 dark:border-slate-800 dark:text-white"
+              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
             >
               <option value="">-- Tidak ditautkan --</option>
-              {accounts && accounts.map(a => (
-                <option key={a.id} value={a.id}>{a.name} ({a.formatted_balance})</option>
+              {accounts?.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name} ({a.formatted_balance})
+                </option>
               ))}
             </select>
-            <p className="text-[10px] text-slate-400 flex items-center gap-1 mt-0.5">
-              <HelpCircle className="h-3 w-3" />
-              Jika ditautkan, nilai aset otomatis mengikuti saldo terkini rekening tersebut.
+            <p className="text-[11px] text-slate-400 flex items-center gap-1 mt-0.5">
+              <HelpCircle className="h-3.5 w-3.5 shrink-0" />
+              Jika ditautkan, nilai aset otomatis mengikuti saldo rekening tersebut.
             </p>
           </div>
         )}
 
-        {/* Current Value / Nilai Saat Ini */}
         <div className="relative">
           <Input
-            label={isLinked ? "Nilai Saat Ini (Tersinkron Otomatis)" : "Nilai Aset Saat Ini"}
+            label={isLinked ? 'Nilai Saat Ini (Tersinkron Otomatis)' : 'Nilai Aset Saat Ini'}
             id="asset-value"
             type="number"
-            placeholder="e.g. 500000000"
+            min="0"
+            step="any"
+            placeholder="Contoh: 500000000"
             value={isLinked ? '' : currentValue}
-            onChange={(e) => setCurrentValue(parseFloat(e.target.value) || 0)}
+            onChange={(e) => setCurrentValue(e.target.value)}
             disabled={isLinked}
-            required
-            className="text-lg font-bold font-mono disabled:bg-slate-50 dark:disabled:bg-slate-900"
+            required={!isLinked}
+            className="text-lg font-bold font-money"
           />
-          {currentValue > 0 && (
-            <span className="absolute right-3 bottom-2 text-xs text-slate-400 font-mono">
-              {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(currentValue)}
+          {!isLinked && !isNaN(numericCurrentValue) && numericCurrentValue > 0 && (
+            <span className="mt-1 block text-xs text-slate-400 font-money">
+              {new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                maximumFractionDigits: 0,
+              }).format(numericCurrentValue)}
             </span>
           )}
         </div>
 
-        {/* Purchase Value & Date (Optional) */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
             label="Nilai Beli Awal (Opsional)"
             id="asset-purchase"
             type="number"
-            placeholder="e.g. 450000000"
+            min="0"
+            step="any"
+            placeholder="Contoh: 450000000"
             value={purchaseValue}
-            onChange={(e) => setPurchaseValue(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+            onChange={(e) => setPurchaseValue(e.target.value)}
           />
           <Input
             label="Tanggal Pembelian (Opsional)"
@@ -294,34 +319,32 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
           />
         </div>
 
-        {/* Checkbox Toggles */}
-        <div className="flex gap-6 items-center py-1">
-          <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300">
+        <div className="flex flex-wrap gap-6 items-center py-1">
+          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-300">
             <input
               type="checkbox"
               checked={isShared}
               onChange={(e) => setIsShared(e.target.checked)}
-              className="w-4 h-4 text-primary-600 border-slate-300 rounded focus:ring-primary-500"
+              className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
             />
             Aset Bersama (Shared)
           </label>
-          <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-300">
             <input
               type="checkbox"
               checked={isLiquid}
               onChange={(e) => setIsLiquid(e.target.checked)}
-              className="w-4 h-4 text-primary-600 border-slate-300 rounded focus:ring-primary-500"
+              className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
             />
             Aset Likuid (Mudah Cair)
           </label>
         </div>
 
-        {/* Flexible Metadata Fields based on type */}
         {type === 'property' && (
           <Input
             label="Alamat Properti"
             id="asset-address"
-            placeholder="e.g. Jl. Sentul Highland Blok C No. 5"
+            placeholder="Contoh: Jl. Sentul Highland Blok C No. 5"
             value={address}
             onChange={(e) => setAddress(e.target.value)}
           />
@@ -331,34 +354,34 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
             <Input
               label="Plat Nomor"
               id="asset-plate"
-              placeholder="e.g. B 1234 ABC"
+              placeholder="Contoh: B 1234 ABC"
               value={plateNumber}
               onChange={(e) => setPlateNumber(e.target.value)}
             />
             <Input
               label="Seri / Model"
               id="asset-model"
-              placeholder="e.g. Honda HRV Prestige 1.5"
+              placeholder="Contoh: Honda HRV Prestige 1.5"
               value={model}
               onChange={(e) => setModel(e.target.value)}
             />
           </div>
         )}
 
-        {/* Catatan */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
             Catatan Tambahan
           </label>
           <textarea
-            placeholder="Keterangan, lokasi fisik, nomor sertifikat, polis, dll..."
+            placeholder="Lokasi fisik, nomor sertifikat, nomor polis, dll..."
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="w-full min-h-[60px] rounded-lg border border-slate-200 bg-bg-base px-3 py-2 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 dark:border-slate-800 dark:text-white"
+            className="w-full min-h-[64px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none"
           />
         </div>
       </form>
     </Modal>
   );
 };
+
 export default AssetFormModal;

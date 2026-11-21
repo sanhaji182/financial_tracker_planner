@@ -50,12 +50,12 @@ const journalService = {
 
 	updateNote: async (id: string, payload: UpdateNotePayload): Promise<{ message: string }> => {
 		const res = await api.put<any>(`/journal/${id}`, payload);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	deleteNote: async (id: string): Promise<{ message: string }> => {
 		const res = await api.delete<any>(`/journal/${id}`);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	}
 };
 

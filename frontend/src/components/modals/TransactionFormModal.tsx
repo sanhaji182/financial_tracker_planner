@@ -1,10 +1,17 @@
-import React, { useState, useEffect } from 'react';
-import { useCreateTransaction, useUpdateTransaction, useUploadAttachment, useCategories } from '../../hooks/useTransactions';
+import React, { useEffect, useId, useState } from 'react';
+import {
+  useCreateTransaction,
+  useUpdateTransaction,
+  useUploadAttachment,
+  useCategories,
+} from '../../hooks/useTransactions';
 import { useAccounts } from '../../hooks/useAccounts';
-import type { Transaction } from '../../services/transactions';
+import type { Transaction, CreateTransactionRequest } from '../../services/transactions';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { toast } from '../../stores/useToastStore';
+import { formatLocalDate, getTodayLocalDate } from '../../utils/date';
 import { Loader2, AlertCircle, Upload, X, FileImage } from 'lucide-react';
 
 interface TransactionFormModalProps {
@@ -18,7 +25,8 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   onClose,
   editTransaction,
 }) => {
-  const isEditMode = !!editTransaction;
+  const formId = useId();
+  const isEditMode = Boolean(editTransaction);
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
   const uploadMutation = useUploadAttachment();
@@ -28,32 +36,30 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
 
   const [type, setType] = useState<'income' | 'expense' | 'transfer'>('expense');
   const [date, setDate] = useState('');
-  const [amount, setAmount] = useState<number>(0);
+  const [amount, setAmount] = useState<string>('');
   const [accountId, setAccountId] = useState('');
   const [targetAccountId, setTargetAccountId] = useState('');
   const [categoryId, setCategoryId] = useState('');
   const [description, setDescription] = useState('');
   const [notes, setNotes] = useState('');
 
-  // Attachments files state
   const [files, setFiles] = useState<File[]>([]);
   const [uploadProgress, setUploadProgress] = useState(false);
 
-  // Validations
   const [amountError, setAmountError] = useState<string | null>(null);
   const [accountError, setAccountError] = useState<string | null>(null);
   const [categoryError, setCategoryError] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // Initialize fields on open
   useEffect(() => {
     if (editTransaction) {
       setType(editTransaction.type);
-      // Format date to YYYY-MM-DD
-      const d = new Date(editTransaction.date);
-      const formattedDate = d.toISOString().split('T')[0];
+      const rawDate = editTransaction.date || '';
+      const formattedDate = /^\d{4}-\d{2}-\d{2}/.test(rawDate)
+        ? rawDate.slice(0, 10)
+        : formatLocalDate(new Date(rawDate));
       setDate(formattedDate);
-      setAmount(editTransaction.amount);
+      setAmount(String(editTransaction.amount));
       setAccountId(editTransaction.account_id);
       setTargetAccountId(editTransaction.target_account_id || '');
       setCategoryId(editTransaction.category_id || '');
@@ -62,8 +68,8 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       setFiles([]);
     } else {
       setType('expense');
-      setDate(new Date().toISOString().split('T')[0]);
-      setAmount(0);
+      setDate(getTodayLocalDate());
+      setAmount('');
       setAccountId('');
       setTargetAccountId('');
       setCategoryId('');
@@ -77,40 +83,35 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
     setErrorMsg(null);
   }, [editTransaction, isOpen]);
 
-  // Set default account & category if available
   useEffect(() => {
     if (!isEditMode && isOpen) {
-      if (accounts && accounts.length > 0 && !accountId) {
-        setAccountId(accounts[0].id);
+      if (accounts && accounts.length > 0) {
+        setAccountId((prev) => prev || accounts[0].id);
       }
-      if (categories && categories.length > 0 && !categoryId) {
-        const filtered = categories.filter(c => c.type === type);
+      if (categories && categories.length > 0) {
+        const filtered = categories.filter((c) => c.type === type);
         if (filtered.length > 0) {
-          setCategoryId(filtered[0].id);
+          setCategoryId((prev) => prev || filtered[0].id);
         }
       }
     }
   }, [accounts, categories, type, isOpen, isEditMode]);
 
-  // Adjust category select on type change
   const handleTypeChange = (newType: 'income' | 'expense' | 'transfer') => {
     setType(newType);
     if (newType !== 'transfer' && categories) {
-      const filtered = categories.filter(c => c.type === newType);
-      if (filtered.length > 0) {
-        setCategoryId(filtered[0].id);
-      } else {
-        setCategoryId('');
-      }
+      const filtered = categories.filter((c) => c.type === newType);
+      setCategoryId(filtered.length > 0 ? filtered[0].id : '');
     } else {
       setCategoryId('');
     }
   };
 
   const handleAmountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const val = parseFloat(e.target.value);
-    setAmount(isNaN(val) ? 0 : val);
-    if (isNaN(val) || val <= 0) {
+    const raw = e.target.value;
+    setAmount(raw);
+    const val = parseFloat(raw);
+    if (raw.trim() === '' || isNaN(val) || val <= 0) {
       setAmountError('Jumlah harus lebih dari 0');
     } else {
       setAmountError(null);
@@ -120,27 +121,30 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   const handleFileDrop = (e: React.DragEvent) => {
     e.preventDefault();
     if (e.dataTransfer.files) {
-      const newFiles = Array.from(e.dataTransfer.files).filter(f => f.type.startsWith('image/'));
-      setFiles(prev => [...prev, ...newFiles]);
+      const newFiles = Array.from(e.dataTransfer.files).filter((f) =>
+        f.type.startsWith('image/')
+      );
+      setFiles((prev) => [...prev, ...newFiles]);
     }
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) {
-      const newFiles = Array.from(e.target.files).filter(f => f.type.startsWith('image/'));
-      setFiles(prev => [...prev, ...newFiles]);
+      const newFiles = Array.from(e.target.files).filter((f) => f.type.startsWith('image/'));
+      setFiles((prev) => [...prev, ...newFiles]);
     }
   };
 
   const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
+    setFiles((prev) => prev.filter((_, i) => i !== index));
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
-    if (amount <= 0) {
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0) {
       setAmountError('Jumlah harus lebih dari 0');
       return;
     }
@@ -161,13 +165,13 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       return;
     }
 
-    const payload: any = {
+    const payload: CreateTransactionRequest = {
       date: new Date(date).toISOString(),
-      amount,
+      amount: parsedAmount,
       type,
       account_id: accountId,
-      description: description ? description : undefined,
-      notes: notes ? notes : undefined,
+      description: description || undefined,
+      notes: notes || undefined,
     };
 
     if (type === 'transfer') {
@@ -177,17 +181,18 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
     }
 
     try {
-      let savedTx: any;
-      if (isEditMode) {
+      let savedTx: Transaction | undefined;
+      if (isEditMode && editTransaction) {
         savedTx = await updateMutation.mutateAsync({
-          id: editTransaction!.id,
+          id: editTransaction.id,
           req: payload,
         });
+        toast.success('Transaksi berhasil diperbarui');
       } else {
         savedTx = await createMutation.mutateAsync(payload);
+        toast.success('Transaksi baru berhasil dicatat');
       }
 
-      // If there are files, upload them
       if (files.length > 0 && savedTx) {
         setUploadProgress(true);
         for (const file of files) {
@@ -200,24 +205,27 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       }
 
       onClose();
-    } catch (err: any) {
+    } catch (err: unknown) {
       setUploadProgress(false);
-      const msg = err.response?.data?.error?.message || 'Gagal menyimpan transaksi keuangan';
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menyimpan transaksi keuangan';
       setErrorMsg(msg);
     }
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending || uploadProgress;
+  const numericAmount = parseFloat(amount);
 
   const footer = (
     <>
       <Button variant="ghost" onClick={onClose} disabled={isPending}>
         Batal
       </Button>
-      <Button onClick={handleSubmit} disabled={isPending || !!amountError}>
+      <Button type="submit" form={formId} disabled={isPending || Boolean(amountError)}>
         {isPending ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
             {uploadProgress ? 'Mengunggah Lampiran...' : 'Menyimpan...'}
           </>
         ) : (
@@ -227,7 +235,7 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
     </>
   );
 
-  const filteredCategories = categories ? categories.filter(c => c.type === type) : [];
+  const filteredCategories = categories ? categories.filter((c) => c.type === type) : [];
 
   return (
     <Modal
@@ -238,130 +246,142 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       size="md"
     >
       {errorMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
           <AlertCircle className="h-5 w-5 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
 
-      {/* Tabs Type Selector */}
       {!isEditMode && (
-        <div className="flex border border-slate-100 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 rounded-xl p-1 mb-5">
+        <div className="flex border border-slate-200/80 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/80 rounded-xl p-1 mb-5">
           <button
             type="button"
             onClick={() => handleTypeChange('expense')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
               type === 'expense'
-                ? 'bg-white dark:bg-slate-800 text-rose-600 dark:text-rose-400 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                ? 'bg-white dark:bg-slate-900 text-rose-600 dark:text-rose-400 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            💸 Pengeluaran
+            Pengeluaran
           </button>
           <button
             type="button"
             onClick={() => handleTypeChange('income')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
               type === 'income'
-                ? 'bg-white dark:bg-slate-800 text-emerald-600 dark:text-emerald-400 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                ? 'bg-white dark:bg-slate-900 text-emerald-600 dark:text-emerald-400 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            💰 Pemasukan
+            Pemasukan
           </button>
           <button
             type="button"
             onClick={() => handleTypeChange('transfer')}
-            className={`flex-1 py-2 text-xs font-bold rounded-lg transition-all ${
+            className={`flex-1 py-2 text-xs font-semibold rounded-lg transition-all ${
               type === 'transfer'
-                ? 'bg-white dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 shadow-sm'
-                : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                ? 'bg-white dark:bg-slate-900 text-indigo-600 dark:text-indigo-400 shadow-sm'
+                : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
             }`}
           >
-            🔄 Transfer
+            Transfer
           </button>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Nominal Jumlah */}
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
         <div className="relative">
           <Input
             label="Nominal Transaksi"
-            id="tx-amount"
+            id={`${formId}-amount`}
             type="number"
-            placeholder="e.g. 50000"
-            value={amount === 0 ? '' : amount}
+            min="1"
+            step="any"
+            placeholder="Misal: 50000"
+            value={amount}
             onChange={handleAmountChange}
             error={amountError || undefined}
             required
-            className="text-lg font-bold font-mono"
+            className="text-lg font-bold font-money"
           />
-          {amount > 0 && (
-            <span className="absolute right-3 bottom-2 text-xs text-slate-400 font-mono">
-              {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(amount)}
+          {!isNaN(numericAmount) && numericAmount > 0 && (
+            <span className="mt-1 block text-xs text-slate-400 font-money">
+              {new Intl.NumberFormat('id-ID', {
+                style: 'currency',
+                currency: 'IDR',
+                maximumFractionDigits: 0,
+              }).format(numericAmount)}
             </span>
           )}
         </div>
 
-        {/* Tanggal */}
         <Input
           label="Tanggal Transaksi"
-          id="tx-date"
+          id={`${formId}-date`}
           type="date"
           value={date}
           onChange={(e) => setDate(e.target.value)}
           required
         />
 
-        {/* Akun Rekening */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-              {type === 'transfer' ? 'Dari Akun / Rekening' : 'Pilih Akun / Rekening'}
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+              {type === 'transfer' ? 'Dari Rekening' : 'Pilih Rekening'}
             </label>
             <select
               value={accountId}
               onChange={(e) => {
-                setAccountId(e.target.value);
+                const nextId = e.target.value;
+                setAccountId(nextId);
                 setAccountError(null);
+                if (nextId === targetAccountId) {
+                  setTargetAccountId('');
+                }
               }}
-              className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 dark:border-slate-800 dark:text-white"
+              required
+              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
             >
-              <option value="" disabled>Pilih Rekening...</option>
-              {accounts && accounts.map(a => (
+              <option value="" disabled>
+                Pilih Rekening...
+              </option>
+              {accounts?.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name} ({a.formatted_balance})
                 </option>
               ))}
             </select>
-            {accountError && <span className="text-[10px] text-red-500">{accountError}</span>}
+            {accountError && <span className="text-xs text-rose-600">{accountError}</span>}
           </div>
 
-          {/* Akun Tujuan (Hanya untuk Transfer) */}
           {type === 'transfer' ? (
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-                Ke Akun / Rekening Tujuan
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Ke Rekening Tujuan
               </label>
               <select
                 value={targetAccountId}
                 onChange={(e) => setTargetAccountId(e.target.value)}
-                className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 dark:border-slate-800 dark:text-white"
+                required
+                className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
               >
-                <option value="" disabled>Pilih Rekening Tujuan...</option>
-                {accounts && accounts.map(a => (
-                  <option key={a.id} value={a.id}>
-                    {a.name} ({a.formatted_balance})
-                  </option>
-                ))}
+                <option value="" disabled>
+                  Pilih Rekening Tujuan...
+                </option>
+                {accounts
+                  ?.filter((a) => a.id !== accountId)
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.formatted_balance})
+                    </option>
+                  ))}
               </select>
             </div>
           ) : (
-            /* Kategori (Hanya untuk Income / Expense) */
-            <div className="flex flex-col gap-1">
-              <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-                Pilih Kategori
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Kategori
               </label>
               <select
                 value={categoryId}
@@ -369,53 +389,52 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
                   setCategoryId(e.target.value);
                   setCategoryError(null);
                 }}
-                className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 dark:border-slate-800 dark:text-white"
+                className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
               >
-                <option value="" disabled>Pilih Kategori...</option>
-                {filteredCategories.map(c => (
+                <option value="" disabled>
+                  Pilih Kategori...
+                </option>
+                {filteredCategories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
                   </option>
                 ))}
               </select>
-              {categoryError && <span className="text-[10px] text-red-500">{categoryError}</span>}
+              {categoryError && <span className="text-xs text-rose-600">{categoryError}</span>}
             </div>
           )}
         </div>
 
-        {/* Deskripsi */}
         <Input
           label="Deskripsi Transaksi"
           id="tx-description"
           type="text"
-          placeholder="e.g. Beli Makan Siang, Gaji Bulanan, Transfer bulanan"
+          placeholder="Contoh: Makan Siang, Gaji Bulanan"
           value={description}
           onChange={(e) => setDescription(e.target.value)}
         />
 
-        {/* Catatan / Keterangan Tambahan */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
             Catatan Tambahan (Opsional)
           </label>
           <textarea
-            placeholder="Tambahkan detail catatan lainnya..."
+            placeholder="Tambahkan detail catatan..."
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="w-full min-h-[60px] rounded-lg border border-slate-200 bg-bg-base px-3 py-2 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 dark:border-slate-800 dark:text-white"
+            className="w-full min-h-[64px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20"
           />
         </div>
 
-        {/* Drag & Drop File Upload (Hanya saat tambah transaksi) */}
         {!isEditMode && (
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
               Lampiran Bukti Struk (Gambar)
             </label>
-            <div 
+            <div
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleFileDrop}
-              className="border-2 border-dashed border-slate-200 hover:border-primary-500 dark:border-slate-800 dark:hover:border-slate-700 rounded-xl p-5 flex flex-col items-center justify-center cursor-pointer bg-slate-50/50 hover:bg-slate-50 dark:bg-slate-900/30 transition-all relative"
+              className="border-2 border-dashed border-slate-200 hover:border-indigo-400 dark:border-slate-700 dark:hover:border-indigo-600 rounded-xl p-4 flex flex-col items-center justify-center cursor-pointer bg-slate-50/70 hover:bg-indigo-50/30 dark:bg-slate-800/40 transition-all relative"
             >
               <input
                 type="file"
@@ -424,22 +443,28 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
                 onChange={handleFileSelect}
                 className="absolute inset-0 opacity-0 cursor-pointer"
               />
-              <Upload className="h-6 w-6 text-slate-400 mb-1.5" />
-              <p className="text-xs font-semibold text-slate-500 dark:text-slate-400">
+              <Upload className="h-5 w-5 text-slate-400 mb-1" />
+              <p className="text-xs font-medium text-slate-600 dark:text-slate-300">
                 Klik atau seret gambar struk ke sini
               </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">Maksimal 5MB per file</p>
+              <p className="text-[11px] text-slate-400 mt-0.5">Maksimal 5MB per file</p>
             </div>
 
-            {/* Files preview list */}
             {files.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-2">
                 {files.map((file, i) => (
-                  <div key={i} className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 text-[10px] text-slate-600 dark:text-slate-300 px-2 py-1 rounded-md">
-                    <FileImage className="h-3 w-3" />
-                    <span className="truncate max-w-[120px]">{file.name}</span>
-                    <button type="button" onClick={() => removeFile(i)} className="text-red-500 hover:text-red-700">
-                      <X className="h-3 w-3" />
+                  <div
+                    key={i}
+                    className="flex items-center gap-1.5 bg-slate-100 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-200 px-2.5 py-1 rounded-lg"
+                  >
+                    <FileImage className="h-3.5 w-3.5 text-indigo-500" />
+                    <span className="truncate max-w-[140px]">{file.name}</span>
+                    <button
+                      type="button"
+                      onClick={() => removeFile(i)}
+                      className="text-rose-500 hover:text-rose-700"
+                    >
+                      <X className="h-3.5 w-3.5" />
                     </button>
                   </div>
                 ))}
@@ -451,4 +476,5 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
     </Modal>
   );
 };
+
 export default TransactionFormModal;

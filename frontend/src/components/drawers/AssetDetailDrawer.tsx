@@ -1,23 +1,33 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useAssetDetail, useDeleteAsset, useAddValuation } from '../../hooks/useAssets';
 import { MoneyDisplay } from '../ui/MoneyDisplay';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
-import { Modal } from '../ui/Modal';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { Input } from '../ui/Input';
-import { 
-  X, 
-  Trash2, 
-  Edit, 
-  Loader2, 
-  TrendingUp, 
-  TrendingDown, 
-  TrendingUp as GainIcon, 
-  Activity, 
-  History, 
-  AlertCircle
+import { toast } from '../../stores/useToastStore';
+import { getTodayLocalDate } from '../../utils/date';
+import {
+  X,
+  Trash2,
+  Edit,
+  Loader2,
+  TrendingUp,
+  TrendingDown,
+  Activity,
+  History,
+  AlertCircle,
 } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+  CartesianGrid,
+} from 'recharts';
 
 interface AssetDetailDrawerProps {
   assetId: string | null;
@@ -35,27 +45,39 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
   const addValuationMutation = useAddValuation();
 
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
-  const [deleteError, setDeleteError] = useState<string | null>(null);
 
-  // Valuation Form States
   const [showValuationForm, setShowValuationForm] = useState(false);
-  const [newValue, setNewValue] = useState<number>(0);
-  const [valDate, setValDate] = useState(new Date().toISOString().split('T')[0]);
+  const [newValue, setNewValue] = useState('');
+  const [valDate, setValDate] = useState(getTodayLocalDate());
   const [valSource, setValSource] = useState<'manual' | 'market' | 'appraisal'>('manual');
   const [valNotes, setValNotes] = useState('');
   const [valError, setValError] = useState<string | null>(null);
   const [valLoading, setValLoading] = useState(false);
 
+  useEffect(() => {
+    if (!assetId) return;
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !deleteConfirmOpen) {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleEscape);
+    return () => window.removeEventListener('keydown', handleEscape);
+  }, [assetId, deleteConfirmOpen, onClose]);
+
   if (!assetId) return null;
 
   const confirmDelete = async () => {
     try {
-      setDeleteError(null);
       await deleteMutation.mutateAsync(assetId);
+      toast.success('Aset berhasil dihapus');
       setDeleteConfirmOpen(false);
       onClose();
-    } catch (err: any) {
-      setDeleteError(err.response?.data?.error?.message || 'Gagal menghapus aset');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menghapus aset';
+      toast.error('Tidak dapat menghapus aset', msg);
     }
   };
 
@@ -63,7 +85,8 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
     e.preventDefault();
     setValError(null);
 
-    if (newValue <= 0) {
+    const parsedValue = parseFloat(newValue);
+    if (isNaN(parsedValue) || parsedValue <= 0) {
       setValError('Nilai baru harus lebih dari 0');
       return;
     }
@@ -73,23 +96,26 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
       await addValuationMutation.mutateAsync({
         id: assetId,
         req: {
-          value: newValue,
+          value: parsedValue,
           valuation_date: new Date(valDate).toISOString(),
           source: valSource,
-          notes: valNotes ? valNotes : undefined,
+          notes: valNotes || undefined,
         },
       });
-      setNewValue(0);
+      toast.success('Valuasi aset diperbarui');
+      setNewValue('');
       setValNotes('');
       setShowValuationForm(false);
-    } catch (err: any) {
-      setValError(err.response?.data?.error?.message || 'Gagal menambahkan data valuasi');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menambahkan data valuasi';
+      setValError(msg);
     } finally {
       setValLoading(false);
     }
   };
 
-  // Calculate Gain / Loss
   const purchaseValue = asset?.purchase_value;
   const currentValue = asset?.current_value || 0;
   let gainLossAbsolute = 0;
@@ -102,145 +128,165 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
     isGain = gainLossAbsolute >= 0;
   }
 
-  // Chart data formatting
-  const chartData = asset?.valuations?.map(v => {
-    const dateStr = new Date(v.valuation_date).toLocaleDateString('id-ID', { month: 'short', year: '2-digit' });
-    return {
-      name: dateStr,
+  const chartData =
+    asset?.valuations?.map((v) => ({
+      name: new Date(v.valuation_date).toLocaleDateString('id-ID', {
+        month: 'short',
+        year: '2-digit',
+      }),
       value: v.value,
-    };
-  }) || [];
+    })) || [];
 
-  return (
+  const drawerOverlay = (
     <>
-      <div 
-        className="fixed inset-0 bg-slate-900/40 backdrop-blur-sm z-40 transition-opacity" 
-        onClick={onClose} 
+      <div
+        className="fixed inset-0 bg-slate-900/35 backdrop-blur-sm z-40 animate-backdrop-in"
+        onClick={onClose}
       />
 
-      <div className="fixed top-0 right-0 h-full w-full max-w-[480px] bg-bg-base border-l border-slate-200 dark:border-slate-800 shadow-xl z-50 flex flex-col transition-transform translate-x-0">
-        
-        {/* Header */}
-        <div className="px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between">
+      <div className="fixed top-0 right-0 h-[100dvh] w-full max-w-[480px] bg-white dark:bg-slate-900 border-l border-slate-200 dark:border-slate-800 shadow-2xl z-50 flex flex-col pt-safe animate-slide-in">
+        <div className="px-4 sm:px-6 py-4 border-b border-slate-100 dark:border-slate-800 flex items-center justify-between shrink-0">
           <div className="flex items-center gap-2 text-slate-500 dark:text-slate-400">
-            <Activity className="h-4.5 w-4.5" />
-            <span className="text-xs font-bold uppercase tracking-wider">Detail Kepemilikan Aset</span>
+            <Activity className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+            <span className="text-xs font-semibold uppercase tracking-wider">
+              Detail Kepemilikan Aset
+            </span>
           </div>
-          <button 
+          <button
+            type="button"
             onClick={onClose}
-            className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Content */}
         {isLoading ? (
           <div className="flex-1 flex items-center justify-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary-500" />
+            <Loader2 className="h-8 w-8 animate-spin text-indigo-600" />
           </div>
         ) : error || !asset ? (
-          <div className="flex-1 p-6 text-center text-red-500">
+          <div className="flex-1 p-6 text-center text-rose-600 dark:text-rose-400">
             Gagal memuat detail aset.
           </div>
         ) : (
-          <div className="flex-1 overflow-y-auto p-6 space-y-6">
-            
-            {/* Asset Title & Value */}
-            <div className="text-center pb-4 border-b border-slate-100 dark:border-slate-800">
-              <h2 className="text-xl font-black text-slate-900 dark:text-white mb-1">
+          <div className="flex-1 overflow-y-auto overscroll-contain p-4 sm:p-6 space-y-6">
+            <div className="text-center pb-5 border-b border-slate-100 dark:border-slate-800">
+              <h2 className="font-display text-xl font-bold text-slate-900 dark:text-white mb-1">
                 {asset.name}
               </h2>
-              <MoneyDisplay 
-                value={asset.current_value} 
-                className="text-3xl font-extrabold text-slate-900 dark:text-white block font-mono"
+              <MoneyDisplay
+                value={asset.current_value}
+                className="font-display text-3xl font-extrabold text-slate-900 dark:text-white block font-money"
               />
-               <div className="mt-2.5 flex justify-center gap-1.5 flex-wrap">
+              <div className="mt-3 flex justify-center gap-1.5 flex-wrap">
                 <Badge variant={asset.is_liquid ? 'success' : 'warning'}>
-                  {asset.is_liquid ? '💧 Likuid' : '📦 Non-Likuid'}
+                  {asset.is_liquid ? 'Likuid' : 'Non-Likuid'}
                 </Badge>
-                <Badge variant={asset.is_shared ? 'info' : 'warning'}>
-                  {asset.is_shared ? '👥 Bersama' : '🔒 Pribadi'}
+                <Badge variant={asset.is_shared ? 'transfer' : 'warning'}>
+                  {asset.is_shared ? 'Bersama' : 'Pribadi'}
                 </Badge>
-                <Badge variant="info" className="capitalize">{asset.type}</Badge>
+                <Badge variant="neutral" className="capitalize">
+                  {asset.type}
+                </Badge>
               </div>
             </div>
 
-            {/* Core Metadata Specifications */}
             <div className="space-y-3.5 text-sm">
               {asset.linked_account_id && (
-                <div className="flex justify-between items-center bg-indigo-50/50 dark:bg-indigo-950/20 p-2.5 rounded-lg border border-indigo-100/50 dark:border-indigo-950/50 text-xs">
-                  <span className="text-indigo-600 dark:text-indigo-400 font-bold">Rekening Terhubung</span>
+                <div className="flex justify-between items-center bg-indigo-50/70 dark:bg-indigo-950/25 p-3 rounded-xl border border-indigo-100 dark:border-indigo-900/40 text-xs">
+                  <span className="text-indigo-700 dark:text-indigo-300 font-semibold">
+                    Rekening Terhubung
+                  </span>
                   <span className="font-bold text-slate-900 dark:text-white">
                     {asset.linked_account_name}
                   </span>
                 </div>
               )}
 
-              {/* Purchase Details */}
               {asset.purchase_value && (
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-semibold">Harga Beli Awal</span>
-                  <span className="font-bold text-slate-900 dark:text-white font-mono">
+                  <span className="text-slate-500 font-medium">Harga Beli Awal</span>
+                  <span className="font-bold text-slate-900 dark:text-white font-money">
                     {asset.formatted_purchase}
                   </span>
                 </div>
               )}
               {asset.purchase_date && (
                 <div className="flex justify-between items-center">
-                  <span className="text-slate-400 font-semibold">Tanggal Beli</span>
-                  <span className="font-bold text-slate-900 dark:text-white">
-                    {new Date(asset.purchase_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                  <span className="text-slate-500 font-medium">Tanggal Beli</span>
+                  <span className="font-semibold text-slate-900 dark:text-white">
+                    {new Date(asset.purchase_date).toLocaleDateString('id-ID', {
+                      day: 'numeric',
+                      month: 'long',
+                      year: 'numeric',
+                    })}
                   </span>
                 </div>
               )}
 
-              {/* Gain / Loss Display */}
               {purchaseValue && purchaseValue > 0 && (
-                <div className="flex justify-between items-center p-3 rounded-xl bg-slate-50 dark:bg-slate-900">
-                  <span className="text-slate-400 font-semibold text-xs uppercase tracking-wider flex items-center gap-1">
-                    <GainIcon className="h-3.5 w-3.5" /> Gain / Loss
+                <div className="flex justify-between items-center p-3.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800">
+                  <span className="text-slate-500 font-semibold text-xs uppercase tracking-wider">
+                    Gain / Loss
                   </span>
                   <div className="text-right">
-                    <span className={`font-black text-sm font-mono flex items-center justify-end gap-1 ${
-                      isGain ? 'text-emerald-600 dark:text-emerald-400' : 'text-rose-600 dark:text-rose-400'
-                    }`}>
-                      {isGain ? <TrendingUp className="h-4 w-4" /> : <TrendingDown className="h-4 w-4" />}
-                      {isGain ? '+' : ''}{new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(gainLossAbsolute)}
+                    <span
+                      className={`font-bold text-sm font-money flex items-center justify-end gap-1 ${
+                        isGain
+                          ? 'text-emerald-600 dark:text-emerald-400'
+                          : 'text-rose-600 dark:text-rose-400'
+                      }`}
+                    >
+                      {isGain ? (
+                        <TrendingUp className="h-4 w-4" />
+                      ) : (
+                        <TrendingDown className="h-4 w-4" />
+                      )}
+                      {isGain ? '+' : ''}
+                      {new Intl.NumberFormat('id-ID', {
+                        style: 'currency',
+                        currency: 'IDR',
+                        maximumFractionDigits: 0,
+                      }).format(gainLossAbsolute)}
                     </span>
-                    <span className={`text-[10px] font-bold block mt-0.5 ${
-                      isGain ? 'text-emerald-500' : 'text-rose-500'
-                    }`}>
-                      {isGain ? '+' : ''}{gainLossPercent.toFixed(2)}% dari harga beli
+                    <span
+                      className={`text-xs font-semibold block mt-0.5 ${
+                        isGain ? 'text-emerald-600' : 'text-rose-600'
+                      }`}
+                    >
+                      {isGain ? '+' : ''}
+                      {gainLossPercent.toFixed(2)}% dari harga beli
                     </span>
                   </div>
                 </div>
               )}
 
-              {/* Metadata Fields (plate, model, address) */}
               {asset.metadata && (
                 <div className="border-t border-slate-100 dark:border-slate-800 pt-3.5 space-y-2">
-                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Spesifikasi Detail</h4>
+                  <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                    Spesifikasi Detail
+                  </h4>
                   {asset.metadata.address && (
-                    <div className="flex justify-between items-start">
-                      <span className="text-slate-400 font-semibold text-xs">Alamat</span>
-                      <span className="font-semibold text-slate-700 dark:text-slate-300 text-right max-w-[240px]">
+                    <div className="flex justify-between items-start gap-2">
+                      <span className="text-slate-500 font-medium text-xs">Alamat</span>
+                      <span className="font-medium text-slate-800 dark:text-slate-200 text-right max-w-[240px] text-xs">
                         {asset.metadata.address}
                       </span>
                     </div>
                   )}
                   {asset.metadata.plate_number && (
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-400 font-semibold text-xs">Plat Nomor</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300 font-mono">
+                      <span className="text-slate-500 font-medium text-xs">Plat Nomor</span>
+                      <span className="font-bold text-slate-800 dark:text-slate-200 font-mono text-xs">
                         {asset.metadata.plate_number}
                       </span>
                     </div>
                   )}
                   {asset.metadata.model && (
                     <div className="flex justify-between items-center">
-                      <span className="text-slate-400 font-semibold text-xs">Model & Seri</span>
-                      <span className="font-bold text-slate-700 dark:text-slate-300">
+                      <span className="text-slate-500 font-medium text-xs">Model &amp; Seri</span>
+                      <span className="font-semibold text-slate-800 dark:text-slate-200 text-xs">
                         {asset.metadata.model}
                       </span>
                     </div>
@@ -248,87 +294,112 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
                 </div>
               )}
 
-              {/* Notes */}
               {asset.notes && (
-                <div className="flex flex-col gap-1 p-3 bg-slate-50 dark:bg-slate-900 rounded-lg">
-                  <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Catatan</span>
-                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                <div className="flex flex-col gap-1 p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800">
+                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider">
+                    Catatan
+                  </span>
+                  <p className="text-xs text-slate-700 dark:text-slate-300 leading-relaxed">
                     {asset.notes}
                   </p>
                 </div>
               )}
             </div>
 
-            {/* Valuation History Chart using Recharts */}
             {chartData.length > 0 && (
               <div className="border-t border-slate-100 dark:border-slate-800 pt-5 space-y-3">
                 <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
                   <History className="h-3.5 w-3.5" />
                   Tren Histori Nilai Aset
                 </h4>
-                <div className="h-44 w-full bg-slate-50/50 dark:bg-slate-900/30 rounded-xl p-2">
+                <div className="h-44 w-full bg-slate-50/70 dark:bg-slate-800/40 rounded-xl p-2 border border-slate-100 dark:border-slate-800">
                   <ResponsiveContainer width="100%" height="100%">
                     <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
                       <defs>
                         <linearGradient id="colorVal" x1="0" y1="0" x2="0" y2="1">
-                          <stop offset="5%" stopColor="#3B82F6" stopOpacity={0.2}/>
-                          <stop offset="95%" stopColor="#3B82F6" stopOpacity={0}/>
+                          <stop offset="5%" stopColor="#4F46E5" stopOpacity={0.22} />
+                          <stop offset="95%" stopColor="#4F46E5" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0"/>
-                      <XAxis dataKey="name" stroke="#94A3B8" fontSize={9} tickLine={false} />
-                      <YAxis 
-                        stroke="#94A3B8" 
-                        fontSize={9} 
-                        tickLine={false} 
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                      <XAxis dataKey="name" stroke="#94A3B8" fontSize={10} tickLine={false} />
+                      <YAxis
+                        stroke="#94A3B8"
+                        fontSize={10}
+                        tickLine={false}
                         tickFormatter={(v) => {
-                          if (v >= 1000000000) return `${(v / 1000000000).toFixed(1)}B`;
+                          if (v >= 1000000000) return `${(v / 1000000000).toFixed(1)}M`;
                           if (v >= 1000000) return `${(v / 1000000).toFixed(0)}jt`;
-                          return v;
+                          return String(v);
                         }}
                       />
-                      <Tooltip 
-                        formatter={(value: any) => [new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(value), 'Nilai']}
-                        contentStyle={{ backgroundColor: '#1E293B', borderRadius: '8px', border: 'none', color: '#fff', fontSize: '11px' }}
+                      <Tooltip
+                        formatter={(value) => [
+                          new Intl.NumberFormat('id-ID', {
+                            style: 'currency',
+                            currency: 'IDR',
+                            maximumFractionDigits: 0,
+                          }).format(Number(value || 0)),
+                          'Nilai',
+                        ]}
+                        contentStyle={{
+                          backgroundColor: '#FFFFFF',
+                          borderRadius: '12px',
+                          border: '1px solid #E2E8F0',
+                          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
+                          color: '#0F172A',
+                          fontSize: '12px',
+                        }}
                       />
-                      <Area type="monotone" dataKey="value" stroke="#3B82F6" strokeWidth={2.5} fillOpacity={1} fill="url(#colorVal)" />
+                      <Area
+                        type="monotone"
+                        dataKey="value"
+                        stroke="#4F46E5"
+                        strokeWidth={2.5}
+                        fillOpacity={1}
+                        fill="url(#colorVal)"
+                      />
                     </AreaChart>
                   </ResponsiveContainer>
                 </div>
               </div>
             )}
 
-            {/* Valuation update form trigger (Hide if linked bank account!) */}
             {!asset.linked_account_id && (
               <div className="border-t border-slate-100 dark:border-slate-800 pt-5">
                 {!showValuationForm ? (
-                  <Button 
-                    variant="ghost" 
-                    className="w-full text-xs font-bold flex items-center justify-center gap-1 border border-slate-200 dark:border-slate-800 hover:bg-slate-50"
+                  <Button
+                    variant="secondary"
+                    className="w-full"
                     onClick={() => {
-                      setNewValue(asset.current_value);
-                      setValDate(new Date().toISOString().split('T')[0]);
+                      setNewValue(String(asset.current_value));
+                      setValDate(getTodayLocalDate());
                       setShowValuationForm(true);
                     }}
                   >
                     Update Nilai Valuasi Baru
                   </Button>
                 ) : (
-                  <form onSubmit={handleAddValuation} className="bg-slate-50 dark:bg-slate-900 p-4 rounded-xl space-y-3.5 border border-slate-100 dark:border-slate-800">
+                  <form
+                    onSubmit={handleAddValuation}
+                    className="bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl space-y-3.5 border border-slate-200/80 dark:border-slate-800"
+                  >
                     <div className="flex justify-between items-center">
-                      <h4 className="text-xs font-bold text-slate-600 dark:text-slate-400">Catat Valuasi Baru</h4>
-                      <button 
-                        type="button" 
+                      <h4 className="text-xs font-bold text-slate-700 dark:text-slate-200">
+                        Catat Valuasi Baru
+                      </h4>
+                      <button
+                        type="button"
                         onClick={() => setShowValuationForm(false)}
-                        className="text-xs text-slate-400 hover:text-slate-600 font-bold"
+                        className="text-xs text-slate-500 hover:text-slate-800 font-semibold"
                       >
                         Batal
                       </button>
                     </div>
 
                     {valError && (
-                      <div className="flex items-center gap-1.5 text-[10px] text-red-500">
-                        <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                      <div className="flex items-center gap-1.5 text-xs text-rose-600">
+                        <AlertCircle className="h-4 w-4 shrink-0" />
                         <span>{valError}</span>
                       </div>
                     )}
@@ -339,9 +410,9 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
                         id="new-val-value"
                         type="number"
                         value={newValue}
-                        onChange={(e) => setNewValue(parseFloat(e.target.value) || 0)}
+                        onChange={(e) => setNewValue(e.target.value)}
                         required
-                        className="font-mono text-sm"
+                        className="font-money text-sm"
                       />
                       <Input
                         label="Tanggal Valuasi"
@@ -351,15 +422,19 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
                         onChange={(e) => setValDate(e.target.value)}
                         required
                       />
-                      <div className="flex flex-col gap-1">
-                        <label className="text-[10px] font-semibold text-slate-400">Sumber Estimasi</label>
+                      <div className="flex flex-col gap-1.5">
+                        <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                          Sumber Estimasi
+                        </label>
                         <select
                           value={valSource}
-                          onChange={(e) => setValSource(e.target.value as any)}
-                          className="h-8 rounded-lg border border-slate-200 bg-bg-base px-2 py-0.5 text-xs text-text-primary focus:outline-none dark:border-slate-800 dark:text-white"
+                          onChange={(e) =>
+                            setValSource(e.target.value as 'manual' | 'market' | 'appraisal')
+                          }
+                          className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 text-xs text-slate-900 dark:text-white focus:outline-none"
                         >
                           <option value="manual">Manual / Taksiran Sendiri</option>
-                          <option value="market">Harga Pasar / Nilai Jual Objek Pajak</option>
+                          <option value="market">Harga Pasar / NJOP</option>
                           <option value="appraisal">Penilaian Profesional / Appraisal</option>
                         </select>
                       </div>
@@ -367,13 +442,13 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
                         label="Catatan Valuasi (Opsional)"
                         id="new-val-notes"
                         type="text"
-                        placeholder="e.g. Kenaikan harga tanah Sentul, renovasi dll"
+                        placeholder="Misal: Kenaikan harga pasar"
                         value={valNotes}
                         onChange={(e) => setValNotes(e.target.value)}
                       />
                     </div>
-                    <Button type="submit" size="sm" className="w-full mt-2" disabled={valLoading}>
-                      {valLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Simpan Valuasi'}
+                    <Button type="submit" size="sm" className="w-full" disabled={valLoading}>
+                      {valLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Simpan Valuasi'}
                     </Button>
                   </form>
                 )}
@@ -382,58 +457,39 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
           </div>
         )}
 
-        {/* Footer Actions */}
         {asset && (
-          <div className="px-6 py-4 bg-slate-50 dark:bg-slate-800/20 border-t border-slate-100 dark:border-slate-800 flex gap-3">
-            <Button 
-              variant="secondary" 
-              className="flex-1 flex items-center justify-center gap-1.5"
-              onClick={onEdit}
-            >
+          <div className="px-4 sm:px-6 py-4 pb-[calc(1rem+env(safe-area-inset-bottom))] bg-slate-50/80 dark:bg-slate-800/40 border-t border-slate-100 dark:border-slate-800 flex gap-3 shrink-0">
+            <Button variant="secondary" className="flex-1" onClick={onEdit}>
               <Edit className="h-4 w-4" />
               Edit Aset
             </Button>
-            <Button 
-              variant="danger" 
-              className="flex-1 flex items-center justify-center gap-1.5"
-              onClick={() => setDeleteConfirmOpen(true)}
-            >
+            <Button variant="danger" className="flex-1" onClick={() => setDeleteConfirmOpen(true)}>
               <Trash2 className="h-4 w-4" />
               Hapus
             </Button>
           </div>
         )}
       </div>
+    </>
+  );
 
-      {/* Delete Confirmation Modal */}
-      <Modal
+  return (
+    <>
+      {typeof document !== 'undefined' ? createPortal(drawerOverlay, document.body) : drawerOverlay}
+
+      <ConfirmDialog
         isOpen={deleteConfirmOpen}
         onClose={() => setDeleteConfirmOpen(false)}
+        onConfirm={confirmDelete}
         title="Hapus Catatan Aset"
-        footerActions={
-          <>
-            <Button variant="ghost" onClick={() => setDeleteConfirmOpen(false)}>
-              Batal
-            </Button>
-            <Button variant="danger" onClick={confirmDelete}>
-              Ya, Hapus
-            </Button>
-          </>
-        }
-      >
-        <div className="space-y-3">
-          {deleteError && (
-            <div className="flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
-              <AlertCircle className="h-5 w-5 shrink-0" />
-              <span>{deleteError}</span>
-            </div>
-          )}
-          <p className="text-sm text-slate-600 dark:text-slate-400">
-            Apakah Anda yakin ingin menghapus catatan aset ini? Seluruh data valuasi historis terkait juga akan dihapus permanen.
-          </p>
-        </div>
-      </Modal>
+        description={`Apakah Anda yakin ingin menghapus aset "${asset?.name || ''}"? Seluruh riwayat valuasi terkait juga akan dihapus permanen.`}
+        confirmLabel="Ya, Hapus"
+        cancelLabel="Batal"
+        variant="danger"
+        isLoading={deleteMutation.isPending}
+      />
     </>
   );
 };
+
 export default AssetDetailDrawer;

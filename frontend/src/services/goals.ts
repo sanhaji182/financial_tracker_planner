@@ -74,7 +74,13 @@ const goalsService = {
 
 	getGoalByID: async (id: string): Promise<Goal> => {
 		const res = await api.get<any>(`/goals/${id}`);
-		return res.data.data;
+		const data = res.data.data;
+		return {
+			...data,
+			contribution_history: Array.isArray(data?.contribution_history)
+				? data.contribution_history
+				: [],
+		};
 	},
 
 	createGoal: async (payload: CreateGoalPayload): Promise<Goal> => {
@@ -84,17 +90,17 @@ const goalsService = {
 
 	updateGoal: async (id: string, payload: UpdateGoalPayload): Promise<{ message: string }> => {
 		const res = await api.put<any>(`/goals/${id}`, payload);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	deleteGoal: async (id: string): Promise<{ message: string }> => {
 		const res = await api.delete<any>(`/goals/${id}`);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	},
 
 	contributeToGoal: async (id: string, payload: GoalContributionPayload): Promise<{ message: string }> => {
 		const res = await api.post<any>(`/goals/${id}/contribute`, payload);
-		return res.data.data;
+		return res.data?.data ?? res.data;
 	}
 };
 

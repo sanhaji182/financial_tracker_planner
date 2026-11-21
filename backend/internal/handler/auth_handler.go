@@ -33,6 +33,7 @@ func (h *AuthHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		authGroup.POST("/invite-spouse", middleware.AuthMiddleware(), middleware.RoleMiddleware("owner"), h.InviteSpouse)
 		authGroup.POST("/register-spouse", h.RegisterSpouse) // Token passed in query or body
 		authGroup.PUT("/change-password", middleware.AuthMiddleware(), h.ChangePassword)
+		authGroup.DELETE("/account", middleware.AuthMiddleware(), h.DeleteAccount)
 		authGroup.GET("/me", middleware.AuthMiddleware(), h.GetMe)
 	}
 }
@@ -58,7 +59,7 @@ func (h *AuthHandler) Register(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "User registered successfully",
-		"data":    authResponseData(res),
+		"data":    authResponseData(c, res),
 	})
 }
 
@@ -83,7 +84,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Login successful",
-		"data":    authResponseData(res),
+		"data":    authResponseData(c, res),
 	})
 }
 
@@ -120,7 +121,7 @@ func (h *AuthHandler) Refresh(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "Token refreshed successfully",
-		"data":    authResponseData(res),
+		"data":    authResponseData(c, res),
 	})
 }
 
@@ -228,7 +229,7 @@ func (h *AuthHandler) RegisterSpouse(c *gin.Context) {
 	h.setRefreshTokenCookie(c, res.RefreshToken)
 	c.JSON(http.StatusCreated, gin.H{
 		"message": "Spouse registered successfully",
-		"data":    authResponseData(res),
+		"data":    authResponseData(c, res),
 	})
 }
 
@@ -275,12 +276,41 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 	})
 }
 
-// helper to set httpOnly cookie for refresh token
-func authResponseData(res *dto.AuthResponse) gin.H {
-	return gin.H{
+func (h *AuthHandler) DeleteAccount(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	var req dto.DeleteAccountRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		h.handleValidationError(c, err)
+		return
+	}
+
+	if err := h.authService.DeleteAccount(c.Request.Context(), userID, req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{
+				"code":    "BAD_REQUEST",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+
+	h.clearRefreshTokenCookie(c)
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Account deleted successfully",
+	})
+}
+
+// helper to set httpOnly cookie for refresh token; exposes refresh_token in JSON only for mobile clients
+func authResponseData(c *gin.Context, res *dto.AuthResponse) gin.H {
+	data := gin.H{
 		"access_token": res.AccessToken,
 		"user":         res.User,
 	}
+	if c != nil && c.GetHeader("X-Client-Platform") == "mobile" && res.RefreshToken != "" {
+		data["refresh_token"] = res.RefreshToken
+	}
+	return data
 }
 
 func (h *AuthHandler) setRefreshTokenCookie(c *gin.Context, token string) {

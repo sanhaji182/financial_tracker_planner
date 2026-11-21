@@ -18,7 +18,11 @@ export interface AllocationAdviceResponse {
 export const allocationService = {
   async getAllocationAdvice(): Promise<AllocationAdviceResponse> {
     const res = await api.get('/allocation-advice');
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      advices: Array.isArray(data?.advices) ? data.advices : [],
+    };
   },
 };
 export default allocationService;

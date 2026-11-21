@@ -73,11 +73,11 @@ func main() {
 	aiSettingsService := service.NewAISettingsService(aiSettingsRepo, vaultService)
 
 	authService := service.NewAuthService(userRepo, rdb)
-	accountService := service.NewAccountService(accountRepo)
+	accountService := service.NewAccountService(accountRepo, aiSettingsService)
 	categoryService := service.NewCategoryService(categoryRepo)
 	txService := service.NewTransactionService(txRepo, accountRepo, categoryRepo, aiSettingsService)
 	assetService := service.NewAssetService(assetRepo, accountRepo)
-	debtService := service.NewDebtService(debtRepo, accountRepo, categoryRepo)
+	debtService := service.NewDebtService(debtRepo, accountRepo, categoryRepo, aiSettingsService)
 	dashboardService := service.NewDashboardService(dbPool, rdb)
 	sharedViewService := service.NewSharedViewService(dbPool)
 	billService := service.NewBillService(dbPool, billRepo, accountRepo, categoryRepo)

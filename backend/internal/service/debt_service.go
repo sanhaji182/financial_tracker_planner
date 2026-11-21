@@ -20,19 +20,26 @@ type DebtService interface {
 	RecordPayment(ctx context.Context, debtID string, userID string, req dto.RecordDebtPaymentRequest) (*dto.DebtPaymentResponse, error)
 	GetDebtSummary(ctx context.Context, userID string) (*dto.DebtSummaryResponse, error)
 	SimulateAvalanche(ctx context.Context, userID string, extraMonthly float64) (*dto.AvalancheSimulationResponse, error)
+	ScanDebtDocument(ctx context.Context, userID string, fileName string, fileBytes []byte, mode string, pdfPassword string) (*dto.DebtScanResponse, error)
 }
 
 type debtService struct {
 	debtRepo     repository.DebtRepository
 	accountRepo  repository.AccountRepository
 	categoryRepo repository.CategoryRepository
+	aiService    AISettingsService
 }
 
-func NewDebtService(debtRepo repository.DebtRepository, accountRepo repository.AccountRepository, categoryRepo repository.CategoryRepository) DebtService {
+func NewDebtService(debtRepo repository.DebtRepository, accountRepo repository.AccountRepository, categoryRepo repository.CategoryRepository, aiService ...AISettingsService) DebtService {
+	var ai AISettingsService
+	if len(aiService) > 0 {
+		ai = aiService[0]
+	}
 	return &debtService{
 		debtRepo:     debtRepo,
 		accountRepo:  accountRepo,
 		categoryRepo: categoryRepo,
+		aiService:    ai,
 	}
 }
 
@@ -481,4 +488,30 @@ func runSim(debts []model.Debt, extraMonthly float64) (int, float64, []model.Ava
 	}
 
 	return monthCount, totalInterest, schedules
+}
+
+func (s *debtService) ScanDebtDocument(ctx context.Context, userID string, fileName string, fileBytes []byte, mode string, pdfPassword string) (*dto.DebtScanResponse, error) {
+	if err := validateScanFile(fileName, fileBytes); err != nil {
+		return nil, err
+	}
+
+	endpoint := "/parse/debt-snapshot"
+	if mode == "payment" {
+		endpoint = "/parse/debt-payment"
+	}
+
+	var scanRes dto.DebtScanResponse
+	if err := callWorkerSnapshotMultipart(ctx, userID, s.aiService, endpoint, fileName, fileBytes, pdfPassword, &scanRes); err != nil {
+		return nil, err
+	}
+
+	if mode == "payment" && scanRes.ParsedPayment != nil && scanRes.ParsedPayment.SourceAccountHint != "" {
+		if accounts, err := s.accountRepo.GetAllByUser(ctx, userID); err == nil && len(accounts) > 0 {
+			matchedID, matchedName := matchUserAccount(accounts, scanRes.ParsedPayment.SourceAccountHint, "", "")
+			scanRes.ParsedPayment.MatchedAccountID = matchedID
+			scanRes.ParsedPayment.MatchedAccountName = matchedName
+		}
+	}
+
+	return &scanRes, nil
 }

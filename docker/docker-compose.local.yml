@@ -1,0 +1,11 @@
+# Override khusus mesin lokal: port 8080 sudah dipakai project lain,
+# jadi backend diekspos di 18080. Jalankan dengan:
+#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.local.yml up -d
+services:
+  backend:
+    ports: !override
+      - "18080:8080"
+
+  frontend:
+    environment:
+      - VITE_API_URL=http://localhost:18080/api/v1

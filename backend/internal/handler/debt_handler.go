@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 
@@ -32,6 +34,7 @@ func (h *DebtHandler) RegisterRoutes(rg *gin.RouterGroup) {
 
 		// Owner only mutations
 		debtsGroup.POST("", middleware.RoleMiddleware("owner"), h.Create)
+		debtsGroup.POST("/scan", middleware.RoleMiddleware("owner"), h.ScanDocument)
 		debtsGroup.PUT("/:id", middleware.RoleMiddleware("owner"), h.Update)
 		debtsGroup.DELETE("/:id", middleware.RoleMiddleware("owner"), h.Delete)
 		debtsGroup.POST("/:id/payments", middleware.RoleMiddleware("owner"), h.RecordPayment)
@@ -221,6 +224,56 @@ func (h *DebtHandler) SimulateAvalanche(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": res,
+	})
+}
+
+func (h *DebtHandler) ScanDocument(c *gin.Context) {
+	userID := c.GetString("user_id")
+
+	file, header, err := c.Request.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error": gin.H{"code": "BAD_REQUEST", "message": "File is required"},
+		})
+		return
+	}
+	defer file.Close()
+
+	fileBytes, err := io.ReadAll(io.LimitReader(file, service.MaxScanFileSize+1))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "INTERNAL_SERVER_ERROR", "message": "Failed to read file"},
+		})
+		return
+	}
+	if len(fileBytes) > service.MaxScanFileSize {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{
+			"error": gin.H{"code": "FILE_TOO_LARGE", "message": "Ukuran file melebihi batas maksimal 10MB."},
+		})
+		return
+	}
+
+	mode := c.DefaultPostForm("mode", "debt")
+	pdfPassword := c.PostForm("pdf_password")
+
+	res, err := h.debtService.ScanDebtDocument(c.Request.Context(), userID, header.Filename, fileBytes, mode, pdfPassword)
+	if err != nil {
+		var scanErr *service.WorkerScanError
+		if errors.As(err, &scanErr) {
+			c.JSON(scanErr.StatusCode, gin.H{
+				"error": gin.H{"code": scanErr.Code, "message": scanErr.Message},
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "INTERNAL_SERVER_ERROR", "message": err.Error()},
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"message": "Document scanned successfully",
+		"data":    res,
 	})
 }
 

@@ -227,6 +227,8 @@ type ParsedOCRData struct {
 }
 
 type OCRResponse struct {
+	RawText           string             `json:"raw_text,omitempty"`
+	Engine            string             `json:"engine,omitempty"`
 	ParsedData        ParsedOCRData      `json:"parsed_data"`
 	ConfidenceScores  map[string]float64 `json:"confidence_scores"`
 	OverallConfidence float64            `json:"overall_confidence"`
@@ -234,6 +236,7 @@ type OCRResponse struct {
 }
 
 type ParsedPDFTransaction struct {
+	DraftID     string  `json:"draft_id,omitempty"`
 	Date        string  `json:"date"`
 	Description string  `json:"description"`
 	Debit       float64 `json:"debit"`
@@ -242,15 +245,18 @@ type ParsedPDFTransaction struct {
 }
 
 type PDFStatementResponse struct {
-	BankDetected string                 `json:"bank_detected"`
-	Period       string                 `json:"period"`
-	Transactions []ParsedPDFTransaction `json:"transactions"`
-	Confidence   float64                `json:"confidence"`
+	BankDetected     string                 `json:"bank_detected"`
+	Period           string                 `json:"period"`
+	Transactions     []ParsedPDFTransaction `json:"transactions"`
+	Confidence       float64                `json:"confidence"`
+	ExtractionMethod string                 `json:"extraction_method,omitempty"`
 }
 
 type DocumentUploadParseResponse struct {
 	Type                        string                `json:"type"` // "ocr" or "pdf_parse"
 	DraftTransactionID          string                `json:"draft_transaction_id,omitempty"`
+	DraftTransactionIDs         []string              `json:"draft_transaction_ids,omitempty"`
+	AttachmentID                string                `json:"attachment_id,omitempty"`
 	ParsedOCR                   *OCRResponse          `json:"parsed_ocr,omitempty"`
 	ParsedPDF                   *PDFStatementResponse `json:"parsed_pdf,omitempty"`
 	SuggestedCategoryID         string                `json:"suggested_category_id,omitempty"`
@@ -266,5 +272,20 @@ type ConfirmDraftTransactionRequest struct {
 	CategoryID  *string   `json:"category_id"`
 	Description *string   `json:"description"`
 	Notes       *string   `json:"notes"`
-	Source      string    `json:"source" binding:"required,oneof=ocr pdf_parse"`
+	Source      string    `json:"source" binding:"required,oneof=ocr pdf_parse ai_suggested"`
+}
+
+type BulkConfirmDraftItem struct {
+	ID          string   `json:"id" binding:"required"`
+	AccountID   string   `json:"account_id" binding:"required"`
+	CategoryID  *string  `json:"category_id"`
+	Date        *string  `json:"date"`
+	Amount      *float64 `json:"amount"`
+	Type        *string  `json:"type"`
+	Description *string  `json:"description"`
+	Notes       *string  `json:"notes"`
+}
+
+type BulkConfirmDraftsRequest struct {
+	Drafts []BulkConfirmDraftItem `json:"drafts" binding:"required,min=1,dive"`
 }

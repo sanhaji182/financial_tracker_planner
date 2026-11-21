@@ -1,32 +1,39 @@
 import React, { useState } from 'react';
 import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
 import { useMonthlyForecast } from '../hooks/useForecast';
+import { getCurrentLocalMonth } from '../utils/date';
 import { Card } from '../components/ui/Card';
-import { 
-  ChevronLeft, 
-  ChevronRight, 
-  TrendingUp, 
-  AlertTriangle
+import { Badge } from '../components/ui/Badge';
+import { PageHeader } from '../components/ui/PageHeader';
+import { StatCard } from '../components/ui/StatCard';
+import {
+  ChevronLeft,
+  ChevronRight,
+  TrendingUp,
+  AlertTriangle,
+  ArrowDownRight,
+  Wallet,
+  Calendar,
+  ShieldCheck,
 } from 'lucide-react';
-import { 
-  ResponsiveContainer, 
-  AreaChart, 
-  Area, 
-  XAxis, 
-  YAxis, 
-  Tooltip, 
+import {
+  ResponsiveContainer,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
   CartesianGrid,
-  ReferenceLine
+  ReferenceLine,
 } from 'recharts';
 
-// Defined outside ForecastPage so it's not conditionally created after early returns
-const RenderLowestDot = (props: any & { lowestDay: number }) => {
+const RenderLowestDot = (props: { cx?: number; cy?: number; payload?: { name: string }; lowestDay: number }) => {
   const { cx, cy, payload, lowestDay } = props;
-  if (parseInt(payload.name) === lowestDay) {
+  if (payload && parseInt(payload.name, 10) === lowestDay && cx !== undefined && cy !== undefined) {
     return (
       <g>
-        <circle cx={cx} cy={cy} r={7} fill="#ef4444" stroke="#ffffff" strokeWidth={2} />
-        <circle cx={cx} cy={cy} r={12} fill="#ef4444" opacity={0.3} className="animate-ping" />
+        <circle cx={cx} cy={cy} r={6} fill="#F43F5E" stroke="#ffffff" strokeWidth={2} />
+        <circle cx={cx} cy={cy} r={11} fill="#F43F5E" opacity={0.2} />
       </g>
     );
   }
@@ -34,17 +41,13 @@ const RenderLowestDot = (props: any & { lowestDay: number }) => {
 };
 
 export const ForecastPage: React.FC = () => {
-  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().toISOString().substring(0, 7)); // YYYY-MM
-
-  // Queries
+  const [selectedMonth, setSelectedMonth] = useState<string>(getCurrentLocalMonth());
   const { data: fc, isLoading, isError } = useMonthlyForecast(selectedMonth);
 
-  // Month navigation
   const changeMonth = (direction: 'prev' | 'next') => {
     const [year, month] = selectedMonth.split('-').map(Number);
     let newYear = year;
     let newMonth = month + (direction === 'next' ? 1 : -1);
-    
     if (newMonth > 12) {
       newMonth = 1;
       newYear += 1;
@@ -52,33 +55,51 @@ export const ForecastPage: React.FC = () => {
       newMonth = 12;
       newYear -= 1;
     }
-    
     setSelectedMonth(`${newYear}-${String(newMonth).padStart(2, '0')}`);
   };
-
-  // Helper formatting numbers to Rupiah inside UI
 
   const formatValueToRupiah = (val: number) => {
     if (!isFinite(val)) val = 0;
     const isNeg = val < 0;
-    if (isNeg) val = -val;
-    const parts = Math.round(val).toLocaleString('id-ID');
-    return isNeg ? `Rp -${parts}` : `Rp ${parts}`;
+    const abs = Math.abs(Math.round(val)).toLocaleString('id-ID');
+    return isNeg ? `-Rp ${abs}` : `Rp ${abs}`;
   };
+
+  const monthSwitcher = (
+    <div className="inline-flex items-center gap-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-1 shadow-sm">
+      <button
+        type="button"
+        onClick={() => changeMonth('prev')}
+        aria-label="Bulan sebelumnya"
+        className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+      >
+        <ChevronLeft className="h-4 w-4" />
+      </button>
+      <span className="text-xs font-semibold text-slate-800 dark:text-slate-200 min-w-[116px] text-center px-2">
+        {new Date(`${selectedMonth}-02`).toLocaleDateString('id-ID', {
+          year: 'numeric',
+          month: 'long',
+        })}
+      </span>
+      <button
+        type="button"
+        onClick={() => changeMonth('next')}
+        aria-label="Bulan berikutnya"
+        className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+      >
+        <ChevronRight className="h-4 w-4" />
+      </button>
+    </div>
+  );
 
   if (isLoading) {
     return (
       <div className="space-y-6">
-        {/* Header Skeleton */}
         <div className="space-y-2">
-          <div className="h-8 w-64 bg-slate-200 dark:bg-slate-800 rounded animate-pulse" />
-          <div className="h-4 w-96 bg-slate-100 dark:bg-slate-800/60 rounded animate-pulse" />
+          <div className="h-8 w-48 max-w-full bg-slate-200 dark:bg-slate-800 rounded-lg animate-pulse" />
+          <div className="h-4 w-full max-w-sm bg-slate-100 dark:bg-slate-800/60 rounded-lg animate-pulse" />
         </div>
-
-        {/* Top summary card skeleton */}
         <CardSkeleton />
-
-        {/* Forecast chart skeleton */}
         <ChartSkeleton />
       </div>
     );
@@ -86,14 +107,15 @@ export const ForecastPage: React.FC = () => {
 
   if (isError || !fc) {
     return (
-      <Card className="p-8 text-center text-rose-500 font-bold">
+      <Card className="p-8 text-center text-rose-600 dark:text-rose-400 font-semibold">
         Gagal memuat proyeksi cashflow. Silakan coba beberapa saat lagi.
       </Card>
     );
   }
 
-  // Map projections to chart format
-  const chartData = fc.daily_projections.map((dp) => {
+  const dailyProjections = fc.daily_projections ?? [];
+
+  const chartData = dailyProjections.map((dp) => {
     const dateObj = new Date(dp.date);
     return {
       name: String(dateObj.getDate()),
@@ -105,139 +127,126 @@ export const ForecastPage: React.FC = () => {
     };
   });
 
-  // Threshold and lowest balance values
   const threshold = fc.threshold_limit.value;
   const lowestDateStr = fc.lowest_balance_date;
   const lowestDay = new Date(lowestDateStr).getDate();
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-            📈 Proyeksi Cashflow & Safe-to-Spend
-          </h1>
-          <p className="text-xs text-text-secondary">
-            Simulasi saldo kas harian sepanjang bulan berdasarkan data pengeluaran historis dan tagihan wajib.
-          </p>
-        </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Proyeksi Cashflow & Safe-to-Spend"
+        subtitle="Simulasi saldo kas harian sepanjang bulan berdasarkan histori pengeluaran dan tagihan wajib."
+        actions={monthSwitcher}
+      />
 
-        {/* Month Picker */}
-        <div className="flex items-center gap-2">
-          <button 
-            onClick={() => changeMonth('prev')}
-            className="p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
-          >
-            <ChevronLeft className="h-4.5 w-4.5" />
-          </button>
-          <span className="text-xs font-black font-mono text-slate-800 dark:text-slate-200 min-w-[100px] text-center">
-            {new Date(selectedMonth + '-02').toLocaleDateString('id-ID', { year: 'numeric', month: 'long' })}
-          </span>
-          <button 
-            onClick={() => changeMonth('next')}
-            className="p-1.5 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-100 transition-colors"
-          >
-            <ChevronRight className="h-4.5 w-4.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Tight cash warning banner */}
       {fc.is_tight && (
-        <div className="p-4 bg-rose-50 border border-rose-100 rounded-xl dark:bg-rose-950/20 dark:border-rose-900/30 flex items-start gap-3 text-rose-800 dark:text-rose-400">
-          <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+        <div className="p-4 bg-rose-50 border border-rose-200/80 rounded-2xl dark:bg-rose-950/25 dark:border-rose-900/50 flex items-start gap-3 text-rose-800 dark:text-rose-300">
+          <div className="p-2 rounded-xl bg-rose-100 dark:bg-rose-900/40 text-rose-600 dark:text-rose-400 shrink-0">
+            <AlertTriangle className="h-4 w-4" />
+          </div>
           <div>
-            <h4 className="text-xs font-black">Peringatan: Kas Kritis Terdeteksi!</h4>
-            <p className="text-[11px] font-semibold mt-1 opacity-90 leading-relaxed">
-              Proyeksi saldo kas akan turun di bawah batas aman ({fc.threshold_limit.formatted_value}) mencapai {fc.lowest_balance.formatted_value} pada tanggal {new Date(fc.lowest_balance_date).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}. Pertimbangkan untuk membatasi belanja non-esensial dan menunda pengeluaran besar.
+            <h4 className="text-sm font-bold">Peringatan Kas Ketat</h4>
+            <p className="text-xs mt-1 leading-relaxed opacity-90">
+              Proyeksi saldo akan menyentuh {fc.lowest_balance.formatted_value} pada{' '}
+              {new Date(fc.lowest_balance_date).toLocaleDateString('id-ID', {
+                day: 'numeric',
+                month: 'long',
+                year: 'numeric',
+              })}{' '}
+              (di bawah batas aman {fc.threshold_limit.formatted_value}). Pertimbangkan menunda pengeluaran non-esensial.
             </p>
           </div>
         </div>
       )}
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-        <Card className="p-4 flex flex-col justify-between">
-          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Estimasi Income</span>
-          <span className="block text-lg font-black mt-1 font-mono text-slate-900 dark:text-white">
-            {fc.estimated_income.formatted_value}
-          </span>
-        </Card>
-
-        <Card className="p-4 flex flex-col justify-between border-l-4 border-l-amber-500">
-          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Fixed Expenses</span>
-          <span className="block text-lg font-black mt-1 font-mono text-rose-600 dark:text-rose-400">
-            {fc.estimated_fixed_expenses.formatted_value}
-          </span>
-        </Card>
-
-        <Card className="p-4 flex flex-col justify-between">
-          <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">Variable Expenses (Est.)</span>
-          <span className="block text-lg font-black mt-1 font-mono text-slate-880 dark:text-slate-200">
-            {fc.estimated_variable_expenses.formatted_value}
-          </span>
-        </Card>
-
-        <Card className="p-4 flex flex-col justify-between bg-gradient-to-br from-indigo-50/50 to-white dark:from-indigo-950/10">
-          <span className="block text-[10px] font-bold text-indigo-500 uppercase tracking-wider">Forecast Akhir Bulan</span>
-          <span className="block text-lg font-black mt-1 font-mono text-indigo-600 dark:text-indigo-400">
-            {fc.projected_end_balance.formatted_value}
-          </span>
-        </Card>
-
-        <Card className="p-4 flex flex-col justify-between bg-emerald-500/10 border-l-4 border-l-emerald-500 col-span-2 md:col-span-1">
-          <span className="block text-[10px] font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">Safe to Spend ✅</span>
-          <span className="block text-lg font-black mt-1 font-mono text-emerald-700 dark:text-emerald-400">
-            {fc.safe_to_spend.formatted_value}
-          </span>
-        </Card>
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+        <StatCard
+          label="Estimasi Pemasukan"
+          value={fc.estimated_income.formatted_value}
+          icon={<TrendingUp className="h-4 w-4" />}
+          iconTone="emerald"
+        />
+        <StatCard
+          label="Pengeluaran Tetap"
+          value={fc.estimated_fixed_expenses.formatted_value}
+          icon={<Calendar className="h-4 w-4" />}
+          iconTone="amber"
+        />
+        <StatCard
+          label="Variabel (Est.)"
+          value={fc.estimated_variable_expenses.formatted_value}
+          icon={<ArrowDownRight className="h-4 w-4" />}
+          iconTone="rose"
+        />
+        <StatCard
+          label="Proyeksi Akhir Bulan"
+          value={fc.projected_end_balance.formatted_value}
+          icon={<Wallet className="h-4 w-4" />}
+          iconTone="indigo"
+          highlight="indigo"
+        />
+        <StatCard
+          label="Safe to Spend"
+          value={fc.safe_to_spend.formatted_value}
+          icon={<ShieldCheck className="h-4 w-4" />}
+          iconTone="emerald"
+          highlight="emerald"
+          className="col-span-2 lg:col-span-1"
+        />
       </div>
 
       {/* Main Chart */}
-      <Card className="p-6">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4 flex items-center gap-1.5">
-          <TrendingUp className="h-4 w-4 text-indigo-500" />
-          Proyeksi Tren Kas Harian
-        </h3>
+      <Card
+        title="Proyeksi Tren Kas Harian"
+        subtitle={`Garis batas aman berada di ${fc.threshold_limit.formatted_value}`}
+      >
         <div className="h-[300px]">
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 15, bottom: 0 }}>
+            <AreaChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 0 }}>
               <defs>
                 <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="5%" stopColor={fc.is_tight ? "#f43f5e" : "#6366f1"} stopOpacity={0.2}/>
-                  <stop offset="95%" stopColor={fc.is_tight ? "#f43f5e" : "#6366f1"} stopOpacity={0}/>
+                  <stop offset="5%" stopColor={fc.is_tight ? '#F43F5E' : '#4F46E5'} stopOpacity={0.22} />
+                  <stop offset="95%" stopColor={fc.is_tight ? '#F43F5E' : '#4F46E5'} stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" className="dark:stroke-slate-800" />
-              <XAxis 
-                dataKey="name" 
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+              <XAxis
+                dataKey="name"
                 tickLine={false}
-                stroke="#94a3b8"
-                tick={{ fontSize: 10, fontWeight: 'bold' }}
+                stroke="#94A3B8"
+                tick={{ fontSize: 11 }}
               />
-              <YAxis 
+              <YAxis
                 tickLine={false}
-                stroke="#94a3b8"
-                tickFormatter={(v) => `${v/1000000}M`}
-                tick={{ fontSize: 10, fontWeight: 'bold' }}
+                stroke="#94A3B8"
+                tickFormatter={(v) => `${(Number(v) / 1000000).toFixed(0)}jt`}
+                tick={{ fontSize: 11 }}
               />
-              <Tooltip 
+              <Tooltip
                 content={({ active, payload }) => {
                   if (active && payload && payload.length) {
                     const data = payload[0].payload;
                     return (
                       <div className="p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-lg text-xs space-y-1.5">
-                        <p className="font-black text-slate-850 dark:text-slate-100">
-                          {new Date(data.dateLabel).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}
+                        <p className="font-bold text-slate-900 dark:text-slate-100">
+                          {new Date(data.dateLabel).toLocaleDateString('id-ID', {
+                            day: 'numeric',
+                            month: 'long',
+                            year: 'numeric',
+                          })}
                         </p>
-                        <p className="font-bold text-indigo-600 dark:text-indigo-400">
+                        <p className="font-semibold font-money text-indigo-600 dark:text-indigo-400">
                           Kas: {formatValueToRupiah(data.balance)}
                         </p>
                         {data.eventName && (
-                          <div className="pt-1.5 border-t border-slate-100 dark:border-slate-850">
-                            <p className="text-[10px] text-amber-600 font-bold">{data.eventName}</p>
-                            <p className="text-[9px] text-slate-400 font-mono mt-0.5">{data.formattedAmount}</p>
+                          <div className="pt-1.5 border-t border-slate-100 dark:border-slate-800">
+                            <p className="text-[11px] text-amber-600 dark:text-amber-400 font-semibold">
+                              {data.eventName}
+                            </p>
+                            <p className="text-[11px] text-slate-500 font-money mt-0.5">
+                              {data.formattedAmount}
+                            </p>
                           </div>
                         )}
                       </div>
@@ -246,20 +255,25 @@ export const ForecastPage: React.FC = () => {
                   return null;
                 }}
               />
-              {/* Batas Aman (Threshold) */}
-              <ReferenceLine 
-                y={threshold} 
-                stroke="#f43f5e" 
-                strokeDasharray="4 4" 
-                label={{ value: 'Batas Threshold', fill: '#f43f5e', position: 'top', fontSize: 9, fontWeight: 'bold' }} 
+              <ReferenceLine
+                y={threshold}
+                stroke="#F43F5E"
+                strokeDasharray="4 4"
+                label={{
+                  value: 'Batas Aman',
+                  fill: '#F43F5E',
+                  position: 'insideTopRight',
+                  fontSize: 10,
+                  fontWeight: 600,
+                }}
               />
-              <Area 
-                type="monotone" 
-                dataKey="balance" 
-                stroke={fc.is_tight ? "#f43f5e" : "#6366f1"} 
+              <Area
+                type="monotone"
+                dataKey="balance"
+                stroke={fc.is_tight ? '#F43F5E' : '#4F46E5'}
                 strokeWidth={2.5}
-                fillOpacity={1} 
-                fill="url(#colorBalance)" 
+                fillOpacity={1}
+                fill="url(#colorBalance)"
                 dot={<RenderLowestDot lowestDay={lowestDay} />}
               />
             </AreaChart>
@@ -268,40 +282,52 @@ export const ForecastPage: React.FC = () => {
       </Card>
 
       {/* Detail Breakdown Table */}
-      <Card className="p-6">
-        <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-          Detail Riwayat Proyeksi Harian
-        </h3>
+      <Card title="Detail Riwayat Proyeksi Harian" noPadding>
         <div className="overflow-x-auto">
           <table className="w-full text-left text-xs border-collapse">
             <thead>
-              <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-400 font-bold uppercase bg-slate-50/50 dark:bg-slate-900/10">
-                <th className="p-3">Tanggal</th>
-                <th className="p-3">Event Keuangan</th>
-                <th className="p-3 text-right">Mutasi Nilai</th>
-                <th className="p-3 text-right">Saldo Proyeksi</th>
+              <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-500 font-semibold uppercase tracking-wider bg-slate-50/70 dark:bg-slate-800/40">
+                <th className="py-3 px-4">Tanggal</th>
+                <th className="py-3 px-4">Event Keuangan</th>
+                <th className="py-3 px-4 text-right">Mutasi Nilai</th>
+                <th className="py-3 px-4 text-right">Saldo Proyeksi</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-              {fc.daily_projections.map((dp, idx) => (
-                <tr key={idx} className={`hover:bg-slate-50/40 ${dp.date === lowestDateStr ? 'bg-rose-500/5 hover:bg-rose-500/10' : ''}`}>
-                  <td className="p-3 font-semibold font-mono text-slate-700 dark:text-slate-300">
-                    {new Date(dp.date).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}
+              {dailyProjections.map((dp, idx) => (
+                <tr
+                  key={idx}
+                  className={`hover:bg-slate-50/60 dark:hover:bg-slate-800/40 transition-colors ${
+                    dp.date === lowestDateStr ? 'bg-rose-50/60 dark:bg-rose-950/20' : ''
+                  }`}
+                >
+                  <td className="py-3 px-4 font-medium text-slate-700 dark:text-slate-300">
+                    {new Date(dp.date).toLocaleDateString('id-ID', {
+                      day: 'numeric',
+                      month: 'short',
+                      year: 'numeric',
+                    })}
                     {dp.date === lowestDateStr && (
-                      <span className="ml-2 bg-rose-500 text-white text-[9px] font-black px-1.5 py-0.5 rounded uppercase">
-                        Lowest Balance 🚨
-                      </span>
+                      <Badge variant="danger" className="ml-2">
+                        Saldo Terendah
+                      </Badge>
                     )}
                   </td>
-                  <td className="p-3 font-bold text-slate-900 dark:text-white">
+                  <td className="py-3 px-4 font-semibold text-slate-900 dark:text-white">
                     {dp.event_name || '-'}
                   </td>
-                  <td className={`p-3 text-right font-mono font-bold ${
-                    (dp.event_amount || 0) > 0 ? 'text-emerald-500' : (dp.event_amount || 0) < 0 ? 'text-rose-500' : 'text-slate-400'
-                  }`}>
+                  <td
+                    className={`py-3 px-4 text-right font-money font-semibold ${
+                      (dp.event_amount || 0) > 0
+                        ? 'text-emerald-600 dark:text-emerald-400'
+                        : (dp.event_amount || 0) < 0
+                        ? 'text-rose-600 dark:text-rose-400'
+                        : 'text-slate-400'
+                    }`}
+                  >
                     {dp.event_amount && dp.event_amount !== 0 ? dp.formatted_amount : '-'}
                   </td>
-                  <td className="p-3 text-right font-mono font-bold text-slate-900 dark:text-white">
+                  <td className="py-3 px-4 text-right font-money font-semibold text-slate-900 dark:text-white">
                     {dp.formatted_balance}
                   </td>
                 </tr>
@@ -313,4 +339,5 @@ export const ForecastPage: React.FC = () => {
     </div>
   );
 };
+
 export default ForecastPage;

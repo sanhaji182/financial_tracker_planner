@@ -34,6 +34,7 @@ type TransactionService interface {
 	SplitTransaction(ctx context.Context, transactionID string, userID string, req dto.SplitTransactionRequest, ip, ua *string) (*dto.TransactionResponse, error)
 	UploadAndParse(ctx context.Context, userID string, fileName string, fileBytes []byte) (*dto.DocumentUploadParseResponse, error)
 	ConfirmParsedTransaction(ctx context.Context, userID string, draftTxID string, req dto.ConfirmDraftTransactionRequest, ip, ua *string) (*dto.TransactionResponse, error)
+	BulkConfirmParsedTransactions(ctx context.Context, userID string, req dto.BulkConfirmDraftsRequest, ip, ua *string) ([]dto.TransactionResponse, error)
 }
 
 type transactionService struct {
@@ -329,6 +330,25 @@ func (s *transactionService) GetTransactionSummary(ctx context.Context, userID s
 	return &res, nil
 }
 
+func resolveUploadsDir() (string, error) {
+	if custom := strings.TrimSpace(os.Getenv("UPLOADS_DIR")); custom != "" {
+		if err := os.MkdirAll(custom, 0755); err != nil {
+			return "", err
+		}
+		return custom, nil
+	}
+	if _, err := os.Stat("/app/uploads"); err == nil {
+		return "/app/uploads", nil
+	}
+	if err := os.MkdirAll("/app/uploads", 0755); err == nil {
+		return "/app/uploads", nil
+	}
+	if err := os.MkdirAll("uploads", 0755); err != nil {
+		return "", err
+	}
+	return "uploads", nil
+}
+
 func (s *transactionService) UploadAttachment(ctx context.Context, transactionID string, userID string, fileName string, fileData []byte, fileType string, fileSize int) (*dto.TransactionAttachmentResponse, error) {
 	// Verify transaction belongs to user
 	t, err := s.txRepo.GetByID(ctx, transactionID)
@@ -339,13 +359,9 @@ func (s *transactionService) UploadAttachment(ctx context.Context, transactionID
 		return nil, errors.New("unauthorized transaction attachment upload")
 	}
 
-	// Create uploads directory if it doesn't exist
-	uploadsDir := "/app/uploads"
-	if _, err := os.Stat(uploadsDir); os.IsNotExist(err) {
-		err = os.MkdirAll(uploadsDir, os.ModePerm)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create upload directory: %w", err)
-		}
+	uploadsDir, err := resolveUploadsDir()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create upload directory: %w", err)
 	}
 
 	// Create unique file name
@@ -470,9 +486,9 @@ func (s *transactionService) SplitTransaction(ctx context.Context, transactionID
 }
 
 func (s *transactionService) UploadAndParse(ctx context.Context, userID string, fileName string, fileBytes []byte) (*dto.DocumentUploadParseResponse, error) {
-	// 1. Create uploads folder if it doesn't exist
-	uploadsDir := "uploads"
-	if err := os.MkdirAll(uploadsDir, 0755); err != nil {
+	// 1. Resolve persistent uploads folder (/app/uploads in container, local fallback in tests)
+	uploadsDir, err := resolveUploadsDir()
+	if err != nil {
 		return nil, fmt.Errorf("failed to create uploads folder: %w", err)
 	}
 
@@ -518,7 +534,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		req.Header.Set("X-Worker-Secret", workerSecret)
 	}
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := &http.Client{Timeout: 90 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to call worker service: %w", err)
@@ -550,7 +566,6 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		if err := json.NewDecoder(resp.Body).Decode(&pdfRes); err != nil {
 			return nil, fmt.Errorf("failed to decode worker PDF response: %w", err)
 		}
-		response.ParsedPDF = &pdfRes
 
 		// Find BNI, BCA, Mandiri, BRI account if bank_detected matches
 		targetAccountID := defaultAccountID
@@ -562,7 +577,8 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		}
 
 		// Insert statement lines as draft transactions with status='pending_review'
-		for _, item := range pdfRes.Transactions {
+		for i := range pdfRes.Transactions {
+			item := &pdfRes.Transactions[i]
 			txDate, parseErr := time.Parse("2006-01-02", item.Date)
 			if parseErr != nil {
 				txDate = time.Now()
@@ -593,8 +609,13 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 				ExchangeRate: 1.0,
 			}
 			// Write directly to DB via repository without updating account balance
-			_, _ = s.txRepo.Create(ctx, draftTx, nil, nil)
+			createdDraft, createErr := s.txRepo.Create(ctx, draftTx, nil, nil)
+			if createErr == nil && createdDraft != nil {
+				item.DraftID = createdDraft.ID
+				response.DraftTransactionIDs = append(response.DraftTransactionIDs, createdDraft.ID)
+			}
 		}
+		response.ParsedPDF = &pdfRes
 	} else {
 		response.Type = "ocr"
 		var ocrRes dto.OCRResponse
@@ -605,7 +626,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		// Hybrid OCR Escalation
 		aiSet, err := s.aiService.GetSettingsRaw(ctx, userID)
 		source := "ocr"
-		if err == nil && aiSet.AIEnabled && aiSet.OCREscalationEnabled && ocrRes.OverallConfidence < 0.7 {
+		if err == nil && aiSet != nil && aiSet.AIEnabled && aiSet.OCREscalationEnabled && ocrRes.OverallConfidence < 0.7 {
 			base64Str := base64.StdEncoding.EncodeToString(fileBytes)
 			escalationPayload := map[string]interface{}{
 				"ocr_result":   ocrRes,
@@ -617,7 +638,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 			enhanceErr := s.aiService.CallWorkerAI(ctx, userID, "/ai/enhance-ocr", escalationPayload, &enhancedRes)
 			if enhanceErr == nil {
 				ocrRes = enhancedRes
-				source = "ai_enhanced"
+				source = "ai_suggested"
 			}
 		}
 		response.ParsedOCR = &ocrRes
@@ -634,7 +655,7 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		var suggestedCatID, suggestedCatName string
 		var suggestedConfidence float64
 
-		if err == nil && aiSet.AIEnabled && aiSet.AutoCategorizationEnabled {
+		if err == nil && aiSet != nil && aiSet.AIEnabled && aiSet.AutoCategorizationEnabled {
 			allCats, catErr := s.categoryRepo.GetAll(ctx, userID)
 			if catErr == nil && len(allCats) > 0 {
 				var availableCategories []map[string]string
@@ -671,11 +692,17 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		response.SuggestedCategoryName = suggestedCatName
 		response.SuggestedCategoryConfidence = suggestedConfidence
 
+		// DB CHECK enforces amount > 0; preserve true parsed total on ParsedOCR while inserting valid draft
+		draftAmount := ocrRes.ParsedData.Total
+		if draftAmount <= 0 {
+			draftAmount = 1
+		}
+
 		draftTx := &model.Transaction{
 			UserID:       userID,
 			AccountID:    defaultAccountID,
 			Type:         "expense",
-			Amount:       ocrRes.ParsedData.Total,
+			Amount:       draftAmount,
 			Date:         txDate,
 			Description:  &desc,
 			Status:       "pending_review",
@@ -689,8 +716,23 @@ func (s *transactionService) UploadAndParse(ctx context.Context, userID string, 
 		}
 
 		createdDraft, createErr := s.txRepo.Create(ctx, draftTx, nil, nil)
-		if createErr == nil {
-			response.DraftTransactionID = createdDraft.ID
+		if createErr != nil {
+			return nil, fmt.Errorf("failed to save OCR draft transaction: %w", createErr)
+		}
+		response.DraftTransactionID = createdDraft.ID
+
+		// Auto-attach original uploaded receipt image to the transaction
+		detectedMime := http.DetectContentType(fileBytes)
+		fileSize := len(fileBytes)
+		att := &model.TransactionAttachment{
+			TransactionID: createdDraft.ID,
+			FileName:      fileName,
+			FilePath:      filePath,
+			FileType:      &detectedMime,
+			FileSize:      &fileSize,
+		}
+		if savedAtt, attErr := s.txRepo.SaveAttachment(ctx, att); attErr == nil && savedAtt != nil {
+			response.AttachmentID = savedAtt.ID
 		}
 	}
 
@@ -768,4 +810,76 @@ func (s *transactionService) ConfirmParsedTransaction(ctx context.Context, userI
 
 	res := dto.ToTransactionResponse(confirmedTx)
 	return &res, nil
+}
+
+func (s *transactionService) BulkConfirmParsedTransactions(ctx context.Context, userID string, req dto.BulkConfirmDraftsRequest, ip, ua *string) ([]dto.TransactionResponse, error) {
+	confirmed := make([]dto.TransactionResponse, 0, len(req.Drafts))
+
+	for _, item := range req.Drafts {
+		oldTx, err := s.txRepo.GetByID(ctx, item.ID)
+		if err != nil {
+			return nil, fmt.Errorf("draft transaction %s not found: %w", item.ID, err)
+		}
+		if oldTx.UserID != userID {
+			return nil, errors.New("unauthorized to confirm this transaction")
+		}
+
+		txDate := oldTx.Date
+		if item.Date != nil && strings.TrimSpace(*item.Date) != "" {
+			if parsed, err := time.Parse(time.RFC3339, *item.Date); err == nil {
+				txDate = parsed
+			} else if parsed, err := time.Parse("2006-01-02", *item.Date); err == nil {
+				txDate = parsed
+			}
+		}
+
+		txAmount := oldTx.Amount
+		if item.Amount != nil && *item.Amount > 0 {
+			txAmount = *item.Amount
+		}
+
+		txType := oldTx.Type
+		if item.Type != nil && (*item.Type == "income" || *item.Type == "expense" || *item.Type == "transfer") {
+			txType = *item.Type
+		}
+
+		txCategoryID := oldTx.CategoryID
+		if item.CategoryID != nil && *item.CategoryID != "" {
+			txCategoryID = item.CategoryID
+		}
+
+		txDesc := oldTx.Description
+		if item.Description != nil {
+			txDesc = item.Description
+		}
+
+		txNotes := oldTx.Notes
+		if item.Notes != nil {
+			txNotes = item.Notes
+		}
+
+		src := oldTx.Source
+		if src != "ocr" && src != "pdf_parse" && src != "ai_suggested" {
+			src = "pdf_parse"
+		}
+
+		confirmReq := dto.ConfirmDraftTransactionRequest{
+			Date:        txDate,
+			Amount:      txAmount,
+			Type:        txType,
+			AccountID:   item.AccountID,
+			CategoryID:  txCategoryID,
+			Description: txDesc,
+			Notes:       txNotes,
+			Source:      src,
+		}
+
+		res, err := s.ConfirmParsedTransaction(ctx, userID, item.ID, confirmReq, ip, ua)
+		if err != nil {
+			return nil, err
+		}
+		confirmed = append(confirmed, *res)
+	}
+
+	return confirmed, nil
 }

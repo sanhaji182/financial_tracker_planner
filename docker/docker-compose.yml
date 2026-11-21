@@ -60,7 +60,7 @@ services:
       - JWT_REFRESH_EXPIRY=168h
       - WORKER_URL=http://worker:8081
       - WORKER_SECRET=local-worker-secret-change-in-production
-      - CORS_ALLOWED_ORIGINS=http://localhost:5173
+      - CORS_ALLOWED_ORIGINS=http://localhost:5173,https://localhost,capacitor://localhost,http://localhost
     depends_on:
       postgres:
         condition: service_healthy

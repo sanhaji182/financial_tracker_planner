@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useParams, Link } from 'react-router-dom';
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Wallet, ArrowRight } from 'lucide-react';
 import { authService } from '../services/auth';
 import { useAuthStore } from '../stores/authStore';
 import { Button } from '../components/ui/Button';
@@ -15,13 +15,12 @@ export const RegisterSpousePage: React.FC = () => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
-  
+
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
-  // Validation states
   const [emailError, setEmailError] = useState<string | null>(null);
   const [nameError, setNameError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -47,11 +46,7 @@ export const RegisterSpousePage: React.FC = () => {
   const handleNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setName(val);
-    if (!val) {
-      setNameError('Nama lengkap wajib diisi');
-    } else {
-      setNameError(null);
-    }
+    setNameError(!val ? 'Nama lengkap wajib diisi' : null);
   };
 
   const handleEmailChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -69,8 +64,7 @@ export const RegisterSpousePage: React.FC = () => {
   const handlePasswordChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setPassword(val);
-    const strength = calculatePasswordStrength(val);
-    setPasswordStrength(strength);
+    setPasswordStrength(calculatePasswordStrength(val));
 
     if (!val) {
       setPasswordError('Password wajib diisi');
@@ -101,12 +95,11 @@ export const RegisterSpousePage: React.FC = () => {
 
   const getStrengthColor = () => {
     switch (passwordStrength) {
-      case 0: return 'bg-slate-200 dark:bg-slate-800';
-      case 1: return 'bg-red-500';
-      case 2: return 'bg-orange-500';
-      case 3: return 'bg-yellow-500';
-      case 4: return 'bg-green-500';
-      default: return 'bg-slate-200';
+      case 1: return 'bg-rose-500';
+      case 2: return 'bg-amber-500';
+      case 3: return 'bg-sky-500';
+      case 4: return 'bg-emerald-500';
+      default: return 'bg-slate-200 dark:bg-slate-800';
     }
   };
 
@@ -116,7 +109,7 @@ export const RegisterSpousePage: React.FC = () => {
       case 1: return 'Lemah';
       case 2: return 'Sedang';
       case 3: return 'Kuat';
-      case 4: return 'Sangat Kuat (Sempurna)';
+      case 4: return 'Sangat Kuat';
       default: return '';
     }
   };
@@ -131,7 +124,6 @@ export const RegisterSpousePage: React.FC = () => {
       return;
     }
 
-    // Validate all
     if (!name) return setNameError('Nama lengkap wajib diisi');
     if (!email || emailError) return setEmailError(emailError || 'Email wajib diisi');
     if (!password || passwordError) return setPasswordError(passwordError || 'Password wajib diisi');
@@ -146,13 +138,16 @@ export const RegisterSpousePage: React.FC = () => {
         password,
       });
       setSuccessMsg('Pendaftaran pasangan berhasil! Mengalihkan ke dashboard...');
-      
+
       setTimeout(() => {
         setAuth(data.user, data.access_token);
         navigate('/', { replace: true });
-      }, 1000);
-    } catch (err: any) {
-      const msg = err.response?.data?.error?.message || 'Registrasi gagal, pastikan link undangan masih aktif';
+      }, 600);
+    } catch (err: unknown) {
+      const axiosErr = err as { response?: { data?: { error?: { message?: string } } } };
+      const msg =
+        axiosErr.response?.data?.error?.message ||
+        'Registrasi gagal, pastikan link undangan masih aktif';
       setErrorMsg(msg);
     } finally {
       setIsSubmitting(false);
@@ -160,41 +155,40 @@ export const RegisterSpousePage: React.FC = () => {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-tr from-slate-100 via-white to-slate-200 p-4 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
-      <div className="w-full max-w-md">
-        {/* App Logo & Branding */}
+    <div className="relative flex min-h-[100dvh] items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 pt-safe pb-safe overflow-hidden">
+      <div className="pointer-events-none absolute -top-40 -left-40 h-96 w-96 rounded-full bg-indigo-100/70 dark:bg-indigo-950/30 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-sky-100/70 dark:bg-sky-950/30 blur-3xl" />
+
+      <div className="relative z-10 w-full max-w-[440px] animate-fade-in">
         <div className="mb-6 text-center">
-          <div className="inline-flex h-10 w-10 items-center justify-center rounded-xl bg-indigo-600 text-white shadow-lg">
-            <span className="text-xl font-bold">F</span>
+          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/25">
+            <Wallet className="h-5 w-5" />
           </div>
-          <h2 className="mt-3 text-2xl font-bold text-slate-900 dark:text-white">
-            Undangan Registrasi
+          <h2 className="mt-3 font-display text-2xl font-extrabold text-slate-900 dark:text-white">
+            Undangan Pasangan
           </h2>
-          <p className="text-xs text-slate-400 dark:text-slate-500">
-            Daftarkan diri Anda untuk terhubung ke keuangan pasangan Anda (Spouse Viewer)
+          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+            Hubungkan akun Anda ke dashboard keuangan keluarga (Spouse Viewer)
           </p>
         </div>
 
-        {/* Card */}
-        <div className="rounded-2xl border border-slate-200/80 bg-white/80 p-8 shadow-xl backdrop-blur-md dark:border-slate-800/80 dark:bg-slate-900/85">
-          {/* Success Banner */}
+        <div className="rounded-2xl border border-slate-200/90 bg-white p-7 sm:p-8 shadow-xl shadow-slate-200/50 dark:border-slate-800 dark:bg-slate-900 dark:shadow-none">
           {successMsg && (
-            <div className="mb-4 flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm text-green-700 dark:bg-green-950/30 dark:text-green-400">
-              <CheckCircle2 className="h-5 w-5 shrink-0" />
+            <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-emerald-50 border border-emerald-200/80 p-3 text-xs font-medium text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
               <span>{successMsg}</span>
             </div>
           )}
 
-          {/* Error Banner */}
           {errorMsg && (
-            <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
-              <AlertCircle className="h-5 w-5 shrink-0" />
+            <div className="mb-4 flex items-center gap-2.5 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-xs font-medium text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
+              <AlertCircle className="h-4 w-4 shrink-0" />
               <span>{errorMsg}</span>
             </div>
           )}
 
           {!token ? (
-            <div className="text-center py-6 text-red-500 font-semibold text-sm">
+            <div className="text-center py-6 text-rose-600 font-medium text-sm">
               Link undangan tidak valid. Harap minta kembali link undangan dari pasangan Anda.
             </div>
           ) : (
@@ -203,10 +197,11 @@ export const RegisterSpousePage: React.FC = () => {
                 label="Nama Lengkap Anda"
                 id="name"
                 type="text"
-                placeholder="Iriana Widodo"
+                placeholder="Siti Rahma"
                 value={name}
                 onChange={handleNameChange}
                 error={nameError || undefined}
+                containerClassName="mb-0"
                 required
               />
 
@@ -214,48 +209,55 @@ export const RegisterSpousePage: React.FC = () => {
                 label="Alamat Email"
                 id="email"
                 type="email"
-                placeholder="iriana@email.com"
+                placeholder="siti@email.com"
                 value={email}
                 onChange={handleEmailChange}
                 error={emailError || undefined}
+                containerClassName="mb-0"
                 required
               />
 
-              {/* Password */}
-              <div className="space-y-1 relative">
-                <Input
-                  label="Password"
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Minimal 8 karakter"
-                  value={password}
-                  onChange={handlePasswordChange}
-                  error={passwordError || undefined}
-                  required
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-[38px] text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
-                >
-                  {showPassword ? <EyeOff className="h-5 w-5" /> : <Eye className="h-5 w-5" />}
-                </button>
-              </div>
+              <Input
+                label="Password"
+                id="password"
+                type={showPassword ? 'text' : 'password'}
+                placeholder="Minimal 8 karakter"
+                value={password}
+                onChange={handlePasswordChange}
+                error={passwordError || undefined}
+                containerClassName="mb-0"
+                required
+                rightElement={
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    aria-label={showPassword ? 'Sembunyikan password' : 'Tampilkan password'}
+                    className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                }
+              />
 
-              {/* Strength Indicator */}
               {password && (
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs font-semibold">
-                    <span className="text-slate-500">Kekuatan Password:</span>
-                    <span className={passwordStrength > 2 ? 'text-green-500' : 'text-orange-500'}>
+                <div className="space-y-1.5">
+                  <div className="flex justify-between text-xs font-medium">
+                    <span className="text-slate-500">Kekuatan Password</span>
+                    <span className={passwordStrength > 2 ? 'text-emerald-600' : 'text-amber-600'}>
                       {getStrengthText()}
                     </span>
                   </div>
-                  <div className="grid grid-cols-4 gap-1.5 h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
-                    <div className={`h-full ${getStrengthColor()} col-span-1 rounded-l-full transition-all duration-300`} />
-                    <div className={`h-full ${passwordStrength >= 2 ? getStrengthColor() : 'bg-slate-100 dark:bg-slate-800'} col-span-1 transition-all duration-300`} />
-                    <div className={`h-full ${passwordStrength >= 3 ? getStrengthColor() : 'bg-slate-100 dark:bg-slate-800'} col-span-1 transition-all duration-300`} />
-                    <div className={`h-full ${passwordStrength >= 4 ? getStrengthColor() : 'bg-slate-100 dark:bg-slate-800'} col-span-1 rounded-r-full transition-all duration-300`} />
+                  <div className="grid grid-cols-4 gap-1.5 h-1.5 w-full rounded-full overflow-hidden">
+                    {[1, 2, 3, 4].map((level) => (
+                      <div
+                        key={level}
+                        className={`h-full rounded-full transition-all duration-300 ${
+                          passwordStrength >= level
+                            ? getStrengthColor()
+                            : 'bg-slate-100 dark:bg-slate-800'
+                        }`}
+                      />
+                    ))}
                   </div>
                 </div>
               )}
@@ -268,29 +270,36 @@ export const RegisterSpousePage: React.FC = () => {
                 value={confirmPassword}
                 onChange={handleConfirmChange}
                 error={confirmError || undefined}
+                containerClassName="mb-0"
                 required
               />
 
               <Button
                 type="submit"
-                className="mt-6 w-full bg-indigo-600 hover:bg-indigo-700 shadow-md shadow-indigo-600/20"
-                disabled={isSubmitting || !!nameError || !!emailError || !!passwordError || !!confirmError}
+                size="lg"
+                className="mt-2 w-full"
+                disabled={
+                  isSubmitting || !!nameError || !!emailError || !!passwordError || !!confirmError
+                }
               >
                 {isSubmitting ? (
                   <>
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    <Loader2 className="h-4 w-4 animate-spin" />
                     Mendaftar...
                   </>
                 ) : (
-                  'Daftar Hubungkan Akun'
+                  <>
+                    <span>Daftar & Hubungkan Akun</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </>
                 )}
               </Button>
             </form>
           )}
 
-          <div className="mt-6 text-center text-sm text-slate-600 dark:text-slate-400">
+          <div className="mt-6 pt-5 border-t border-slate-100 dark:border-slate-800 text-center text-xs text-slate-500 dark:text-slate-400">
             Sudah terhubung?{' '}
-            <Link to="/login" className="font-semibold text-primary hover:underline">
+            <Link to="/login" className="font-semibold text-indigo-600 dark:text-indigo-400 hover:underline">
               Masuk di sini
             </Link>
           </div>

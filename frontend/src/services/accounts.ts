@@ -62,6 +62,30 @@ export interface UpdateAccountRequest {
   notes?: string;
 }
 
+export interface AccountScanParsedData {
+  name: string;
+  type: 'bank' | 'e_wallet' | 'cash' | 'investment' | 'deposit';
+  bank_provider: string;
+  account_number: string;
+  balance: number;
+  balance_date: string;
+  currency: string;
+  notes: string;
+}
+
+export interface AccountScanResponse {
+  engine: string;
+  extraction_method: string;
+  raw_text: string;
+  parsed_account?: AccountScanParsedData;
+  matched_account_id?: string;
+  matched_account_name?: string;
+  confidence_scores: Record<string, number>;
+  overall_confidence: number;
+  needs_review: boolean;
+  warnings: string[];
+}
+
 export const accountsService = {
   async getAccounts(): Promise<Account[]> {
     const res = await api.get('/accounts');
@@ -89,6 +113,22 @@ export const accountsService = {
 
   async getAccountSummary(): Promise<AccountSummary> {
     const res = await api.get('/accounts/summary');
+    return res.data.data;
+  },
+
+  async scanAccountDocument(
+    file: File,
+    options?: { pdfPassword?: string }
+  ): Promise<AccountScanResponse> {
+    const formData = new FormData();
+    formData.append('file', file);
+    if (options?.pdfPassword) {
+      formData.append('pdf_password', options.pdfPassword);
+    }
+    const res = await api.post('/accounts/scan', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 60000,
+    });
     return res.data.data;
   },
 };

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Lightbulb,
   Plus,
@@ -6,11 +6,10 @@ import {
   Play,
   Save,
   RotateCcw,
-  Zap,
   Trash,
-  Loader2,
   ArrowRight,
   Calendar,
+  AlertTriangle,
 } from 'lucide-react';
 import scenariosService, {
   type ScenarioChange,
@@ -21,11 +20,11 @@ import { debtsService, type Debt } from '../services/debts';
 import { categoriesService, type Category } from '../services/categories';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Badge } from '../components/ui/Badge';
+import { PageHeader } from '../components/ui/PageHeader';
+import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { useAuthStore } from '../stores/authStore';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
+import { toast } from '../stores/useToastStore';
 
 function formatRupiah(amount: number): string {
   const isNeg = amount < 0;
@@ -38,30 +37,24 @@ function formatRupiah(amount: number): string {
   return isNeg ? `-${formatted}` : formatted;
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// ScenariosPage Component
-// ─────────────────────────────────────────────────────────────────────────────
-
 export const ScenariosPage: React.FC = () => {
   const { user } = useAuthStore();
   const isOwner = user?.role === 'owner';
 
-  // Selection lists
   const [debts, setDebts] = useState<Debt[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [savedScenarios, setSavedScenarios] = useState<ScenarioResponse[]>([]);
 
-  // Simulation parameters
   const [changes, setChanges] = useState<ScenarioChange[]>([]);
   const [result, setResult] = useState<ScenarioResult | null>(null);
   const [scenarioName, setScenarioName] = useState('');
 
-  // UI state
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [scenarioToDelete, setScenarioToDelete] = useState<ScenarioResponse | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
-  // Load initial data
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -70,17 +63,16 @@ export const ScenariosPage: React.FC = () => {
           categoriesService.getCategories(),
           scenariosService.getScenarios(),
         ]);
-        setDebts((dList || []).filter(d => d && d.status === 'active'));
-        setCategories((cList || []).filter(c => c && c.type === 'expense'));
+        setDebts((dList || []).filter((d) => d && d.status === 'active'));
+        setCategories((cList || []).filter((c) => c && c.type === 'expense'));
         setSavedScenarios(sList || []);
-      } catch (err: any) {
-        console.error('Failed to load scenarios dependencies', err);
+      } catch {
+        // Optional preload
       }
     };
-    loadData();
+    void loadData();
   }, []);
 
-  // Add a new change row
   const handleAddChange = () => {
     setChanges([
       ...changes,
@@ -91,18 +83,15 @@ export const ScenariosPage: React.FC = () => {
     ]);
   };
 
-  // Remove a change row
   const handleRemoveChange = (index: number) => {
     setChanges(changes.filter((_, i) => i !== index));
   };
 
-  // Update a change row's properties
   const handleUpdateChange = (index: number, fields: Partial<ScenarioChange>) => {
     setChanges(
       changes.map((c, i) => {
         if (i !== index) return c;
         const updated = { ...c, ...fields };
-        // Reset parameters when type changes to prevent cross-contamination
         if (fields.type) {
           updated.params = { amount: 0, percentage: 0, monthly_extra_amount: 0, monthly_amount: 0 };
         }
@@ -111,27 +100,28 @@ export const ScenariosPage: React.FC = () => {
     );
   };
 
-  const handleUpdateParams = (index: number, params: any) => {
+  const handleUpdateParams = (index: number, params: Record<string, unknown>) => {
     setChanges(
       changes.map((c, i) => (i === index ? { ...c, params: { ...c.params, ...params } } : c))
     );
   };
 
-  // Run simulation
   const handleSimulate = async () => {
     setIsLoading(true);
     setErrorMsg(null);
     try {
       const res = await scenariosService.simulateScenario(changes);
       setResult(res);
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Gagal menghitung simulasi skenario');
+      toast.success('Simulasi skenario selesai dihitung');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal menghitung simulasi skenario';
+      setErrorMsg(msg);
+      toast.error(msg);
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Save current simulated state
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!isOwner) return;
@@ -150,22 +140,23 @@ export const ScenariosPage: React.FC = () => {
       const res = await scenariosService.saveScenario(scenarioName, changes, result);
       setSavedScenarios([res, ...savedScenarios]);
       setScenarioName('');
-      // Toast message or confirmation could be added here
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Gagal menyimpan skenario');
+      toast.success('Skenario berhasil disimpan', res.name);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal menyimpan skenario';
+      setErrorMsg(msg);
+      toast.error(msg);
     } finally {
       setIsSaving(false);
     }
   };
 
-  // Load a saved scenario template
   const handleLoadScenario = (sc: ScenarioResponse) => {
     setChanges(sc.changes);
     setResult(sc.result);
     setScenarioName('');
+    toast.info(`Skenario "${sc.name}" dimuat`);
   };
 
-  // Reset scenario builder
   const handleReset = () => {
     setChanges([]);
     setResult(null);
@@ -173,59 +164,57 @@ export const ScenariosPage: React.FC = () => {
     setErrorMsg(null);
   };
 
-  const handleDeleteScenario = async (id: string) => {
-    if (!isOwner) return;
-    if (!window.confirm('Apakah Anda yakin ingin menghapus skenario tersimpan ini?')) return;
+  const confirmDeleteScenario = async () => {
+    if (!isOwner || !scenarioToDelete) return;
+    setIsDeleting(true);
     try {
-      await scenariosService.deleteScenario(id);
-      setSavedScenarios(savedScenarios.filter(s => s.id !== id));
-    } catch (err: any) {
-      setErrorMsg(err.message || 'Gagal menghapus skenario');
+      await scenariosService.deleteScenario(scenarioToDelete.id);
+      setSavedScenarios((prev) => prev.filter((s) => s.id !== scenarioToDelete.id));
+      toast.success('Skenario dihapus', scenarioToDelete.name);
+      setScenarioToDelete(null);
+    } catch (err) {
+      toast.error('Gagal menghapus skenario', err instanceof Error ? err.message : undefined);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
-  // Metric visual configuration
   const metricConfig = {
-    ending_balance: { label: 'Saldo Akhir Bulanan', isInverse: false, format: 'currency' },
-    total_debts: { label: 'Outstanding Utang', isInverse: true, format: 'currency' },
-    ef_coverage: { label: 'Dana Darurat (Bulan)', isInverse: false, format: 'float' },
-    cash_runway: { label: 'Cash Runway (Bulan)', isInverse: false, format: 'float' },
+    ending_balance: { label: 'Saldo Akhir Bulanan', format: 'currency' },
+    total_debts: { label: 'Outstanding Utang', format: 'currency' },
+    ef_coverage: { label: 'Dana Darurat (Bulan)', format: 'float' },
+    cash_runway: { label: 'Cash Runway (Bulan)', format: 'float' },
   };
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
-      {/* Page Header */}
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <Zap className="h-6 w-6 text-amber-500" />
-          What-If Scenario Planner
-        </h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Simulasikan dampak keputusan finansial besar terhadap saldo, utang, dan ketahanan kas Anda secara instan.
-        </p>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="What-If Scenario Planner"
+        subtitle="Simulasikan dampak keputusan finansial besar terhadap saldo, utang, dan ketahanan kas Anda."
+      />
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Side: Builder Form */}
         <div className="lg:col-span-2 space-y-6">
-          <Card className="p-5 space-y-4">
-            <div className="flex justify-between items-center pb-2 border-b border-slate-200 dark:border-slate-800">
-              <h2 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                🛠️ Scenario Builder
-              </h2>
-              {changes.length > 0 && (
-                <Button variant="ghost" size="sm" onClick={handleReset} className="text-slate-500 dark:text-slate-400 flex items-center gap-1">
-                  <RotateCcw className="h-3 w-3" />
+          <Card
+            title="Scenario Builder"
+            extra={
+              changes.length > 0 && (
+                <Button variant="ghost" size="sm" onClick={handleReset}>
+                  <RotateCcw className="h-3.5 w-3.5" />
                   Mulai Ulang
                 </Button>
-              )}
-            </div>
-
+              )
+            }
+          >
             {changes.length === 0 ? (
-              <div className="text-center py-10 border-2 border-dashed border-slate-200 dark:border-slate-850 rounded-xl">
-                <Lightbulb className="h-10 w-10 text-slate-350 dark:text-slate-600 mx-auto mb-3" />
-                <p className="text-sm text-slate-500 dark:text-slate-400">Belum ada simulasi perubahan anggaran.</p>
-                <Button variant="secondary" size="sm" onClick={handleAddChange} className="mt-3 flex items-center gap-1 mx-auto">
+              <div className="text-center py-10 border-2 border-dashed border-slate-200 dark:border-slate-800 rounded-2xl">
+                <div className="w-11 h-11 rounded-2xl bg-indigo-50 dark:bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 flex items-center justify-center mx-auto mb-3">
+                  <Lightbulb className="h-5 w-5" />
+                </div>
+                <p className="text-sm font-medium text-slate-600 dark:text-slate-300">
+                  Belum ada variabel simulasi perubahan anggaran.
+                </p>
+                <Button variant="secondary" size="sm" onClick={handleAddChange} className="mt-3">
                   <Plus className="h-4 w-4" />
                   Tambah Perubahan
                 </Button>
@@ -233,44 +222,56 @@ export const ScenariosPage: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 {changes.map((change, index) => (
-                  <div key={index} className="p-4 bg-slate-50 rounded-xl border border-slate-100 space-y-3 relative">
+                  <div
+                    key={index}
+                    className="p-4 bg-slate-50/80 dark:bg-slate-800/50 rounded-2xl border border-slate-200/70 dark:border-slate-800 space-y-3 relative"
+                  >
                     <button
+                      type="button"
                       onClick={() => handleRemoveChange(index)}
-                      className="absolute right-3 top-3 text-gray-400 hover:text-red-500 transition-colors"
+                      className="absolute right-3.5 top-3.5 p-1 text-slate-400 hover:text-rose-600 rounded-lg hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors"
                       title="Hapus baris"
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pr-8">
-                      {/* Change Type Selection */}
                       <div>
-                        <label className="block text-xs font-semibold text-gray-500 mb-1">Pilih Perubahan</label>
+                        <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                          Jenis Perubahan
+                        </label>
                         <select
                           value={change.type}
-                          onChange={(e) => handleUpdateChange(index, { type: e.target.value as any })}
-                          className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          onChange={(e) =>
+                            handleUpdateChange(index, {
+                              type: e.target.value as ScenarioChange['type'],
+                            })
+                          }
+                          className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                         >
-                          <option value="large_purchase">📦 Pembelian Besar (Sekali Bayar)</option>
-                          <option value="extra_debt_payment">💳 Cicilan Ekstra (Bulanan)</option>
-                          <option value="income_change">💼 Perubahan Pendapatan (%)</option>
-                          <option value="investment_increase">📈 Tambah Investasi (Bulanan)</option>
-                          <option value="add_subscription">📱 Tambah Layanan Langganan</option>
-                          <option value="remove_expense">🧹 Kurangi Pengeluaran Kategori</option>
+                          <option value="large_purchase">Pembelian Besar (Sekali Bayar)</option>
+                          <option value="extra_debt_payment">Cicilan Ekstra (Bulanan)</option>
+                          <option value="income_change">Perubahan Pendapatan (%)</option>
+                          <option value="investment_increase">Tambah Investasi (Bulanan)</option>
+                          <option value="add_subscription">Tambah Layanan Langganan</option>
+                          <option value="remove_expense">Kurangi Pengeluaran Kategori</option>
                         </select>
                       </div>
 
-                      {/* Parameters based on type */}
-                      <div className="space-y-2">
+                      <div>
                         {change.type === 'large_purchase' && (
                           <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Nominal Pembelian (Rp)</label>
+                            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                              Nominal Pembelian (Rp)
+                            </label>
                             <input
                               type="number"
                               placeholder="Contoh: 15000000"
                               value={change.params.amount || ''}
-                              onChange={(e) => handleUpdateParams(index, { amount: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              onChange={(e) =>
+                                handleUpdateParams(index, { amount: parseFloat(e.target.value) || 0 })
+                              }
+                              className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-money focus:outline-none focus:border-indigo-500"
                             />
                           </div>
                         )}
@@ -278,26 +279,36 @@ export const ScenariosPage: React.FC = () => {
                         {change.type === 'extra_debt_payment' && (
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">Pilih Utang</label>
+                              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                                Utang
+                              </label>
                               <select
                                 value={change.params.debt_id || ''}
                                 onChange={(e) => handleUpdateParams(index, { debt_id: e.target.value })}
-                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
                               >
                                 <option value="">-- Pilih --</option>
-                                {debts.map(d => (
-                                  <option key={d.id} value={d.id}>{d.name}</option>
+                                {debts.map((d) => (
+                                  <option key={d.id} value={d.id}>
+                                    {d.name}
+                                  </option>
                                 ))}
                               </select>
                             </div>
                             <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">Tambahan (Rp/bln)</label>
+                              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                                Tambahan / Bln
+                              </label>
                               <input
                                 type="number"
                                 placeholder="Rp/bulan"
                                 value={change.params.monthly_extra_amount || ''}
-                                onChange={(e) => handleUpdateParams(index, { monthly_extra_amount: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                onChange={(e) =>
+                                  handleUpdateParams(index, {
+                                    monthly_extra_amount: parseFloat(e.target.value) || 0,
+                                  })
+                                }
+                                className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-money"
                               />
                             </div>
                           </div>
@@ -305,39 +316,36 @@ export const ScenariosPage: React.FC = () => {
 
                         {change.type === 'income_change' && (
                           <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Persentase Perubahan (%)</label>
+                            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                              Persentase Perubahan (%)
+                            </label>
                             <input
                               type="number"
-                              placeholder="Contoh: -15 (untuk turun) atau 10 (naik)"
+                              placeholder="Contoh: -15 atau +10"
                               value={change.params.percentage || ''}
-                              onChange={(e) => handleUpdateParams(index, { percentage: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              onChange={(e) =>
+                                handleUpdateParams(index, { percentage: parseFloat(e.target.value) || 0 })
+                              }
+                              className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
                             />
                           </div>
                         )}
 
-                        {change.type === 'investment_increase' && (
+                        {(change.type === 'investment_increase' || change.type === 'add_subscription') && (
                           <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Alokasi Bulanan (Rp)</label>
+                            <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                              Nominal Bulanan (Rp)
+                            </label>
                             <input
                               type="number"
                               placeholder="Contoh: 1000000"
                               value={change.params.monthly_amount || ''}
-                              onChange={(e) => handleUpdateParams(index, { monthly_amount: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-                            />
-                          </div>
-                        )}
-
-                        {change.type === 'add_subscription' && (
-                          <div>
-                            <label className="block text-xs font-semibold text-gray-500 mb-1">Biaya Bulanan (Rp)</label>
-                            <input
-                              type="number"
-                              placeholder="Contoh: 150000"
-                              value={change.params.monthly_amount || ''}
-                              onChange={(e) => handleUpdateParams(index, { monthly_amount: parseFloat(e.target.value) || 0 })}
-                              className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                              onChange={(e) =>
+                                handleUpdateParams(index, {
+                                  monthly_amount: parseFloat(e.target.value) || 0,
+                                })
+                              }
+                              className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-money"
                             />
                           </div>
                         )}
@@ -345,26 +353,38 @@ export const ScenariosPage: React.FC = () => {
                         {change.type === 'remove_expense' && (
                           <div className="grid grid-cols-2 gap-2">
                             <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">Kategori</label>
+                              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                                Kategori
+                              </label>
                               <select
                                 value={change.params.category_id || ''}
-                                onChange={(e) => handleUpdateParams(index, { category_id: e.target.value })}
-                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                onChange={(e) =>
+                                  handleUpdateParams(index, { category_id: e.target.value })
+                                }
+                                className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100"
                               >
                                 <option value="">-- Pilih --</option>
-                                {categories.map(c => (
-                                  <option key={c.id} value={c.id}>{c.name}</option>
+                                {categories.map((c) => (
+                                  <option key={c.id} value={c.id}>
+                                    {c.name}
+                                  </option>
                                 ))}
                               </select>
                             </div>
                             <div>
-                              <label className="block text-xs font-semibold text-gray-500 mb-1">Pengurangan (Rp/bln)</label>
+                              <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">
+                                Pengurangan / Bln
+                              </label>
                               <input
                                 type="number"
                                 placeholder="Rp/bulan"
                                 value={change.params.monthly_amount || ''}
-                                onChange={(e) => handleUpdateParams(index, { monthly_amount: parseFloat(e.target.value) || 0 })}
-                                className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                onChange={(e) =>
+                                  handleUpdateParams(index, {
+                                    monthly_amount: parseFloat(e.target.value) || 0,
+                                  })
+                                }
+                                className="w-full h-10 text-xs border border-slate-200 dark:border-slate-700 rounded-xl px-2.5 bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-money"
                               />
                             </div>
                           </div>
@@ -375,138 +395,140 @@ export const ScenariosPage: React.FC = () => {
                 ))}
 
                 <div className="flex gap-3 justify-between items-center pt-2">
-                  <Button variant="ghost" size="sm" onClick={handleAddChange} className="flex items-center gap-1 text-indigo-600">
+                  <Button variant="secondary" size="sm" onClick={handleAddChange}>
                     <Plus className="h-4 w-4" />
                     Tambah Perubahan
                   </Button>
-                  <Button
-                    onClick={handleSimulate}
-                    disabled={isLoading}
-                    className="flex items-center gap-2"
-                  >
-                    {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-                    {isLoading ? 'Simulasi...' : 'Simulasikan Skenario'}
+                  <Button onClick={handleSimulate} isLoading={isLoading}>
+                    <Play className="h-4 w-4" />
+                    {isLoading ? 'Menghitung...' : 'Simulasikan Skenario'}
                   </Button>
                 </div>
               </div>
             )}
           </Card>
 
-          {/* Results Side-by-Side View */}
           {result && (
-            <Card className="p-5 space-y-4">
-              <h2 className="text-sm font-bold text-slate-500 uppercase tracking-wider">
-                📊 Hasil Analisis Dampak
-              </h2>
+            <Card title="Hasil Analisis Dampak" subtitle="Perbandingan kondisi baseline vs skenario simulasi">
+              <div className="space-y-4">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left border-collapse">
+                    <thead>
+                      <tr className="border-b border-slate-100 dark:border-slate-800 text-slate-500 font-semibold uppercase tracking-wider">
+                        <th className="py-3 px-2">Metrik Keuangan</th>
+                        <th className="py-3 px-2 text-right">Kondisi Saat Ini</th>
+                        <th className="py-3 px-2 text-right">Setelah Skenario</th>
+                        <th className="py-3 px-2 text-right">Perubahan Dampak</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                      {Object.entries(result).map(([key, value]) => {
+                        const cfg = metricConfig[key as keyof typeof metricConfig] || {
+                          label: key,
+                          format: 'float',
+                        };
+                        const state = value as typeof result.ending_balance;
 
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                  <thead>
-                    <tr className="border-b border-gray-100 text-gray-500 font-medium">
-                      <th className="py-3 px-2">Metrik Keuangan</th>
-                      <th className="py-3 px-2 text-right">Kondisi Saat Ini</th>
-                      <th className="py-3 px-2 text-right">Setelah Skenario</th>
-                      <th className="py-3 px-2 text-right">Perubahan Dampak</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-50/50">
-                    {Object.entries(result).map(([key, value]) => {
-                      const cfg = metricConfig[key as keyof typeof metricConfig] || { label: key, isInverse: false, format: 'float' };
-                      const state = value as typeof result.ending_balance;
+                        const renderVal = (v: number) =>
+                          cfg.format === 'currency' ? formatRupiah(v) : `${v.toFixed(1)} bln`;
 
-                      const renderVal = (v: number) => {
-                        return cfg.format === 'currency' ? formatRupiah(v) : `${v.toFixed(1)} bln`;
-                      };
-
-                      const renderImpact = (val: number, severity: string) => {
-                        const isGood = severity === 'positive';
-                        const isBad = severity === 'negative';
-                        const prefix = val > 0 ? '+' : '';
-                        const formatted = cfg.format === 'currency' ? formatRupiah(val) : `${prefix}${val.toFixed(1)} bln`;
+                        const prefix = state.impact > 0 ? '+' : '';
+                        const formattedImpact =
+                          cfg.format === 'currency'
+                            ? formatRupiah(state.impact)
+                            : `${prefix}${state.impact.toFixed(1)} bln`;
+                        const badgeVariant =
+                          state.severity === 'positive'
+                            ? 'success'
+                            : state.severity === 'negative'
+                            ? 'danger'
+                            : 'neutral';
 
                         return (
-                          <span className={`inline-flex items-center gap-1 font-semibold ${isGood ? 'text-emerald-600' : isBad ? 'text-red-600' : 'text-gray-500'}`}>
-                            {formatted}
-                            {isGood ? ' 🟢' : isBad ? ' 🔴' : ' ⚪'}
-                          </span>
+                          <tr
+                            key={key}
+                            className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors"
+                          >
+                            <td className="py-3 px-2 font-semibold text-slate-900 dark:text-slate-100">
+                              {cfg.label}
+                            </td>
+                            <td className="py-3 px-2 text-right font-money text-slate-500 dark:text-slate-400">
+                              {renderVal(state.base)}
+                            </td>
+                            <td className="py-3 px-2 text-right font-money text-slate-900 dark:text-white font-bold">
+                              {renderVal(state.scenario)}
+                            </td>
+                            <td className="py-3 px-2 text-right">
+                              <Badge variant={badgeVariant}>{formattedImpact}</Badge>
+                            </td>
+                          </tr>
                         );
-                      };
+                      })}
+                    </tbody>
+                  </table>
+                </div>
 
-                      return (
-                        <tr key={key} className="hover:bg-slate-50/30 transition-colors">
-                          <td className="py-3 px-2 font-medium text-gray-800">{cfg.label}</td>
-                          <td className="py-3 px-2 text-right text-gray-600">{renderVal(state.base)}</td>
-                          <td className="py-3 px-2 text-right text-gray-900 font-semibold">{renderVal(state.scenario)}</td>
-                          <td className="py-3 px-2 text-right">{renderImpact(state.impact, state.severity)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Save Scenario Form (Only visible to Owner) */}
-              {isOwner && (
-                <form onSubmit={handleSave} className="pt-4 border-t border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row gap-3">
-                  <div className="flex-1">
+                {isOwner && (
+                  <form
+                    onSubmit={handleSave}
+                    className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row gap-3"
+                  >
                     <input
                       type="text"
-                      placeholder="Simpan skenario ini sebagai... (contoh: KPR Mobil vs Menabung)"
+                      placeholder="Simpan skenario ini sebagai... (contoh: Beli Mobil vs Tabung)"
                       value={scenarioName}
                       onChange={(e) => setScenarioName(e.target.value)}
-                      className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2.5 bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                      className="flex-1 h-10 text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100 focus:outline-none focus:border-indigo-500"
                     />
-                  </div>
-                  <Button
-                    type="submit"
-                    disabled={isSaving}
-                    className="flex items-center gap-2"
-                  >
-                    {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                    {isSaving ? 'Menyimpan...' : 'Simpan Skenario'}
-                  </Button>
-                </form>
-              )}
+                    <Button type="submit" isLoading={isSaving}>
+                      <Save className="h-4 w-4" />
+                      Simpan Skenario
+                    </Button>
+                  </form>
+                )}
+              </div>
             </Card>
           )}
 
           {errorMsg && (
-            <Card className="p-4 border-red-200 bg-red-50 text-red-700 text-sm font-medium">
-              ⚠️ {errorMsg}
+            <Card className="p-4 border-rose-200 dark:border-rose-900/50 bg-rose-50/70 dark:bg-rose-950/20 text-rose-700 dark:text-rose-300 text-xs font-medium flex items-center gap-2">
+              <AlertTriangle className="h-4 w-4 shrink-0" />
+              <span>{errorMsg}</span>
             </Card>
           )}
         </div>
 
-        {/* Right Side: Saved Scenarios List */}
-        <div className="space-y-6">
-          <Card className="p-5 space-y-4">
-            <h2 className="text-sm font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-              📂 Skenario Tersimpan
-            </h2>
-
-            {((savedScenarios || []).length === 0) ? (
-              <p className="text-xs text-slate-400 dark:text-slate-500 py-6 text-center">Belum ada skenario yang disimpan.</p>
+        {/* Saved Scenarios List */}
+        <div>
+          <Card title="Skenario Tersimpan" subtitle={`${savedScenarios.length} skenario`}>
+            {savedScenarios.length === 0 ? (
+              <p className="text-xs text-slate-400 py-8 text-center">
+                Belum ada skenario yang disimpan.
+              </p>
             ) : (
-              <div className="space-y-3 max-h-[500px] overflow-y-auto pr-1">
-                {(savedScenarios || []).map(sc => (
+              <div className="space-y-3 max-h-[520px] overflow-y-auto pr-1">
+                {savedScenarios.map((sc) => (
                   <div
                     key={sc.id}
-                    className="p-3 bg-slate-50 dark:bg-slate-900/50 rounded-lg border border-slate-100 dark:border-slate-800 space-y-2 hover:border-indigo-100 dark:hover:border-indigo-900/50 transition-colors"
+                    className="p-3.5 bg-slate-50/80 dark:bg-slate-800/50 rounded-xl border border-slate-200/70 dark:border-slate-800 space-y-2 hover:border-indigo-300 dark:hover:border-indigo-700 transition-colors"
                   >
-                    <div className="flex justify-between items-start">
-                      <h3 className="text-xs font-bold text-slate-800 dark:text-slate-200 leading-snug">{sc.name}</h3>
+                    <div className="flex justify-between items-start gap-2">
+                      <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 leading-snug">
+                        {sc.name}
+                      </h3>
                       {isOwner && (
                         <button
-                          onClick={() => handleDeleteScenario(sc.id)}
-                          className="text-slate-400 dark:text-slate-500 hover:text-red-500 transition-colors"
+                          type="button"
+                          onClick={() => setScenarioToDelete(sc)}
+                          className="text-slate-400 hover:text-rose-600 transition-colors shrink-0"
                           title="Hapus skenario"
                         >
-                          <Trash className="h-3 w-3" />
+                          <Trash className="h-3.5 w-3.5" />
                         </button>
                       )}
                     </div>
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] text-slate-400 dark:text-slate-500 flex items-center gap-1">
+                      <span className="text-[11px] text-slate-400 flex items-center gap-1">
                         <Calendar className="h-3 w-3" />
                         {new Date(sc.created_at).toLocaleDateString('id-ID', {
                           day: 'numeric',
@@ -515,8 +537,9 @@ export const ScenariosPage: React.FC = () => {
                         })}
                       </span>
                       <button
+                        type="button"
                         onClick={() => handleLoadScenario(sc)}
-                        className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-0.5"
+                        className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
                       >
                         Buka <ArrowRight className="h-3 w-3" />
                       </button>
@@ -528,6 +551,18 @@ export const ScenariosPage: React.FC = () => {
           </Card>
         </div>
       </div>
+
+      <ConfirmDialog
+        isOpen={Boolean(scenarioToDelete)}
+        onClose={() => setScenarioToDelete(null)}
+        onConfirm={confirmDeleteScenario}
+        title="Hapus Skenario"
+        description={`Apakah Anda yakin ingin menghapus skenario "${scenarioToDelete?.name || ''}"?`}
+        confirmLabel="Ya, Hapus"
+        cancelLabel="Batal"
+        variant="danger"
+        isLoading={isDeleting}
+      />
     </div>
   );
 };

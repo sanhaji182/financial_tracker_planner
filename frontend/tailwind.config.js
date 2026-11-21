@@ -9,6 +9,7 @@ export default {
     extend: {
       colors: {
         primary: {
+          DEFAULT: 'var(--color-primary-600)',
           50: 'var(--color-primary-50)',
           100: 'var(--color-primary-100)',
           200: 'var(--color-primary-200)',
@@ -42,9 +43,10 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+        display: ['Plus Jakarta Sans', 'Inter', '-apple-system', 'BlinkMacSystemFont', 'sans-serif'],
         mono: ['JetBrains Mono', 'Fira Code', 'SF Mono', 'monospace'],
       },
     },
   },
   plugins: [],
-}
+};

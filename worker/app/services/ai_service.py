@@ -6,47 +6,123 @@ import httpx
 
 logger = logging.getLogger("worker.ai")
 
+def detect_image_mime(image_base64: str, filename: str = "") -> str:
+    """Detects image MIME type from base64 signature with filename fallback."""
+    clean_b64 = image_base64.strip()
+    if "," in clean_b64 and clean_b64.startswith("data:"):
+        header, _, _ = clean_b64.partition(",")
+        if ";" in header and ":" in header:
+            return header.split(":", 1)[1].split(";", 1)[0]
+
+    if clean_b64.startswith("iVBOR"):
+        return "image/png"
+    if clean_b64.startswith("UklGR"):
+        return "image/webp"
+    if clean_b64.startswith("R0lGOD"):
+        return "image/gif"
+    if clean_b64.startswith("/9j/"):
+        return "image/jpeg"
+
+    lower = (filename or "").lower()
+    if lower.endswith(".png"):
+        return "image/png"
+    if lower.endswith(".webp"):
+        return "image/webp"
+    if lower.endswith(".gif"):
+        return "image/gif"
+    return "image/jpeg"
+
+
+def _normalize_ocr_items(raw_items: Any) -> List[Dict[str, Any]]:
+    normalized: List[Dict[str, Any]] = []
+    if not isinstance(raw_items, list):
+        return normalized
+    for item in raw_items:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        qty_raw = item.get("quantity", item.get("qty", 1))
+        try:
+            qty = max(1, int(qty_raw))
+        except (TypeError, ValueError):
+            qty = 1
+        try:
+            price = float(item.get("price", 0) or 0)
+        except (TypeError, ValueError):
+            price = 0.0
+        try:
+            total = float(item.get("total", price * qty) or 0)
+        except (TypeError, ValueError):
+            total = price * qty
+        normalized.append(
+            {
+                "name": name,
+                "quantity": qty,
+                "price": price,
+                "total": total,
+            }
+        )
+    return normalized
+
+
+def _extract_json_text(content: str) -> Dict[str, Any]:
+    cleaned = content.strip()
+    if "```json" in cleaned:
+        cleaned = cleaned.split("```json", 1)[1].split("```", 1)[0].strip()
+    elif "```" in cleaned:
+        cleaned = cleaned.split("```", 1)[1].split("```", 1)[0].strip()
+    return json.loads(cleaned)
+
+
 # 1. OCR Enhancement Service
 async def enhance_ocr_llm(
     ocr_result: Dict[str, Any],
     image_base64: str,
     provider: str,
     model_name: str,
-    api_key: Optional[str]
+    api_key: Optional[str],
+    filename: str = ""
 ) -> Dict[str, Any]:
     """
-    Escalates OCR corrections to an LLM if confidence is low.
+    Escalates OCR corrections to an LLM (OpenAI / Anthropic / Gemini) if confidence is low.
     If no API key is provided, falls back to a smart heuristic-based corrector.
     """
     if not api_key or provider == "local":
         logger.info("Using mock/heuristic OCR enhancement")
         return mock_enhance_ocr(ocr_result)
 
-    # Prepare prompt for LLM
+    clean_b64 = image_base64.split(",", 1)[1] if image_base64.startswith("data:") and "," in image_base64 else image_base64
+    mime_type = detect_image_mime(image_base64, filename)
+    raw_text = ocr_result.get("raw_text", "")
+    existing_scores = ocr_result.get("confidence_scores") or {}
+
     prompt = (
-        "You are an expert OCR parser for shopping receipts and invoices. "
+        "You are an expert OCR parser for Indonesian shopping receipts and invoices. "
         "The following receipt was parsed using basic OCR with these raw results:\n"
-        f"{json.dumps(ocr_result['parsed_data'], indent=2)}\n\n"
-        "Please look at the attached image (if provided) and the raw OCR data, "
-        "correct any spelling errors, verify the item prices, date, payment method, "
-        "and calculate/correct the total amount. "
+        f"{json.dumps(ocr_result.get('parsed_data', {}), indent=2)}\n\n"
+        f"Raw OCR Text:\n{raw_text}\n\n"
+        "Please look at the attached receipt image and the raw OCR data, "
+        "correct any spelling errors, extract itemized lines accurately, verify the date (YYYY-MM-DD), payment method, "
+        "and verify the grand total amount. "
         "Return ONLY a raw JSON object matching this schema, without markdown formatting:\n"
         "{\n"
         "  \"merchant_name\": \"string\",\n"
         "  \"date\": \"YYYY-MM-DD\",\n"
-        "  \"items\": [{\"name\": \"string\", \"qty\": int, \"price\": float, \"total\": float}],\n"
+        "  \"items\": [{\"name\": \"string\", \"quantity\": int, \"price\": float, \"total\": float}],\n"
         "  \"total\": float,\n"
         "  \"payment_method\": \"string\"\n"
         "}"
     )
 
     try:
+        parsed_data: Optional[Dict[str, Any]] = None
         if provider == "openai":
             headers = {
                 "Authorization": f"Bearer {api_key}",
                 "Content-Type": "application/json"
             }
-            # Use gpt-4o-mini as default for vision tasks
             llm_model = model_name if model_name != "default" else "gpt-4o-mini"
             payload = {
                 "model": llm_model,
@@ -59,7 +135,7 @@ async def enhance_ocr_llm(
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/jpeg;base64,{image_base64}"
+                                    "url": f"data:{mime_type};base64,{clean_b64}"
                                 }
                             }
                         ]
@@ -70,24 +146,18 @@ async def enhance_ocr_llm(
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
                 resp.raise_for_status()
-                result_json = resp.json()
-                content = result_json["choices"][0]["message"]["content"]
-                parsed_data = json.loads(content)
-                return {
-                    "raw_text": ocr_result.get("raw_text", ""),
-                    "parsed_data": parsed_data,
-                    "overall_confidence": 0.95
-                }
+                content = resp.json()["choices"][0]["message"]["content"]
+                parsed_data = _extract_json_text(content)
         elif provider == "anthropic":
             headers = {
                 "x-api-key": api_key,
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json"
             }
-            llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20240620"
+            llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
             payload = {
                 "model": llm_model,
-                "max_tokens": 1020,
+                "max_tokens": 1200,
                 "messages": [
                     {
                         "role": "user",
@@ -96,8 +166,8 @@ async def enhance_ocr_llm(
                                 "type": "image",
                                 "source": {
                                     "type": "base64",
-                                    "media_type": "image/jpeg",
-                                    "data": image_base64
+                                    "media_type": mime_type,
+                                    "data": clean_b64
                                 }
                             },
                             {
@@ -112,20 +182,53 @@ async def enhance_ocr_llm(
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
-                result_json = resp.json()
-                content = result_json["content"][0]["text"]
-                # Extract JSON if wrapped in markdown
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                parsed_data = json.loads(content.strip())
-                return {
-                    "raw_text": ocr_result.get("raw_text", ""),
-                    "parsed_data": parsed_data,
-                    "overall_confidence": 0.95
+                content = resp.json()["content"][0]["text"]
+                parsed_data = _extract_json_text(content)
+        elif provider == "gemini":
+            llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt},
+                            {
+                                "inline_data": {
+                                    "mime_type": mime_type,
+                                    "data": clean_b64
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "responseMimeType": "application/json"
                 }
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                parsed_data = _extract_json_text(content)
+
+        if parsed_data is not None:
+            parsed_data["items"] = _normalize_ocr_items(parsed_data.get("items"))
+            return {
+                "raw_text": raw_text,
+                "engine": f"ai_vision ({provider})",
+                "parsed_data": parsed_data,
+                "confidence_scores": existing_scores or {
+                    "merchant_name": 0.95,
+                    "date": 0.95,
+                    "total": 0.95,
+                    "payment_method": 0.95,
+                },
+                "overall_confidence": 0.95,
+                "needs_review": False,
+            }
     except Exception as e:
         logger.error(f"Error calling {provider} for OCR enhancement: {str(e)}")
-        # Fallback to mock/heuristics on error
         return mock_enhance_ocr(ocr_result)
 
     return mock_enhance_ocr(ocr_result)
@@ -135,8 +238,7 @@ def mock_enhance_ocr(ocr_result: Dict[str, Any]) -> Dict[str, Any]:
     """Smart fallback OCR corrector."""
     data = ocr_result.get("parsed_data", {}).copy()
     merchant = data.get("merchant_name", "")
-    
-    # Correct common misspelled merchant names
+
     merchant_mapping = {
         "ind0maret": "Indomaret",
         "indomart": "Indomaret",
@@ -152,17 +254,15 @@ def mock_enhance_ocr(ocr_result: Dict[str, Any]) -> Dict[str, Any]:
             data["merchant_name"] = new
             break
 
-    # Recalculate total if items exist and total is incorrect or 0
-    items = data.get("items", [])
+    items = _normalize_ocr_items(data.get("items", []))
+    data["items"] = items
     if items:
-        calculated_total = sum(item.get("total", item.get("price", 0) * item.get("qty", 1)) for item in items)
+        calculated_total = sum(item.get("total", item.get("price", 0) * item.get("quantity", 1)) for item in items)
         if data.get("total", 0) <= 0 or abs(data.get("total", 0) - calculated_total) > 100:
             data["total"] = calculated_total
 
-    # Ensure date format
     date_val = data.get("date", "")
     if "/" in date_val:
-        # Try to convert DD/MM/YYYY or MM/DD/YYYY to YYYY-MM-DD
         parts = date_val.split("/")
         if len(parts) == 3:
             if len(parts[2]) == 4:
@@ -172,8 +272,11 @@ def mock_enhance_ocr(ocr_result: Dict[str, Any]) -> Dict[str, Any]:
 
     return {
         "raw_text": ocr_result.get("raw_text", ""),
+        "engine": ocr_result.get("engine", "heuristic"),
         "parsed_data": data,
-        "overall_confidence": 0.95  # Increased confidence score representing successful correction
+        "confidence_scores": ocr_result.get("confidence_scores") or {},
+        "overall_confidence": 0.95,
+        "needs_review": not data.get("date") or data.get("total", 0) <= 0,
     }
 
 
@@ -245,9 +348,19 @@ async def categorize_transaction(
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
                 content = resp.json()["content"][0]["text"]
-                if "```json" in content:
-                    content = content.split("```json")[1].split("```")[0].strip()
-                return json.loads(content.strip())
+                return _extract_json_text(content)
+        elif provider == "gemini":
+            llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {"temperature": 0.0, "responseMimeType": "application/json"},
+            }
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+                return _extract_json_text(content)
     except Exception as e:
         logger.error(f"Error calling {provider} for auto-categorization: {str(e)}")
         return mock_categorize(description, merchant, available_categories)
@@ -396,7 +509,7 @@ async def chat_advisor(
                 return parse_advisor_response(content)
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
-            llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20240620"
+            llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
             payload = {
                 "model": llm_model,
                 "max_tokens": 1500,
@@ -408,6 +521,19 @@ async def chat_advisor(
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
                 content = resp.json()["content"][0]["text"]
+                return parse_advisor_response(content)
+        elif provider == "gemini":
+            llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
+            payload = {
+                "system_instruction": {"parts": [{"text": system_prompt}]},
+                "contents": [{"parts": [{"text": message}]}],
+                "generationConfig": {"temperature": 0.7},
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(url, json=payload)
+                resp.raise_for_status()
+                content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
                 return parse_advisor_response(content)
     except Exception as e:
         logger.error(f"Error calling {provider} for advisor chat: {str(e)}")

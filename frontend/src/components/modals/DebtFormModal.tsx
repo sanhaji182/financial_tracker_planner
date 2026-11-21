@@ -1,59 +1,76 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { useCreateDebt, useUpdateDebt } from '../../hooks/useDebts';
 import { useAccounts } from '../../hooks/useAccounts';
-import type { Debt } from '../../services/debts';
+import {
+  debtsService,
+  type Debt,
+  type CreateDebtRequest,
+  type UpdateDebtRequest,
+  type DebtScanResponse,
+} from '../../services/debts';
+import { toast } from '../../stores/useToastStore';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { DocumentScanBanner } from '../ui/DocumentScanBanner';
 import { Loader2, AlertCircle } from 'lucide-react';
 
 interface DebtFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   editDebt?: Debt;
+  highlightScan?: boolean;
 }
 
 export const DebtFormModal: React.FC<DebtFormModalProps> = ({
   isOpen,
   onClose,
   editDebt,
+  highlightScan = false,
 }) => {
-  const isEditMode = !!editDebt;
+  const formId = useId();
+  const isEditMode = Boolean(editDebt);
   const createMutation = useCreateDebt();
   const updateMutation = useUpdateDebt();
   const { data: accounts } = useAccounts();
 
-  // Form states
   const [name, setName] = useState('');
-  const [type, setType] = useState<'kpr' | 'credit_card' | 'installment' | 'personal_loan' | 'other'>('kpr');
+  const [type, setType] = useState<'kpr' | 'credit_card' | 'installment' | 'personal_loan' | 'other'>(
+    'kpr'
+  );
   const [creditor, setCreditor] = useState('');
-  const [originalAmount, setOriginalAmount] = useState<number>(0);
-  const [outstanding, setOutstanding] = useState<number>(0);
-  const [interestRate, setInterestRate] = useState<number | ''>('');
-  const [minimumPayment, setMinimumPayment] = useState<number | ''>('');
-  const [dueDay, setDueDay] = useState<number | ''>('');
-  const [tenorMonths, setTenorMonths] = useState<number | ''>('');
+  const [originalAmount, setOriginalAmount] = useState<string>('');
+  const [outstanding, setOutstanding] = useState<string>('');
+  const [interestRate, setInterestRate] = useState<string>('');
+  const [minimumPayment, setMinimumPayment] = useState<string>('');
+  const [dueDay, setDueDay] = useState<string>('');
+  const [tenorMonths, setTenorMonths] = useState<string>('');
   const [accountId, setAccountId] = useState('');
   const [isShared, setIsShared] = useState(true);
-  const [status, setStatus] = useState<'active' | 'paid_off' | 'defaulted' | 'restructured'>('active');
+  const [status, setStatus] = useState<'active' | 'paid_off' | 'defaulted' | 'restructured'>(
+    'active'
+  );
   const [notes, setNotes] = useState('');
   const [currency, setCurrency] = useState('IDR');
 
-  // Validation errors
   const [nameError, setNameError] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [scanConfidences, setScanConfidences] = useState<Record<string, number>>({});
+  const [scanSummary, setScanSummary] = useState<string | null>(null);
 
   useEffect(() => {
     if (editDebt) {
       setName(editDebt.name);
       setType(editDebt.type);
       setCreditor(editDebt.creditor || '');
-      setOriginalAmount(editDebt.original_amount);
-      setOutstanding(editDebt.outstanding_balance);
-      setInterestRate(editDebt.interest_rate !== undefined ? editDebt.interest_rate : '');
-      setMinimumPayment(editDebt.minimum_payment !== undefined ? editDebt.minimum_payment : '');
-      setDueDay(editDebt.due_day !== undefined ? editDebt.due_day : '');
-      setTenorMonths(editDebt.tenor_months !== undefined ? editDebt.tenor_months : '');
+      setOriginalAmount(String(editDebt.original_amount));
+      setOutstanding(String(editDebt.outstanding_balance));
+      setInterestRate(editDebt.interest_rate !== undefined ? String(editDebt.interest_rate) : '');
+      setMinimumPayment(
+        editDebt.minimum_payment !== undefined ? String(editDebt.minimum_payment) : ''
+      );
+      setDueDay(editDebt.due_day !== undefined ? String(editDebt.due_day) : '');
+      setTenorMonths(editDebt.tenor_months !== undefined ? String(editDebt.tenor_months) : '');
       setAccountId(editDebt.account_id || '');
       setIsShared(editDebt.is_shared);
       setStatus(editDebt.status);
@@ -63,8 +80,8 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
       setName('');
       setType('kpr');
       setCreditor('');
-      setOriginalAmount(0);
-      setOutstanding(0);
+      setOriginalAmount('');
+      setOutstanding('');
       setInterestRate('');
       setMinimumPayment('');
       setDueDay('');
@@ -77,7 +94,74 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
     }
     setNameError(null);
     setErrorMsg(null);
+    setScanConfidences({});
+    setScanSummary(null);
   }, [editDebt, isOpen]);
+
+  const lowConfidenceHint = (field: string): string | undefined => {
+    const score = scanConfidences[field];
+    return score !== undefined && score < 0.7 ? 'Periksa hasil scan' : undefined;
+  };
+
+  const handleScanResult = (res: DebtScanResponse) => {
+    const d = res.parsed_debt;
+    if (!d) return;
+
+    setScanConfidences(res.confidence_scores || {});
+
+    if (!isEditMode) {
+      if (d.name) {
+        setName(d.name);
+        setNameError(null);
+      }
+      if (d.type) setType(d.type);
+      if (d.creditor) setCreditor(d.creditor);
+      const orig = d.original_amount > 0 ? d.original_amount : d.outstanding_balance;
+      if (orig > 0) setOriginalAmount(String(orig));
+      if (d.outstanding_balance >= 0) setOutstanding(String(d.outstanding_balance));
+      if (d.interest_rate !== undefined && d.interest_rate !== null) {
+        setInterestRate(String(d.interest_rate));
+      }
+      if (d.minimum_payment !== undefined && d.minimum_payment !== null) {
+        setMinimumPayment(String(d.minimum_payment));
+      }
+      if (d.due_day !== undefined && d.due_day !== null) {
+        setDueDay(String(d.due_day));
+      }
+      if (d.tenor_months !== undefined && d.tenor_months !== null) {
+        setTenorMonths(String(d.tenor_months));
+      }
+      if (d.currency && ['IDR', 'USD', 'SGD', 'EUR'].includes(d.currency)) {
+        setCurrency(d.currency);
+      }
+      if (d.notes) setNotes(d.notes);
+    } else {
+      if (d.creditor) setCreditor(d.creditor);
+      if (d.outstanding_balance >= 0) setOutstanding(String(d.outstanding_balance));
+      if (d.minimum_payment !== undefined && d.minimum_payment !== null) {
+        setMinimumPayment(String(d.minimum_payment));
+      }
+      if (d.due_day !== undefined && d.due_day !== null) {
+        setDueDay(String(d.due_day));
+      }
+      if (d.interest_rate !== undefined && d.interest_rate !== null) {
+        setInterestRate(String(d.interest_rate));
+      }
+      if (d.tenor_months !== undefined && d.tenor_months !== null) {
+        setTenorMonths(String(d.tenor_months));
+      }
+      if (d.notes) {
+        setNotes((prev) => (prev && !prev.includes(d.notes) ? `${prev}\n${d.notes}` : d.notes));
+      }
+    }
+
+    setScanSummary(
+      d.name
+        ? `${d.name} • Rp ${Math.round(d.outstanding_balance).toLocaleString('id-ID')}`
+        : null
+    );
+    toast.success('Form utang terisi otomatis dari hasil scan');
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -88,49 +172,115 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
       return;
     }
 
-    const payload: any = {
+    const parsedOriginal = parseFloat(originalAmount);
+    if (!isEditMode && (originalAmount.trim() === '' || isNaN(parsedOriginal) || parsedOriginal <= 0)) {
+      setErrorMsg('Total pinjaman awal harus lebih dari 0');
+      return;
+    }
+
+    const parsedOutstanding = parseFloat(outstanding);
+    if (outstanding.trim() === '' || isNaN(parsedOutstanding) || parsedOutstanding < 0) {
+      setErrorMsg('Sisa utang harus bernilai nol atau positif');
+      return;
+    }
+
+    let parsedInterestRate: number | undefined;
+    if (interestRate.trim() !== '') {
+      const val = parseFloat(interestRate);
+      if (isNaN(val) || val < 0) {
+        setErrorMsg('Suku bunga tidak boleh negatif');
+        return;
+      }
+      parsedInterestRate = val;
+    }
+
+    let parsedMinimumPayment: number | undefined;
+    if (minimumPayment.trim() !== '') {
+      const val = parseFloat(minimumPayment);
+      if (isNaN(val) || val < 0) {
+        setErrorMsg('Pembayaran minimum tidak boleh negatif');
+        return;
+      }
+      parsedMinimumPayment = val;
+    }
+
+    let parsedDueDay: number | undefined;
+    if (dueDay.trim() !== '') {
+      const val = parseInt(dueDay, 10);
+      if (isNaN(val) || val < 1 || val > 31) {
+        setErrorMsg('Tanggal jatuh tempo harus antara 1 sampai 31');
+        return;
+      }
+      parsedDueDay = val;
+    }
+
+    let parsedTenorMonths: number | undefined;
+    if (tenorMonths.trim() !== '') {
+      const val = parseInt(tenorMonths, 10);
+      if (isNaN(val) || val < 1) {
+        setErrorMsg('Tenor harus minimal 1 bulan');
+        return;
+      }
+      parsedTenorMonths = val;
+    }
+
+    const commonPayload = {
       name,
-      type,
-      creditor: creditor ? creditor : undefined,
-      original_amount: originalAmount,
-      outstanding_balance: outstanding,
-      interest_rate: interestRate !== '' ? interestRate : undefined,
-      minimum_payment: minimumPayment !== '' ? minimumPayment : undefined,
-      due_day: dueDay !== '' ? dueDay : undefined,
-      tenor_months: tenorMonths !== '' ? tenorMonths : undefined,
-      account_id: accountId ? accountId : undefined,
-      notes: notes ? notes : undefined,
+      creditor: creditor || undefined,
+      outstanding_balance: parsedOutstanding,
+      interest_rate: parsedInterestRate,
+      minimum_payment: parsedMinimumPayment,
+      due_day: parsedDueDay,
+      tenor_months: parsedTenorMonths,
+      account_id: accountId || undefined,
+      notes: notes || undefined,
       is_shared: isShared,
-      currency: currency,
+      currency,
     };
 
     try {
-      if (isEditMode) {
-        payload.status = status;
+      if (isEditMode && editDebt) {
+        const updateReq: UpdateDebtRequest & { currency?: string } = {
+          ...commonPayload,
+          status,
+        };
         await updateMutation.mutateAsync({
-          id: editDebt!.id,
-          req: payload,
+          id: editDebt.id,
+          req: updateReq,
         });
+        toast.success('Kontrak utang diperbarui', name);
       } else {
-        await createMutation.mutateAsync(payload);
+        const createReq: CreateDebtRequest & { currency?: string } = {
+          ...commonPayload,
+          type,
+          original_amount: parsedOriginal,
+        };
+        await createMutation.mutateAsync(createReq);
+        toast.success('Kontrak utang baru ditambahkan', name);
       }
       onClose();
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.error?.message || 'Gagal menyimpan utang/cicilan');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menyimpan utang/cicilan';
+      setErrorMsg(msg);
     }
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
+  const numericOriginal = parseFloat(originalAmount);
+  const numericOutstanding = parseFloat(outstanding);
+  const numericMinPayment = parseFloat(minimumPayment);
 
   const modalFooter = (
     <>
       <Button variant="ghost" onClick={onClose} disabled={isPending}>
         Batal
       </Button>
-      <Button onClick={handleSubmit} disabled={isPending}>
+      <Button type="submit" form={formId} disabled={isPending}>
         {isPending ? (
           <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            <Loader2 className="h-4 w-4 animate-spin" />
             Menyimpan...
           </>
         ) : (
@@ -144,61 +294,71 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title={isEditMode ? 'Edit Utang/Cicilan' : 'Tambah Utang/Cicilan'}
+      title={isEditMode ? 'Edit Utang / Cicilan' : 'Tambah Utang / Cicilan'}
       footerActions={modalFooter}
       size="md"
     >
+      <DocumentScanBanner
+        title={isEditMode ? 'Scan Tagihan Terbaru (Sinkronkan Saldo)' : 'Scan Screenshot / PDF Tagihan'}
+        subtitle="Upload foto SPayLater, Kredivo, atau e-Statement Kartu Kredit untuk isi form otomatis."
+        onScan={(file, pdfPassword) =>
+          debtsService.scanDebtDocument(file, { mode: 'debt', pdfPassword })
+        }
+        onResult={handleScanResult}
+        summaryText={scanSummary}
+        resetKey={`${isOpen}-${editDebt?.id || 'new'}`}
+        emphasized={highlightScan}
+      />
+
       {errorMsg && (
-        <div className="mb-4 flex items-center gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-700 dark:bg-red-950/30 dark:text-red-400">
+        <div className="mb-4 flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
           <AlertCircle className="h-5 w-5 shrink-0" />
           <span>{errorMsg}</span>
         </div>
       )}
 
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {/* Nama Utang */}
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
         <Input
-          label="Nama Utang/Cicilan"
+          label="Nama Utang / Cicilan"
           id="debt-name"
-          placeholder="e.g. KPR Bank Mandiri, Cicilan Motor, CC Platinum"
+          placeholder="Contoh: KPR Bank Mandiri, Cicilan Kendaraan, CC Platinum"
           value={name}
           onChange={(e) => {
             setName(e.target.value);
             setNameError(null);
           }}
           error={nameError || undefined}
+          helperText={lowConfidenceHint('name')}
           required
         />
 
-        {/* Jenis & Kreditur */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
               Kategori Cicilan
             </label>
             <select
               value={type}
-              onChange={(e) => setType(e.target.value as any)}
-              className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 dark:border-slate-800 dark:text-white"
+              onChange={(e) => setType(e.target.value as typeof type)}
+              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
             >
-              <option value="kpr">🏠 KPR / Rumah</option>
-              <option value="credit_card">💳 Kartu Kredit</option>
-              <option value="installment">🚗 Cicilan Kendaraan / Barang</option>
-              <option value="personal_loan">👤 Pinjaman Pribadi / Teman</option>
-              <option value="other">📦 Lain-lain</option>
+              <option value="kpr">KPR / Rumah</option>
+              <option value="credit_card">Kartu Kredit</option>
+              <option value="installment">Cicilan Kendaraan / Barang</option>
+              <option value="personal_loan">Pinjaman Pribadi</option>
+              <option value="other">Lain-lain</option>
             </select>
           </div>
 
-          {/* Mata Uang */}
-          <div className="flex flex-col gap-1">
-            <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
               Mata Uang
             </label>
             <select
               value={currency}
               onChange={(e) => setCurrency(e.target.value)}
               disabled={isEditMode}
-              className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 disabled:opacity-50 dark:border-slate-800 dark:text-white"
+              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 disabled:opacity-50"
             >
               <option value="IDR">IDR (Rp)</option>
               <option value="USD">USD ($)</option>
@@ -206,126 +366,152 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
               <option value="EUR">EUR (€)</option>
             </select>
           </div>
-          <Input
-            label="Kreditur (Pemberi Pinjaman)"
-            id="debt-creditor"
-            placeholder="e.g. Bank BCA, Adira Finance"
-            value={creditor}
-            onChange={(e) => setCreditor(e.target.value)}
-          />
         </div>
 
-        {/* Plafond Pinjaman & Sisa Outstanding */}
+        <Input
+          label="Kreditur (Pemberi Pinjaman)"
+          id="debt-creditor"
+          placeholder="Contoh: Bank BCA, Adira Finance"
+          value={creditor}
+          onChange={(e) => setCreditor(e.target.value)}
+        />
+
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="relative">
             <Input
-              label="Total Pinjaman Awal (Original)"
+              label="Total Pinjaman Awal"
               id="debt-original"
               type="number"
+              min="1"
+              step="any"
+              placeholder="Contoh: 500000000"
               value={originalAmount}
-              onChange={(e) => setOriginalAmount(parseFloat(e.target.value) || 0)}
-              required
-              className="font-mono text-sm"
+              onChange={(e) => setOriginalAmount(e.target.value)}
+              disabled={isEditMode}
+              required={!isEditMode}
+              className="font-money text-sm"
             />
-            {originalAmount > 0 && (
-              <span className="absolute right-3 bottom-2 text-[10px] text-slate-400 font-mono">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(originalAmount)}
+            {!isNaN(numericOriginal) && numericOriginal > 0 && (
+              <span className="mt-1 block text-[11px] text-slate-400 font-money">
+                {new Intl.NumberFormat('id-ID', {
+                  style: 'currency',
+                  currency: 'IDR',
+                  maximumFractionDigits: 0,
+                }).format(numericOriginal)}
               </span>
             )}
           </div>
 
           <div className="relative">
             <Input
-              label="Sisa Utang Saat Ini (Outstanding)"
+              label="Sisa Utang (Outstanding)"
               id="debt-outstanding"
               type="number"
+              min="0"
+              step="any"
+              placeholder="Contoh: 350000000"
               value={outstanding}
-              onChange={(e) => setOutstanding(parseFloat(e.target.value) || 0)}
+              onChange={(e) => setOutstanding(e.target.value)}
+              helperText={lowConfidenceHint('outstanding_balance')}
               required
-              className="font-mono text-sm"
+              className="font-money text-sm"
             />
-            {outstanding > 0 && (
-              <span className="absolute right-3 bottom-2 text-[10px] text-slate-400 font-mono">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(outstanding)}
+            {!isNaN(numericOutstanding) && numericOutstanding > 0 && (
+              <span className="mt-1 block text-[11px] text-slate-400 font-money">
+                {new Intl.NumberFormat('id-ID', {
+                  style: 'currency',
+                  currency: 'IDR',
+                  maximumFractionDigits: 0,
+                }).format(numericOutstanding)}
               </span>
             )}
           </div>
         </div>
 
-        {/* Bunga & Cicilan Minimum */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
-            label="Suku Bunga p.a. (% per tahun)"
+            label="Suku Bunga p.a. (%)"
             id="debt-rate"
             type="number"
+            min="0"
             step="0.01"
-            placeholder="e.g. 10.5"
+            placeholder="Contoh: 10.5"
             value={interestRate}
-            onChange={(e) => setInterestRate(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
+            onChange={(e) => setInterestRate(e.target.value)}
           />
           <div className="relative">
             <Input
               label="Pembayaran Minimum / Bln"
               id="debt-min-payment"
               type="number"
-              placeholder="e.g. 5000000"
+              min="0"
+              step="any"
+              placeholder="Contoh: 5000000"
               value={minimumPayment}
-              onChange={(e) => setMinimumPayment(e.target.value === '' ? '' : parseFloat(e.target.value) || 0)}
-              className="font-mono text-sm"
+              onChange={(e) => setMinimumPayment(e.target.value)}
+              helperText={lowConfidenceHint('minimum_payment')}
+              className="font-money text-sm"
             />
-            {minimumPayment && minimumPayment > 0 && (
-              <span className="absolute right-3 bottom-2 text-[10px] text-slate-400 font-mono">
-                {new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(minimumPayment)}
+            {!isNaN(numericMinPayment) && numericMinPayment > 0 && (
+              <span className="mt-1 block text-[11px] text-slate-400 font-money">
+                {new Intl.NumberFormat('id-ID', {
+                  style: 'currency',
+                  currency: 'IDR',
+                  maximumFractionDigits: 0,
+                }).format(numericMinPayment)}
               </span>
             )}
           </div>
         </div>
 
-        {/* Tanggal Jatuh Tempo & Tenor */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
-            label="Tanggal Jatuh Tempo Bulanan (1-31)"
+            label="Tanggal Jatuh Tempo (1-31)"
             id="debt-due-day"
             type="number"
-            placeholder="e.g. 15"
+            min="1"
+            max="31"
+            placeholder="Contoh: 15"
             value={dueDay}
-            onChange={(e) => setDueDay(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+            onChange={(e) => setDueDay(e.target.value)}
+            helperText={lowConfidenceHint('due_day')}
           />
           <Input
-            label="Tenor (Total Bulan)"
+            label="Tenor (Bulan)"
             id="debt-tenor"
             type="number"
-            placeholder="e.g. 360"
+            min="1"
+            placeholder="Contoh: 120"
             value={tenorMonths}
-            onChange={(e) => setTenorMonths(e.target.value === '' ? '' : parseInt(e.target.value) || 0)}
+            onChange={(e) => setTenorMonths(e.target.value)}
           />
         </div>
 
-        {/* Default Payment Account */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
-            Sumber Rekening Pembayaran Default
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+            Rekening Pembayaran Default
           </label>
           <select
             value={accountId}
             onChange={(e) => setAccountId(e.target.value)}
-            className="h-10 rounded-lg border border-slate-200 bg-bg-base px-3 py-1 text-sm text-text-primary focus:outline-none focus:border-primary-500 dark:border-slate-800 dark:text-white"
+            className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
           >
             <option value="">-- Pilih Rekening Pembayaran --</option>
-            {accounts && accounts.map(a => (
-              <option key={a.id} value={a.id}>{a.name} ({a.formatted_balance})</option>
+            {accounts?.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name} ({a.formatted_balance})
+              </option>
             ))}
           </select>
         </div>
 
-        {/* Checkbox Shared & Status (Edit Mode) */}
         <div className="flex flex-wrap gap-6 items-center py-1">
-          <label className="flex items-center gap-2 cursor-pointer text-sm font-semibold text-slate-700 dark:text-slate-300">
+          <label className="flex items-center gap-2 cursor-pointer text-sm font-medium text-slate-700 dark:text-slate-300">
             <input
               type="checkbox"
               checked={isShared}
               onChange={(e) => setIsShared(e.target.checked)}
-              className="w-4 h-4 text-primary-600 border-slate-300 rounded focus:ring-primary-500"
+              className="w-4 h-4 text-indigo-600 border-slate-300 rounded focus:ring-indigo-500"
             />
             Utang Bersama Keluarga (Shared)
           </label>
@@ -335,32 +521,32 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
               <span className="text-xs font-semibold text-slate-500">Status</span>
               <select
                 value={status}
-                onChange={(e) => setStatus(e.target.value as any)}
-                className="h-8 rounded-lg border border-slate-200 bg-bg-base px-2 py-0.5 text-xs text-text-primary focus:outline-none dark:border-slate-800 dark:text-white"
+                onChange={(e) => setStatus(e.target.value as typeof status)}
+                className="h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-xs text-slate-900 dark:text-white focus:outline-none"
               >
-                <option value="active">🟢 Aktif</option>
-                <option value="paid_off">🎉 Lunas (Paid Off)</option>
-                <option value="defaulted">🔴 Gagal Bayar (Default)</option>
-                <option value="restructured">🟡 Restrukturisasi</option>
+                <option value="active">Aktif</option>
+                <option value="paid_off">Lunas</option>
+                <option value="defaulted">Gagal Bayar</option>
+                <option value="restructured">Restrukturisasi</option>
               </select>
             </div>
           )}
         </div>
 
-        {/* Catatan */}
-        <div className="flex flex-col gap-1">
-          <label className="text-xs font-semibold text-text-secondary dark:text-slate-400">
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
             Catatan Tambahan
           </label>
           <textarea
-            placeholder="Nomor kontrak cicilan, agunan dll..."
+            placeholder="Nomor kontrak cicilan, agunan, dll..."
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
-            className="w-full min-h-[60px] rounded-lg border border-slate-200 bg-bg-base px-3 py-2 text-sm text-text-primary focus:border-primary-500 focus:outline-none focus:ring-2 focus:ring-primary-100 dark:border-slate-800 dark:text-white"
+            className="w-full min-h-[64px] rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-indigo-500 focus:outline-none"
           />
         </div>
       </form>
     </Modal>
   );
 };
+
 export default DebtFormModal;

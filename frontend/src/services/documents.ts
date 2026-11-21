@@ -32,8 +32,8 @@ const documentsService = {
     if (tag) params.append('tag', tag);
     
     const query = params.toString();
-    const res = await api.get<{ data: Document[] }>(`/documents${query ? '?' + query : ''}`);
-    return res.data.data;
+    const res = await api.get<{ data: Document[] | null }>(`/documents${query ? '?' + query : ''}`);
+    return Array.isArray(res.data?.data) ? res.data.data : [];
   },
 
   uploadDocument: async (payload: UploadDocumentPayload): Promise<Document> => {

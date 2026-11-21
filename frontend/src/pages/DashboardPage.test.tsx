@@ -7,6 +7,8 @@ import { useDashboardData } from '../hooks/useDashboard';
 // Mock recharts to avoid jsdom layout engine issues
 vi.mock('recharts', () => ({
   ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
+  AreaChart: ({ children }: any) => <div>{children}</div>,
+  Area: () => <div />,
   LineChart: ({ children }: any) => <div>{children}</div>,
   Line: () => <div />,
   XAxis: () => <div />,
@@ -93,7 +95,7 @@ describe('DashboardPage component', () => {
         safe_to_spend: { value: 1200000, formatted_value: 'Rp 1.200.000' },
         recent_alerts: [],
         insight_summary: 'Arus kas bersih keluarga Anda bulan ini positif.',
-        next_action: { title: 'Tahan Kas (Buffer)', description: 'Tahan kas Anda', action_label: 'Detail', action_url: '/' },
+        next_action: { title: 'Tahan Kas (Buffer)', description: 'Tahan kas Anda', action_label: 'Detail', action_url: '/', priority: 1 },
         net_worth_trend: [],
       },
       isLoading: false,

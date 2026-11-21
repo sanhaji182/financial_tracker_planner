@@ -24,6 +24,10 @@ fos-main-arm64
 .env.development.local
 .env.test.local
 .env.production.local
+frontend/.env.production
+*.jks
+*.keystore
+keystore.properties
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -38,3 +42,4 @@ uploads/
 db-data/
 redis-data/
 .worktrees/
+.claude/worktrees/

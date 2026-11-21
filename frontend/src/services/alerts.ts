@@ -39,7 +39,11 @@ const alertService = {
     if (filters?.unread) params.append('unread', 'true');
     const query = params.toString();
     const res = await api.get<{ data: AlertListResponse }>(`/alerts${query ? '?' + query : ''}`);
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      alerts: Array.isArray(data?.alerts) ? data.alerts : [],
+    };
   },
 
   getUnreadCount: async (): Promise<number> => {

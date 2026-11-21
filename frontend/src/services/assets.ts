@@ -103,7 +103,11 @@ export const assetsService = {
 
   async getAsset(id: string): Promise<Asset> {
     const res = await api.get(`/assets/${id}`);
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      valuations: Array.isArray(data?.valuations) ? data.valuations : [],
+    };
   },
 
   async createAsset(req: CreateAssetRequest): Promise<Asset> {
@@ -127,6 +131,10 @@ export const assetsService = {
 
   async getAssetSummary(): Promise<AssetSummaryResponse> {
     const res = await api.get('/assets/summary');
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      breakdown_by_type: Array.isArray(data?.breakdown_by_type) ? data.breakdown_by_type : [],
+    };
   },
 };

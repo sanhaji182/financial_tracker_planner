@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useId, useState } from 'react';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useCategories } from '../../hooks/useTransactions';
 import { transactionsService, type Transaction } from '../../services/transactions';
+import { toast } from '../../stores/useToastStore';
 import { AlertCircle, Plus, Trash2, CheckCircle2 } from 'lucide-react';
 
 interface SplitTransactionModalProps {
@@ -24,8 +25,9 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
   transaction,
   onSuccess,
 }) => {
+  const formId = useId();
   const { data: categories } = useCategories();
-  
+
   const [splits, setSplits] = useState<SplitItemInput[]>([
     { category_id: '', amount: '', description: '' },
     { category_id: '', amount: '', description: '' },
@@ -33,12 +35,9 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Filter categories to match parent type (income or expense)
-  const filteredCategories = categories?.filter(
-    (c) => c.type === transaction.type
-  ) || [];
+  const filteredCategories =
+    categories?.filter((c) => c.type === transaction.type) || [];
 
-  // Reset splits when modal opens
   useEffect(() => {
     if (isOpen) {
       setSplits([
@@ -64,27 +63,21 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
     setSplits(updated);
   };
 
-  // Sum calculations
   const totalTarget = transaction.amount;
-  const currentSum = splits.reduce((sum, item) => {
-    const amt = parseFloat(item.amount) || 0;
-    return sum + amt;
-  }, 0);
+  const currentSum = splits.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
   const difference = totalTarget - currentSum;
 
-  const formatRupiah = (val: number) => {
-    return new Intl.NumberFormat('id-ID', {
+  const formatRupiah = (val: number) =>
+    new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       maximumFractionDigits: 0,
     }).format(val);
-  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
 
-    // Validate empty category ids or amounts
     for (let i = 0; i < splits.length; i++) {
       if (!splits[i].category_id) {
         setErrorMsg(`Kategori pada baris ke-${i + 1} harus dipilih.`);
@@ -97,7 +90,6 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
       }
     }
 
-    // Validate precision within 0.01 tolerance
     if (Math.abs(difference) > 0.01) {
       setErrorMsg(
         `Total pembagian (${formatRupiah(currentSum)}) harus sama dengan total transaksi (${formatRupiah(totalTarget)}). Selisih: ${formatRupiah(difference)}.`
@@ -114,10 +106,14 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
       }));
 
       await transactionsService.splitTransaction(transaction.id, payload);
+      toast.success('Transaksi berhasil dibagi per kategori');
       onSuccess();
       onClose();
-    } catch (err: any) {
-      setErrorMsg(err.response?.data?.error?.message || 'Gagal menyimpan pembagian transaksi');
+    } catch (err: unknown) {
+      const msg =
+        (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+          ?.message || 'Gagal menyimpan pembagian transaksi';
+      setErrorMsg(msg);
     } finally {
       setIsSubmitting(false);
     }
@@ -127,7 +123,7 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
     <Modal
       isOpen={isOpen}
       onClose={onClose}
-      title="Bagi Transaksi (Split Transaction)"
+      title="Bagi Transaksi (Split)"
       size="lg"
       footerActions={
         <>
@@ -135,51 +131,62 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
             Batal
           </Button>
           <Button
-            variant="primary"
-            onClick={handleSubmit}
+            type="submit"
+            form={formId}
             disabled={isSubmitting || Math.abs(difference) > 0.01}
+            isLoading={isSubmitting}
           >
-            {isSubmitting ? 'Menyimpan...' : 'Simpan Pembagian'}
+            Simpan Pembagian
           </Button>
         </>
       }
     >
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form id={formId} onSubmit={handleSubmit} className="space-y-4">
         {errorMsg && (
-          <div className="flex items-center gap-2 rounded-lg bg-red-50 dark:bg-red-950/20 p-3 text-sm text-red-700 dark:text-red-400">
+          <div className="flex items-center gap-2 rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200/80 p-3 text-sm text-rose-700 dark:text-rose-300">
             <AlertCircle className="h-5 w-5 shrink-0" />
             <span>{errorMsg}</span>
           </div>
         )}
 
-        {/* Parent details */}
-        <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900/50 p-4">
-          <div className="grid grid-cols-2 gap-4 text-xs font-semibold text-slate-500">
+        <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/50 p-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4 text-xs">
             <div>
-              <span className="block text-[10px] uppercase text-slate-400">Transaksi Utama</span>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{transaction.description || 'Tanpa deskripsi'}</span>
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Transaksi Utama
+              </span>
+              <span className="text-sm font-bold text-slate-900 dark:text-slate-100 mt-0.5 block">
+                {transaction.description || 'Tanpa deskripsi'}
+              </span>
             </div>
             <div className="text-right">
-              <span className="block text-[10px] uppercase text-slate-400">Total Jumlah</span>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{formatRupiah(totalTarget)}</span>
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Total Jumlah
+              </span>
+              <span className="text-sm font-bold font-money text-slate-900 dark:text-slate-100 mt-0.5 block">
+                {formatRupiah(totalTarget)}
+              </span>
             </div>
           </div>
         </div>
 
-        {/* Split rows */}
         <div className="space-y-3">
-          <h4 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Breakdown Kategori</h4>
-          
-          <div className="space-y-3 max-h-[300px] overflow-y-auto pr-1">
+          <h4 className="text-xs font-bold text-slate-500 uppercase tracking-wider">
+            Rincian Kategori
+          </h4>
+
+          <div className="space-y-2.5 max-h-[300px] overflow-y-auto pr-1">
             {splits.map((row, idx) => (
-              <div key={idx} className="flex gap-2 items-center">
-                <div className="flex-1 grid grid-cols-12 gap-2">
-                  {/* Category select */}
-                  <div className="col-span-5">
+              <div
+                key={idx}
+                className="flex gap-2 items-start sm:items-center p-2.5 sm:p-0 rounded-xl sm:rounded-none border border-slate-200/70 sm:border-0 dark:border-slate-800 bg-slate-50/60 sm:bg-transparent dark:bg-slate-800/30"
+              >
+                <div className="flex-1 grid grid-cols-1 sm:grid-cols-12 gap-2">
+                  <div className="sm:col-span-5">
                     <select
                       value={row.category_id}
                       onChange={(e) => handleFieldChange(idx, 'category_id', e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-transparent px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-800 dark:text-slate-200 dark:bg-slate-900"
+                      className="w-full h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-xs font-medium focus:border-indigo-500 focus:outline-none text-slate-900 dark:text-slate-100"
                     >
                       <option value="">-- Pilih Kategori --</option>
                       {filteredCategories.map((c) => (
@@ -190,35 +197,32 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
                     </select>
                   </div>
 
-                  {/* Amount input */}
-                  <div className="col-span-3">
+                  <div className="sm:col-span-3">
                     <input
                       type="number"
                       placeholder="Jumlah"
                       value={row.amount}
                       onChange={(e) => handleFieldChange(idx, 'amount', e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-transparent px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-800 dark:text-slate-200"
+                      className="w-full h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-xs font-money focus:border-indigo-500 focus:outline-none text-slate-900 dark:text-slate-100"
                     />
                   </div>
 
-                  {/* Description input */}
-                  <div className="col-span-4">
+                  <div className="sm:col-span-4">
                     <input
                       type="text"
                       placeholder="Keterangan (opsional)"
                       value={row.description}
                       onChange={(e) => handleFieldChange(idx, 'description', e.target.value)}
-                      className="w-full rounded-lg border border-slate-200 dark:border-slate-800 bg-transparent px-3 py-2 text-xs font-semibold focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 text-slate-800 dark:text-slate-200"
+                      className="w-full h-9 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-xs focus:border-indigo-500 focus:outline-none text-slate-900 dark:text-slate-100"
                     />
                   </div>
                 </div>
 
-                {/* Delete row button */}
                 <button
                   type="button"
                   onClick={() => handleRemoveRow(idx)}
                   disabled={splits.length <= 2}
-                  className="p-2 rounded-lg hover:bg-red-500/10 text-slate-400 hover:text-red-500 disabled:opacity-40 transition-colors"
+                  className="p-2 rounded-xl hover:bg-rose-50 dark:hover:bg-rose-950/30 text-slate-400 hover:text-rose-600 disabled:opacity-40 transition-colors"
                 >
                   <Trash2 className="h-4 w-4" />
                 </button>
@@ -227,27 +231,32 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
           </div>
 
           <Button
-            type="button"
             variant="ghost"
-            className="w-full border border-dashed border-slate-300 dark:border-slate-700 py-2 flex items-center justify-center gap-1.5 text-xs text-slate-500 hover:text-slate-700"
+            className="w-full border border-dashed border-slate-300 dark:border-slate-700"
             onClick={handleAddRow}
           >
-            <Plus className="h-4 w-4" /> Tambah Kategori
+            <Plus className="h-4 w-4" />
+            Tambah Baris Kategori
           </Button>
         </div>
 
-        {/* Validation overview */}
         <div className="border-t border-slate-100 dark:border-slate-800 pt-4 flex items-center justify-between">
-          <div className="flex gap-4 text-xs font-semibold">
+          <div className="flex gap-5 text-xs">
             <div>
-              <span className="block text-[10px] uppercase text-slate-400">Total Terbagi</span>
-              <span className="text-sm font-bold text-slate-800 dark:text-slate-200">{formatRupiah(currentSum)}</span>
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Total Terbagi
+              </span>
+              <span className="text-sm font-bold font-money text-slate-900 dark:text-slate-100">
+                {formatRupiah(currentSum)}
+              </span>
             </div>
             <div>
-              <span className="block text-[10px] uppercase text-slate-400">Selisih</span>
+              <span className="block text-[11px] font-semibold uppercase text-slate-400">
+                Selisih
+              </span>
               <span
-                className={`text-sm font-bold ${
-                  Math.abs(difference) <= 0.01 ? 'text-emerald-500' : 'text-red-500'
+                className={`text-sm font-bold font-money ${
+                  Math.abs(difference) <= 0.01 ? 'text-emerald-600' : 'text-rose-600'
                 }`}
               >
                 {formatRupiah(difference)}
@@ -256,8 +265,8 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
           </div>
 
           {Math.abs(difference) <= 0.01 && (
-            <div className="flex items-center gap-1 text-xs text-emerald-500 font-bold">
-              <CheckCircle2 className="h-4 w-4" /> Jumlah Pas
+            <div className="flex items-center gap-1.5 text-xs text-emerald-600 dark:text-emerald-400 font-semibold">
+              <CheckCircle2 className="h-4 w-4" /> Jumlah Sesuai
             </div>
           )}
         </div>
@@ -265,3 +274,5 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
     </Modal>
   );
 };
+
+export default SplitTransactionModal;

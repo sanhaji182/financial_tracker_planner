@@ -78,7 +78,13 @@ export interface DashboardResponse {
 export const dashboardService = {
   async getDashboard(): Promise<DashboardResponse> {
     const res = await api.get('/dashboard');
-    return res.data.data;
+    const data = res.data.data;
+    return {
+      ...data,
+      upcoming_bills: Array.isArray(data?.upcoming_bills) ? data.upcoming_bills : [],
+      recent_alerts: Array.isArray(data?.recent_alerts) ? data.recent_alerts : [],
+      net_worth_trend: Array.isArray(data?.net_worth_trend) ? data.net_worth_trend : [],
+    };
   },
 };
 export default dashboardService;

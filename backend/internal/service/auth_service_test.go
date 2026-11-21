@@ -155,4 +155,43 @@ func TestAuthService(t *testing.T) {
 			t.Errorf("expected spouse role to be spouse_viewer, got %s", resp.User.Role)
 		}
 	})
+
+	t.Run("Delete account verifies password and revokes sessions", func(t *testing.T) {
+		cleanDatabase(t)
+		ctx := context.Background()
+
+		regReq := dto.RegisterRequest{
+			Email:    "delete-me@example.com",
+			Password: "securePassword123",
+			Name:     "Delete Candidate",
+		}
+		regResp, err := authServ.Register(ctx, regReq)
+		if err != nil {
+			t.Fatalf("register failed: %v", err)
+		}
+
+		// Wrong password should fail
+		err = authServ.DeleteAccount(ctx, regResp.User.ID, dto.DeleteAccountRequest{
+			Password: "wrongPassword",
+		})
+		if err == nil {
+			t.Fatal("expected delete account with wrong password to fail")
+		}
+
+		// Valid password succeeds
+		err = authServ.DeleteAccount(ctx, regResp.User.ID, dto.DeleteAccountRequest{
+			Password: "securePassword123",
+		})
+		if err != nil {
+			t.Fatalf("expected delete account to succeed, got %v", err)
+		}
+
+		// Refresh token must be revoked & user not found by email
+		if _, err := authServ.RefreshToken(ctx, regResp.RefreshToken); err == nil {
+			t.Fatal("expected refresh token to be revoked after account deletion")
+		}
+		if _, err := userRepo.GetUserByEmail(ctx, "delete-me@example.com"); err == nil {
+			t.Fatal("expected deleted user not to be returned by email")
+		}
+	})
 }

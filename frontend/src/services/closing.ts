@@ -75,20 +75,40 @@ export interface MonthlyClosing {
   comparison?: ClosingComparison;
 }
 
+const normalizeClosing = (data: MonthlyClosing): MonthlyClosing => {
+  if (!data?.snapshot) return data;
+  return {
+    ...data,
+    snapshot: {
+      ...data.snapshot,
+      accounts: Array.isArray(data.snapshot.accounts) ? data.snapshot.accounts : [],
+      budget_summary: {
+        ...data.snapshot.budget_summary,
+        categories: Array.isArray(data.snapshot.budget_summary?.categories)
+          ? data.snapshot.budget_summary.categories
+          : [],
+      },
+      goals_progress: Array.isArray(data.snapshot.goals_progress)
+        ? data.snapshot.goals_progress
+        : [],
+    },
+  };
+};
+
 export const closingService = {
   async generateClosing(month: string, notes?: string): Promise<MonthlyClosing> {
     const res = await api.post('/monthly-closing/generate', { month, notes });
-    return res.data.data;
+    return normalizeClosing(res.data.data);
   },
 
   async getClosings(): Promise<MonthlyClosing[]> {
     const res = await api.get('/monthly-closing');
-    return res.data.data || [];
+    return Array.isArray(res.data?.data) ? res.data.data : [];
   },
 
   async getClosingDetail(month: string): Promise<MonthlyClosing> {
     const res = await api.get(`/monthly-closing/${month}`);
-    return res.data.data;
+    return normalizeClosing(res.data.data);
   },
 };
 export default closingService;

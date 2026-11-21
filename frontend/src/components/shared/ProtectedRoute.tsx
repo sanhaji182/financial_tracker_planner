@@ -16,20 +16,19 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({
 
   if (isLoading) {
     return (
-      <div className="flex h-screen items-center justify-center bg-background">
-        <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+      <div className="flex h-[100dvh] items-center justify-center bg-bg-subtle">
+        <div className="h-8 w-8 animate-spin rounded-full border-4 border-indigo-600 border-t-transparent" />
       </div>
     );
   }
 
   if (!isAuthenticated || !user) {
-    // Redirect to login, storing the current URL for redirect after login
     return <Navigate to="/login" state={{ from: location }} replace />;
   }
 
   if (allowedRoles && !allowedRoles.includes(user.role)) {
-    // Role not authorized, redirect to main/dashboard
-    return <Navigate to="/" replace />;
+    const fallbackRoute = user.role === 'spouse_viewer' ? '/spouse' : '/';
+    return <Navigate to={fallbackRoute} replace />;
   }
 
   return <>{children}</>;
