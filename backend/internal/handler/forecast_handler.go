@@ -2,6 +2,7 @@ package handler
 
 import (
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -23,6 +24,7 @@ func (h *ForecastHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	{
 		forecastGroup.GET("/monthly", h.GetMonthlyForecast)
 		forecastGroup.GET("/daily", h.GetDailyProjections)
+		forecastGroup.GET("/backtest", h.GetBacktest)
 	}
 }
 
@@ -70,4 +72,25 @@ func (h *ForecastHandler) GetDailyProjections(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"data": res,
 	})
+}
+
+func (h *ForecastHandler) GetBacktest(c *gin.Context) {
+	userID := c.GetString("user_id")
+	months := 6
+	if q := c.Query("months"); q != "" {
+		if n, err := strconv.Atoi(q); err == nil {
+			months = n
+		}
+	}
+	res, err := h.forecastService.GetBacktest(c.Request.Context(), userID, months)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"code":    "INTERNAL_SERVER_ERROR",
+				"message": err.Error(),
+			},
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": res})
 }

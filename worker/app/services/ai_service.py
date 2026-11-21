@@ -1,6 +1,7 @@
 import json
 import logging
 import base64
+import os
 from typing import Dict, Any, List, Optional
 import httpx
 
@@ -76,6 +77,58 @@ def _extract_json_text(content: str) -> Dict[str, Any]:
     return json.loads(cleaned)
 
 
+def openai_compatible_base_url() -> str:
+    """Base URL for OpenAI-compatible providers (OpenAI, 9r, LiteLLM, etc)."""
+    return (
+        os.getenv("OPENAI_BASE_URL")
+        or os.getenv("AI_BASE_URL")
+        or "https://api.openai.com/v1"
+    ).rstrip("/")
+
+
+def openai_chat_completions_url() -> str:
+    return f"{openai_compatible_base_url()}/chat/completions"
+
+
+async def call_openai_chat(
+    *,
+    api_key: str,
+    model: str,
+    messages: list,
+    temperature: float = 0.7,
+    timeout: float = 30.0,
+    response_format: Optional[dict] = None,
+    max_tokens: Optional[int] = None,
+) -> str:
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload: Dict[str, Any] = {
+        "model": model,
+        "messages": messages,
+        "temperature": temperature,
+    }
+    if response_format is not None:
+        payload["response_format"] = response_format
+    if max_tokens is not None:
+        payload["max_tokens"] = max_tokens
+
+    url = openai_chat_completions_url()
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        resp = await client.post(url, json=payload, headers=headers)
+        # Some OpenAI-compatible proxies reject response_format; retry without it.
+        if resp.status_code >= 400 and response_format is not None:
+            logger.warning(
+                "OpenAI-compatible chat failed with response_format (%s). Retrying without it.",
+                resp.status_code,
+            )
+            payload.pop("response_format", None)
+            resp = await client.post(url, json=payload, headers=headers)
+        resp.raise_for_status()
+        result_json = resp.json()
+        return result_json["choices"][0]["message"]["content"]
+
 # 1. OCR Enhancement Service
 async def enhance_ocr_llm(
     ocr_result: Dict[str, Any],
@@ -119,15 +172,11 @@ async def enhance_ocr_llm(
     try:
         parsed_data: Optional[Dict[str, Any]] = None
         if provider == "openai":
-            headers = {
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json"
-            }
             llm_model = model_name if model_name != "default" else "gpt-4o-mini"
-            payload = {
-                "model": llm_model,
-                "response_format": {"type": "json_object"},
-                "messages": [
+            content = await call_openai_chat(
+                api_key=api_key,
+                model=llm_model,
+                messages=[
                     {
                         "role": "user",
                         "content": [
@@ -136,18 +185,18 @@ async def enhance_ocr_llm(
                                 "type": "image_url",
                                 "image_url": {
                                     "url": f"data:{mime_type};base64,{clean_b64}"
-                                }
-                            }
+                                },
+                            },
                         ]
+                        if clean_b64
+                        else prompt,
                     }
                 ],
-                "temperature": 0.1
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-                parsed_data = _extract_json_text(content)
+                temperature=0.1,
+                timeout=45.0,
+                response_format={"type": "json_object"},
+            )
+            parsed_data = _extract_json_text(content)
         elif provider == "anthropic":
             headers = {
                 "x-api-key": api_key,
@@ -324,17 +373,19 @@ async def categorize_transaction(
         
         if provider == "openai":
             llm_model = model_name if model_name != "default" else "gpt-4o-mini"
-            payload = {
-                "model": llm_model,
-                "response_format": {"type": "json_object"},
-                "messages": [{"role": "user", "content": prompt}],
-                "temperature": 0.0
-            }
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-                return json.loads(content)
+            content = await call_openai_chat(
+                api_key=api_key,
+                model=llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                timeout=30.0,
+                response_format={"type": "json_object"},
+            )
+            if "```json" in content:
+                content = content.split("```json")[1].split("```")[0].strip()
+            elif "```" in content:
+                content = content.split("```")[1].split("```")[0].strip()
+            return json.loads(content.strip())
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
             llm_model = model_name if model_name != "default" else "claude-3-haiku-20240307"
@@ -494,19 +545,17 @@ async def chat_advisor(
 
         if provider == "openai":
             llm_model = model_name if model_name != "default" else "gpt-4o-mini"
-            payload = {
-                "model": llm_model,
-                "messages": [
+            content = await call_openai_chat(
+                api_key=api_key,
+                model=llm_model,
+                messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message}
+                    {"role": "user", "content": message},
                 ],
-                "temperature": 0.7
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post("https://api.openai.com/v1/chat/completions", json=payload, headers=headers)
-                resp.raise_for_status()
-                content = resp.json()["choices"][0]["message"]["content"]
-                return parse_advisor_response(content)
+                temperature=0.7,
+                timeout=60.0,
+            )
+            return parse_advisor_response(content)
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
             llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"

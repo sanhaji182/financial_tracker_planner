@@ -212,7 +212,7 @@ export function createInitialLocalDB(): LocalDatabase {
         title: 'Mode Offline Aktif',
         message:
           'Seluruh data Anda tersimpan aman langsung di memori perangkat. Gunakan menu Backup & Restore secara berkala untuk menyimpan salinan data.',
-        action_url: '/backup',
+        action_url: '/settings/backup',
         action_label: 'Buka Backup',
         is_read: false,
         is_dismissed: false,

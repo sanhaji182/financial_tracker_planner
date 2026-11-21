@@ -108,6 +108,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
       ) : null}
 
       <aside
+        id="app-sidebar"
+        aria-label="Navigasi utama"
         className={`
           fixed inset-y-0 left-0 z-50 lg:z-30 h-[100dvh] pt-safe pb-safe bg-white dark:bg-slate-900
           border-r border-slate-200/80 dark:border-slate-800
@@ -340,7 +342,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             }`}
           >
             <div className="flex items-center gap-2.5 min-w-0">
-              <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200/80 dark:border-indigo-500/30 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-xs shrink-0">
+              <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-500/20 border border-indigo-200/80 dark:border-indigo-500/30 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-xs shrink-0" aria-hidden="true">
                 {user?.name ? user.name[0].toUpperCase() : 'U'}
               </div>
               {!sidebarCollapsed && (
@@ -354,16 +356,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                 </div>
               )}
             </div>
-
             {!sidebarCollapsed && (
               <button
                 type="button"
                 onClick={handleLogout}
                 className="p-1.5 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 dark:hover:bg-rose-950/30 transition-colors shrink-0"
                 title="Keluar"
-                aria-label="Keluar"
+                aria-label="Keluar dari akun"
               >
-                <LogOut className="w-4 h-4" />
+                <LogOut className="w-4 h-4" aria-hidden="true" />
               </button>
             )}
           </div>

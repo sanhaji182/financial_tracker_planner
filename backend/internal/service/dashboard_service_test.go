@@ -104,9 +104,9 @@ func TestDashboardService(t *testing.T) {
 			t.Fatalf("failed to get dashboard data: %v", err)
 		}
 
-		// NetWorth calculation is:
-		// Assets (12,000,000 in Gold) - Debts (2,000,000 in Gadget Installment) = 10,000,000
-		expectedNetWorth := 10000000.0
+		// Canonical net worth includes cash accounts plus independently valued
+		// assets, less liabilities: 5m cash + 12m gold - 2m debt = 15m.
+		expectedNetWorth := 15000000.0
 		if resp.NetWorth.Value != expectedNetWorth {
 			t.Errorf("expected net worth %f, got %f", expectedNetWorth, resp.NetWorth.Value)
 		}
@@ -117,6 +117,20 @@ func TestDashboardService(t *testing.T) {
 
 		if resp.TotalDebts.TotalOutstanding != 2000000 {
 			t.Errorf("expected total debts 2000000, got %f", resp.TotalDebts.TotalOutstanding)
+		}
+
+		// P1: reconciliation confidence fields always present
+		if resp.HealthScore.ReconciliationConfidence < 0.7 || resp.HealthScore.ReconciliationConfidence > 1.0 {
+			t.Errorf("reconciliation confidence out of range: %f", resp.HealthScore.ReconciliationConfidence)
+		}
+		if resp.HealthScore.ReconciliationRate < 0 || resp.HealthScore.ReconciliationRate > 1 {
+			t.Errorf("reconciliation rate out of range: %f", resp.HealthScore.ReconciliationRate)
+		}
+		if resp.SafeToSpendScenarios.Conservative.Value < 0 {
+			t.Errorf("conservative STS should be floored at 0")
+		}
+		if resp.DataSufficiency == nil {
+			t.Error("expected data_sufficiency payload")
 		}
 	})
 

@@ -179,11 +179,19 @@ export const ScenariosPage: React.FC = () => {
     }
   };
 
-  const metricConfig = {
-    ending_balance: { label: 'Saldo Akhir Bulanan', format: 'currency' },
-    total_debts: { label: 'Outstanding Utang', format: 'currency' },
-    ef_coverage: { label: 'Dana Darurat (Bulan)', format: 'float' },
-    cash_runway: { label: 'Cash Runway (Bulan)', format: 'float' },
+  // Metric visual configuration (only metric objects are rendered)
+  const metricConfig: Record<
+    string,
+    { label: string; isInverse: boolean; format: 'currency' | 'float' }
+  > = {
+    ending_balance: { label: 'Saldo Akhir Bulanan', isInverse: false, format: 'currency' },
+    total_debts: { label: 'Outstanding Utang', isInverse: true, format: 'currency' },
+    ef_coverage: { label: 'Dana Darurat (Bulan)', isInverse: false, format: 'float' },
+    cash_runway: { label: 'Cash Runway (Bulan)', isInverse: false, format: 'float' },
+    debt_interest_cost: { label: 'Estimasi Bunga Utang (12 bln)', isInverse: true, format: 'currency' },
+    goal_funding_gap: { label: 'Gap Pendanaan Tujuan / bln', isInverse: true, format: 'currency' },
+    goal_delay_months: { label: 'Telat Tujuan (bulan)', isInverse: true, format: 'float' },
+    downside_runway: { label: 'Runway jika income −20%', isInverse: false, format: 'float' },
   };
 
   return (
@@ -467,6 +475,22 @@ export const ScenariosPage: React.FC = () => {
                     </tbody>
                   </table>
                 </div>
+
+                {/* Notes + assumptions (scenario-v1) */}
+                {(result.notes?.length || result.assumptions?.length) ? (
+                  <div className="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2 text-xs text-slate-500">
+                    {result.notes && result.notes.length > 0 && (
+                      <ul className="list-disc pl-4 space-y-1">
+                        {result.notes.map((n, i) => <li key={i}>{n}</li>)}
+                      </ul>
+                    )}
+                    {result.formula_version && (
+                      <p className="text-[10px] text-slate-400">
+                        Formula {result.formula_version} · horizon {result.horizon_months || 12} bln · estimasi edukatif
+                      </p>
+                    )}
+                  </div>
+                ) : null}
 
                 {isOwner && (
                   <form

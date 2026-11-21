@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type ClosingService interface {
@@ -76,10 +77,13 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		return nil, fmt.Errorf("monthly closing for month %s already generated", req.Month)
 	}
 
-	// 2. Fetch Accounts
+	// 2. Fetch Accounts (balances converted to IDR for display consistency)
 	accounts := make([]dto.ClosingAccount, 0)
 	rows, err := s.dbPool.Query(ctx, `
-		SELECT id, name, balance FROM accounts WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
+		SELECT a.id, a.name, a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL AND a.is_active = true
 	`, ownerID)
 	if err == nil {
 		for rows.Next() {
@@ -91,48 +95,76 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		rows.Close()
 	}
 
-	// Total Cash
+	// Total Cash (IDR-normalized)
 	var totalCash float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND type IN ('bank', 'e_wallet', 'cash') AND deleted_at IS NULL AND is_active = true
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.type IN ('bank', 'e_wallet', 'cash')
+		  AND a.deleted_at IS NULL AND a.is_active = true
 	`, ownerID).Scan(&totalCash)
 
-	// Total Account Balances (Cash + Invest + Deposits)
+	// Total Account Balances (Cash + Invest + Deposits), IDR-normalized
+	// Exclude accounts already linked to an asset to avoid double-counting.
 	var totalAccounts float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND deleted_at IS NULL AND is_active = true
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL AND a.is_active = true
+		  AND NOT EXISTS (
+			SELECT 1 FROM assets linked
+			WHERE linked.linked_account_id = a.id AND linked.deleted_at IS NULL
+		  )
 	`, ownerID).Scan(&totalAccounts)
 
-	// Total Assets Valuation
+	// Total Assets Valuation (IDR-normalized; linked-account assets use account balance)
 	var totalAssets float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(current_value), 0) FROM assets WHERE user_id = $1 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(
+			CASE
+				WHEN a.linked_account_id IS NOT NULL THEN ac.balance * COALESCE(curr_ac.exchange_rate_to_idr, 1.0)
+				ELSE a.current_value * COALESCE(curr_a.exchange_rate_to_idr, 1.0)
+			END
+		), 0)
+		FROM assets a
+		LEFT JOIN accounts ac ON a.linked_account_id = ac.id
+		LEFT JOIN currencies curr_ac ON ac.currency = curr_ac.code
+		LEFT JOIN currencies curr_a ON a.currency = curr_a.code
+		WHERE a.user_id = $1 AND a.deleted_at IS NULL
 	`, ownerID).Scan(&totalAssets)
 
-	// Total Debts & Min Payments
+	// Total Debts & Min Payments (IDR-normalized)
 	var totalDebts, totalMinDebtPayments float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(outstanding_balance), 0), COALESCE(SUM(minimum_payment), 0) FROM debts
-		WHERE user_id = $1 AND status = 'active' AND deleted_at IS NULL
+		SELECT
+			COALESCE(SUM(d.outstanding_balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0),
+			COALESCE(SUM(d.minimum_payment * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM debts d
+		LEFT JOIN currencies c ON d.currency = c.code
+		WHERE d.user_id = $1 AND d.status = 'active' AND d.deleted_at IS NULL
 	`, ownerID).Scan(&totalDebts, &totalMinDebtPayments)
 
-	// Net Worth
+	// Net Worth (canonical: independent assets + unlinked accounts − debts)
 	netWorth := totalAccounts + totalAssets - totalDebts
 
-	// 3. Transactions (Income & Expense)
+	// 3. Transactions (Income & Expense) — IDR-normalized
 	var totalIncome, totalExpense float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions
-		WHERE user_id = $1 AND type = 'income' AND status = 'confirmed'
-		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr, t.exchange_rate, 1.0)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON t.currency = c.code
+		WHERE t.user_id = $1 AND t.type = 'income' AND t.status = 'confirmed'
+		  AND TO_CHAR(t.date, 'YYYY-MM') = $2 AND t.deleted_at IS NULL
 	`, ownerID, req.Month).Scan(&totalIncome)
 
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount), 0) FROM transactions
-		WHERE user_id = $1 AND type = 'expense' AND status = 'confirmed'
-		  AND TO_CHAR(date, 'YYYY-MM') = $2 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(t.amount * COALESCE(c.exchange_rate_to_idr, t.exchange_rate, 1.0)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON t.currency = c.code
+		WHERE t.user_id = $1 AND t.type = 'expense' AND t.status = 'confirmed'
+		  AND TO_CHAR(t.date, 'YYYY-MM') = $2 AND t.deleted_at IS NULL
 	`, ownerID, req.Month).Scan(&totalExpense)
 
 	// 4. Calculate DTI Ratio
@@ -141,15 +173,18 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		dtiRatio = (totalMinDebtPayments / totalIncome) * 100
 	}
 
-	// 5. Emergency Fund & Health Score Calculations
-	var monthlyLivingCost float64
-	var targetMonths int
+	// 5. Emergency Fund & Health Score — kernel ef-v1 for target/coverage.
+	var livingCostOverride float64
+	var configuredTargetMonths int
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(monthly_living_cost_override, 0), target_months
+		SELECT COALESCE(monthly_living_cost_override, 0), COALESCE(target_months, 6)
 		FROM emergency_fund_configs WHERE user_id = $1
-	`, ownerID).Scan(&monthlyLivingCost, &targetMonths)
+	`, ownerID).Scan(&livingCostOverride, &configuredTargetMonths)
 
-	if monthlyLivingCost <= 0 {
+	var monthlyLivingCost float64
+	if livingCostOverride > 0 {
+		monthlyLivingCost = livingCostOverride
+	} else {
 		// Fallback to 3-month average variable expenses
 		_ = s.dbPool.QueryRow(ctx, `
 			SELECT COALESCE(AVG(spent), 0)
@@ -163,42 +198,60 @@ func (s *closingService) GenerateClosing(ctx context.Context, userID string, req
 		`, ownerID).Scan(&monthlyLivingCost)
 	}
 
-	if targetMonths <= 0 {
-		targetMonths = 12
+	if configuredTargetMonths <= 0 {
+		configuredTargetMonths = kernel.EFDefaultTargetMonths
 	}
 
 	var efTotal float64
 	_ = s.dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(balance), 0) FROM accounts
-		WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts a
+		LEFT JOIN currencies c ON a.currency = c.code
+		WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 	`, ownerID).Scan(&efTotal)
 
-	efCoverageMonths := 0.0
-	if monthlyLivingCost > 0 {
-		efCoverageMonths = efTotal / monthlyLivingCost
+	// Income stability for adaptive target (last 3 calendar months).
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
+	var minIncome, maxIncome float64
+	_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
+		SELECT SUM(t.amount * COALESCE(c.exchange_rate_to_idr,t.exchange_rate,1)) monthly
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		GROUP BY DATE_TRUNC('month',t.date)) x`, ownerID, threeMonthsAgo, startOfMonth).Scan(&minIncome, &maxIncome)
+
+	efRes := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   now,
+		EFBalance:              efTotal,
+		MonthlyLivingCost:      monthlyLivingCost,
+		ConfiguredTargetMonths: configuredTargetMonths,
+		UseAdaptive:            livingCostOverride <= 0,
+		MinMonthlyIncome:       minIncome,
+		MaxMonthlyIncome:       maxIncome,
+	})
+	efCoverageMonths := efRes.CoverageMonths
+	targetMonths := efRes.TargetMonths
+	if targetMonths <= 0 {
+		targetMonths = kernel.EFDefaultTargetMonths
 	}
 
-	// Health score components
-	dtiScore := 0.0
-	if dtiRatio < 20 {
-		dtiScore = 100
-	} else if dtiRatio <= 60 {
-		dtiScore = 100 - (dtiRatio-20)*(100.0/40.0)
-	}
-
-	efScore := math.Min(100, (efCoverageMonths/float64(targetMonths))*100)
-	cashScore := math.Min(100, (totalCash/monthlyLivingCost)*50.0)
-
-	savingsThisMonth := totalIncome - totalExpense
-	if savingsThisMonth < 0 {
-		savingsThisMonth = 0
-	}
-	savingsRateScore := 0.0
-	if totalIncome > 0 {
-		savingsRateScore = math.Min(100, (savingsThisMonth/totalIncome)*200)
-	}
-
-	healthScoreVal := int(math.Round((0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)))
+	// Health score via shared health-v1 kernel (no false-healthy without income).
+	health := kernel.ComputeHealthScore(kernel.HealthInputs{
+		AsOf:                 now,
+		IncomeThisMonth:      totalIncome,
+		ExpenseThisMonth:     totalExpense,
+		TotalMinDebtPayments: totalMinDebtPayments,
+		CashAvailable:        totalCash,
+		MonthlyLivingCost:    monthlyLivingCost,
+		EFCoverageMonths:     efCoverageMonths,
+		EFTargetMonths:       float64(targetMonths),
+		ReconciliationRate:   1.0, // closing snapshot is post-reconciliation by process
+		MinMonthlyIncome:     minIncome,
+		MaxMonthlyIncome:     maxIncome,
+	})
+	dtiRatio = health.DTIRatio
+	healthScoreVal := health.Score
 
 	// 6. Budgets Snapshot
 	budgetCategories := make([]dto.ClosingCategoryBudget, 0)

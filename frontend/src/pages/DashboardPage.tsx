@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { useNavigate, Navigate } from 'react-router-dom';
+import { useNavigate, Navigate, Link } from 'react-router-dom';
 import { useDashboardData } from '../hooks/useDashboard';
+import { useDataQuality } from '../hooks/useDataQuality';
+import { gateFor } from '../services/dataQuality';
 import { useAuthStore } from '../stores/authStore';
 import { useQuickActionStore } from '../stores/useQuickActionStore';
 import { getCurrentLocalMonth } from '../utils/date';
@@ -8,6 +10,7 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { StatCard } from '../components/ui/StatCard';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import {
   TrendingUp,
   TrendingDown,
@@ -48,6 +51,7 @@ export const DashboardPage: React.FC = () => {
 
   // Call ALL hooks unconditionally before role checks
   const { data: dash, isLoading, isError, refetch } = useDashboardData();
+  const { data: dq } = useDataQuality();
   const [activityTab, setActivityTab] = useState<'insights' | 'alerts'>('insights');
   const [topInsights, setTopInsights] = useState<MonthlyInsight[]>([]);
   const [animatedNetWorth, setAnimatedNetWorth] = useState(0);
@@ -144,6 +148,10 @@ export const DashboardPage: React.FC = () => {
         return '#EF4444';
     }
   };
+
+  if (user?.role === 'spouse_viewer') {
+    return <Navigate to="/spouse" replace />;
+  }
 
   if (isError) {
     return (
@@ -377,6 +385,28 @@ export const DashboardPage: React.FC = () => {
           <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
             Ringkasan kekayaan, arus kas, dan prioritas finansial keluarga Anda bulan ini.
           </p>
+          {(dash.as_of || dash.formula_version) && (
+            <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500 flex items-center gap-1 flex-wrap">
+              <Info className="h-3 w-3 shrink-0" />
+              <span>
+                Estimasi berdasarkan data hingga {dash.as_of ? new Date(dash.as_of).toLocaleString('id-ID') : 'sekarang'}
+                {dash.formula_version ? ` · formula ${dash.formula_version}` : ''}
+                {dash.data_sufficiency?.confidence ? ` · keyakinan ${dash.data_sufficiency.confidence}` : ''}. Bukan nasihat investasi.
+              </span>
+            </p>
+          )}
+          {dash.assumptions && dash.assumptions.length > 0 && (
+            <details className="mt-1 text-[10px] text-slate-400 dark:text-slate-500">
+              <summary className="cursor-pointer font-semibold hover:text-slate-600 dark:hover:text-slate-300">
+                Asumsi kalkulasi
+              </summary>
+              <ul className="mt-1 list-disc pl-4 space-y-0.5">
+                {dash.assumptions.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
 
         <div className="flex items-center gap-2 flex-wrap">
@@ -406,6 +436,41 @@ export const DashboardPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {/* Data Quality banner */}
+      {dq && (dq.overall_confidence !== 'high' || (dq.issues || []).length > 0) && (
+        <Card className={`p-4 flex items-start gap-3 border ${
+          dq.overall_confidence === 'low'
+            ? 'border-rose-200 bg-rose-50/70 dark:border-rose-900 dark:bg-rose-950/20'
+            : 'border-amber-200 bg-amber-50/70 dark:border-amber-900 dark:bg-amber-950/20'
+        }`}>
+          <AlertTriangle className={`h-5 w-5 shrink-0 mt-0.5 ${
+            dq.overall_confidence === 'low' ? 'text-rose-600' : 'text-amber-600'
+          }`} />
+          <div className="flex-1 space-y-1 min-w-0">
+            <p className="text-xs font-bold text-slate-800 dark:text-slate-100">
+              Kualitas data: {dq.grade} ({dq.overall_score}/100) · keyakinan {dq.overall_confidence}
+            </p>
+            <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400">
+              {(dq.decision_metrics_hidden || []).length > 0
+                ? `Metrik disembunyikan: ${(dq.decision_metrics_hidden || []).join(', ')}. `
+                : ''}
+              {(dq.decision_metrics_degraded || []).length > 0
+                ? `Degraded: ${(dq.decision_metrics_degraded || []).join(', ')}. `
+                : ''}
+              {(dq.missing_inputs || []).length > 0
+                ? `Lengkapi: ${(dq.missing_inputs || []).join(', ')}.`
+                : 'Perbaiki isu data agar angka decision-support lebih tepercaya.'}
+            </p>
+          </div>
+          <Link
+            to="/data-quality"
+            className="shrink-0 text-[11px] font-bold text-indigo-600 dark:text-indigo-400 hover:underline flex items-center gap-1"
+          >
+            Data Quality <ArrowRight className="h-3 w-3" />
+          </Link>
+        </Card>
+      )}
 
       {/* Row 1 — Top Summary Bar */}
       <div
@@ -454,68 +519,91 @@ export const DashboardPage: React.FC = () => {
         {!isSimple && (
           <>
             <StatCard
-              label="Debt-to-Income (DTI)"
-              value={`${dash.dti_ratio.toFixed(1)}%`}
+              label={
+                <span className="inline-flex items-center gap-1">
+                  Debt-to-Income (DTI)
+                  <MetricHelp metric="dti" />
+                </span>
+              }
+              value={
+                gateFor(dq, 'dti')?.visible === false
+                  ? 'Data belum cukup'
+                  : `${dash.dti_ratio.toFixed(1)}%`
+              }
               badge={
-                <Badge variant={getDtiBadgeColor(dash.dti_status)}>
-                  {getDtiLabel(dash.dti_status, dash.dti_ratio)}
-                </Badge>
+                gateFor(dq, 'dti')?.visible === false ? (
+                  <Badge variant="warning">Perlu Income</Badge>
+                ) : (
+                  <Badge variant={getDtiBadgeColor(dash.dti_status)}>
+                    {getDtiLabel(dash.dti_status, dash.dti_ratio)}
+                  </Badge>
+                )
               }
               icon={<Activity className="h-4 w-4" />}
               iconTone="amber"
-              onClick={() => navigate('/debts/avalanche')}
+              onClick={() => navigate(gateFor(dq, 'dti')?.visible === false ? '/data-quality' : '/debts/avalanche')}
             />
 
             {/* Financial Health Score with Radial Ring */}
             <div
-              onClick={() => navigate('/emergency-fund')}
+              onClick={() => navigate(gateFor(dq, 'health_score')?.visible === false ? '/data-quality' : '/emergency-fund')}
               role="button"
               tabIndex={0}
               onKeyDown={(e) => e.key === 'Enter' && navigate('/emergency-fund')}
               className="col-span-2 sm:col-span-1 rounded-2xl border border-slate-200/80 dark:border-slate-800 bg-bg-base p-4 sm:p-5 shadow-[var(--shadow-card)] card-interactive cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 flex flex-col justify-between gap-3"
             >
-              <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
+              <span className="text-xs font-medium text-slate-500 dark:text-slate-400 inline-flex items-center gap-1">
                 Financial Health Score
+                <MetricHelp metric="health_score" />
               </span>
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-money text-xl sm:text-[22px] font-bold text-slate-900 dark:text-white leading-none">
-                    {dash.health_score.score}
-                    <span className="text-xs font-normal text-slate-400 ml-0.5">/100</span>
+              {gateFor(dq, 'health_score')?.visible === false ? (
+                <div className="space-y-1">
+                  <span className="text-sm font-bold text-slate-400 block">Disembunyikan</span>
+                  <span className="text-[11px] font-semibold text-indigo-600 dark:text-indigo-400">
+                    Lengkapi di Data Quality →
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="font-money text-xl sm:text-[22px] font-bold text-slate-900 dark:text-white leading-none">
+                      {dash.health_score.score}
+                      <span className="text-xs font-normal text-slate-400 ml-0.5">/100</span>
+                    </div>
+                    <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 block mt-1.5">
+                      {dash.health_score.rating}
+                    </span>
                   </div>
-                  <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400 block mt-1.5">
-                    {dash.health_score.rating}
-                  </span>
+                  <div className="relative h-12 w-12 flex items-center justify-center shrink-0">
+                    <svg className="h-12 w-12 -rotate-90" viewBox="0 0 44 44">
+                      <circle
+                        cx="22"
+                        cy="22"
+                        r={gaugeRadius}
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="4"
+                        className="text-slate-100 dark:text-slate-800"
+                      />
+                      <circle
+                        cx="22"
+                        cy="22"
+                        r={gaugeRadius}
+                        fill="none"
+                        stroke={gaugeStroke}
+                        strokeWidth="4"
+                        strokeDasharray={gaugeCircumference}
+                        strokeDashoffset={gaugeOffset}
+                        strokeLinecap="round"
+                        className="transition-all duration-700"
+                      />
+                    </svg>
+                    <span className="absolute text-[10px] font-bold text-slate-700 dark:text-slate-200 font-mono">
+                      {scoreVal}
+                    </span>
+                  </div>
                 </div>
-                <div className="relative h-12 w-12 flex items-center justify-center shrink-0">
-                  <svg className="h-12 w-12 -rotate-90" viewBox="0 0 44 44">
-                    <circle
-                      cx="22"
-                      cy="22"
-                      r={gaugeRadius}
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="4"
-                      className="text-slate-100 dark:text-slate-800"
-                    />
-                    <circle
-                      cx="22"
-                      cy="22"
-                      r={gaugeRadius}
-                      fill="none"
-                      stroke={gaugeStroke}
-                      strokeWidth="4"
-                      strokeDasharray={gaugeCircumference}
-                      strokeDashoffset={gaugeOffset}
-                      strokeLinecap="round"
-                      className="transition-all duration-700"
-                    />
-                  </svg>
-                  <span className="absolute text-[10px] font-bold text-slate-700 dark:text-slate-200 font-mono">
-                    {scoreVal}
-                  </span>
-                </div>
-              </div>
+              )}
             </div>
           </>
         )}
@@ -607,8 +695,9 @@ export const DashboardPage: React.FC = () => {
                 className="cursor-pointer"
               >
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+                  <span className="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider inline-flex items-center gap-1">
                     Proyeksi Akhir Bulan
+                    <MetricHelp metric="forecast" />
                   </span>
                   <span className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 inline-flex items-center gap-1">
                     Detail Forecast <ArrowRight className="h-3 w-3" />
@@ -624,14 +713,37 @@ export const DashboardPage: React.FC = () => {
                     </span>
                   </div>
                   <div className="rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-900/40 p-3.5">
-                    <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 block">
+                    <span className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 inline-flex items-center gap-1">
                       Safe-to-Spend
+                      <MetricHelp metric="safe_to_spend" />
                     </span>
                     <span className="font-money text-base sm:text-lg font-bold text-emerald-700 dark:text-emerald-300 mt-1 block truncate">
                       {dash.safe_to_spend.formatted_value}
                     </span>
                   </div>
                 </div>
+                {dash.safe_to_spend_scenarios && (
+                  <div className="grid grid-cols-3 gap-2 mt-2.5 text-[10px]">
+                    <div className="rounded-lg bg-slate-50 dark:bg-slate-800/40 px-2.5 py-1.5">
+                      <span className="text-slate-400 block">Konservatif</span>
+                      <span className="font-mono font-bold text-slate-700 dark:text-slate-200">
+                        {dash.safe_to_spend_scenarios.conservative.formatted_value}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-indigo-50/60 dark:bg-indigo-950/30 px-2.5 py-1.5">
+                      <span className="text-indigo-500 block">Expected</span>
+                      <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">
+                        {dash.safe_to_spend_scenarios.expected.formatted_value}
+                      </span>
+                    </div>
+                    <div className="rounded-lg bg-emerald-50/60 dark:bg-emerald-950/30 px-2.5 py-1.5">
+                      <span className="text-emerald-600 block">Optimis</span>
+                      <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
+                        {dash.safe_to_spend_scenarios.optimistic.formatted_value}
+                      </span>
+                    </div>
+                  </div>
+                )}
               </Card>
             </div>
           </div>

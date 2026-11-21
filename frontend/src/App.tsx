@@ -30,6 +30,7 @@ const BillsPage = React.lazy(() => import('./pages/BillsPage').then(m => ({ defa
 const ForecastPage = React.lazy(() => import('./pages/ForecastPage').then(m => ({ default: m.ForecastPage })));
 const EmergencyFundPage = React.lazy(() => import('./pages/EmergencyFundPage').then(m => ({ default: m.EmergencyFundPage })));
 const AllocationPage = React.lazy(() => import('./pages/AllocationPage').then(m => ({ default: m.AllocationPage })));
+const DataQualityPage = React.lazy(() => import('./pages/DataQualityPage').then(m => ({ default: m.DataQualityPage })));
 const BudgetsPage = React.lazy(() => import('./pages/BudgetsPage').then(m => ({ default: m.BudgetsPage })));
 const MonthlyClosingPage = React.lazy(() => import('./pages/MonthlyClosingPage').then(m => ({ default: m.MonthlyClosingPage })));
 const AlertCenterPage = React.lazy(() => import('./pages/AlertCenterPage'));
@@ -42,6 +43,10 @@ const GoalsPage = React.lazy(() => import('./pages/GoalsPage').then(m => ({ defa
 const SubscriptionsPage = React.lazy(() => import('./pages/SubscriptionsPage').then(m => ({ default: m.SubscriptionsPage })));
 const InsightsPage = React.lazy(() => import('./pages/InsightsPage'));
 const ScenariosPage = React.lazy(() => import('./pages/ScenariosPage').then(m => ({ default: m.ScenariosPage })));
+const ProtectionPage = React.lazy(() => import('./pages/ProtectionPage').then(m => ({ default: m.ProtectionPage })));
+const RetirementPage = React.lazy(() => import('./pages/RetirementPage').then(m => ({ default: m.RetirementPage })));
+const MonthlyReviewPage = React.lazy(() => import('./pages/MonthlyReviewPage').then(m => ({ default: m.MonthlyReviewPage })));
+const PrivacyPage = React.lazy(() => import('./pages/PrivacyPage').then(m => ({ default: m.PrivacyPage })));
 const AutomationPage = React.lazy(() => import('./pages/AutomationPage').then(m => ({ default: m.AutomationPage })));
 const CurrencyPage = React.lazy(() => import('./pages/CurrencyPage').then(m => ({ default: m.CurrencyPage })));
 const AISettingsPage = React.lazy(() => import('./pages/AISettingsPage'));
@@ -186,12 +191,24 @@ const App: React.FC = () => {
               <Route path="forecast" element={<ForecastPage />} />
               <Route path="emergency-fund" element={<EmergencyFundPage />} />
               <Route path="allocation" element={<AllocationPage />} />
+              <Route path="data-quality" element={<DataQualityPage />} />
               <Route path="budgets" element={<BudgetsPage />} />
               <Route path="closing" element={<MonthlyClosingPage />} />
               <Route path="goals" element={<GoalsPage />} />
               <Route path="subscriptions" element={<SubscriptionsPage />} />
               <Route path="insights" element={<InsightsPage />} />
               <Route path="scenarios" element={<ScenariosPage />} />
+              <Route path="protection" element={<ProtectionPage />} />
+              <Route path="retirement" element={<RetirementPage />} />
+              <Route path="review" element={<MonthlyReviewPage />} />
+              <Route
+                path="settings/privacy"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <PrivacyPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="alerts" element={<AlertCenterPage />} />
               <Route path="documents" element={<DocumentCenterPage />} />
               <Route

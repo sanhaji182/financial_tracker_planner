@@ -209,15 +209,16 @@ export const AuditLogPage: React.FC = () => {
             />
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
+          <div className="overflow-x-auto -mx-1 px-1" role="region" aria-label="Audit trail" tabIndex={0}>
+            <table className="w-full text-left border-collapse min-w-[40rem]">
+              <caption className="sr-only">Log audit aktivitas pengguna</caption>
               <thead>
                 <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-[11px] font-semibold text-slate-500 uppercase tracking-wider">
-                  <th className="px-5 py-3">Waktu</th>
-                  <th className="px-5 py-3">User</th>
-                  <th className="px-5 py-3">Entitas</th>
-                  <th className="px-5 py-3">Aksi</th>
-                  <th className="px-5 py-3">Detail Perubahan</th>
+                  <th scope="col" className="px-5 py-3 sticky left-0 bg-slate-50/95 dark:bg-slate-900/95 z-10">Waktu</th>
+                  <th scope="col" className="px-5 py-3">User</th>
+                  <th scope="col" className="px-5 py-3">Entitas</th>
+                  <th scope="col" className="px-5 py-3">Aksi</th>
+                  <th scope="col" className="px-5 py-3">Detail Perubahan</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

@@ -9,6 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 	"github.com/user/financial-os/internal/model"
 )
 
@@ -19,6 +20,7 @@ type GoalService interface {
 	DeleteGoal(ctx context.Context, userID string, id string) error
 	ListGoals(ctx context.Context, userID string) ([]dto.GoalResponse, error)
 	ContributeToGoal(ctx context.Context, userID string, id string, req *dto.GoalContributionRequest) error
+	GetGoalPlan(ctx context.Context, userID string) (*dto.GoalPlanResponse, error)
 }
 
 type goalService struct {
@@ -159,9 +161,10 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 
 	if g.Type == "emergency_fund" {
 		_ = s.dbPool.QueryRow(ctx, `
-			SELECT COALESCE(SUM(balance), 0)
-			FROM accounts
-			WHERE user_id = $1 AND is_emergency_fund = true AND is_active = true AND deleted_at IS NULL
+			SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr, 1.0)), 0)
+			FROM accounts a
+			LEFT JOIN currencies c ON a.currency = c.code
+			WHERE a.user_id = $1 AND a.is_emergency_fund = true AND a.is_active = true AND a.deleted_at IS NULL
 		`, ownerID).Scan(&currentAmt)
 	} else if g.Type == "debt_payoff" && g.LinkedDebtID != nil {
 		var originalAmt, outstandingAmt float64
@@ -286,7 +289,7 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		notesVal = *g.Notes
 	}
 
-	return &dto.GoalResponse{
+	resp := &dto.GoalResponse{
 		ID:                         g.ID,
 		UserID:                     g.UserID,
 		Name:                       g.Name,
@@ -309,7 +312,9 @@ func (s *goalService) GetGoalByID(ctx context.Context, userID string, id string)
 		Priority:                   goalPriority(g.Type),
 		CreatedAt:                  g.CreatedAt,
 		ContributionHistory:        contribHistory,
-	}, nil
+	}
+	enrichGoalAffordability(resp, ctx, s.dbPool, ownerID)
+	return resp, nil
 }
 
 func (s *goalService) ListGoals(ctx context.Context, userID string) ([]dto.GoalResponse, error) {
@@ -574,25 +579,172 @@ func (s *goalService) ContributeToGoal(ctx context.Context, userID string, id st
 }
 
 func goalPriority(goalType string) int {
-	switch goalType {
-	case "emergency_fund":
-		return 1
-	case "debt_payoff":
-		return 2
-	case "sinking_fund":
-		return 3
-	default:
-		return 5
+	return kernel.GoalTypePriority(goalType)
+}
+
+// GetGoalPlan builds a household goal priority + conflict plan via goals-v1 kernel.
+func (s *goalService) GetGoalPlan(ctx context.Context, userID string) (*dto.GoalPlanResponse, error) {
+	ownerID, err := s.resolveOwnerID(ctx, userID)
+	if err != nil {
+		ownerID = userID
 	}
+
+	goals, err := s.ListGoals(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now()
+	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
+	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
+
+	var totalIncome, totalExp float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON c.code = t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
+	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalIncome)
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON c.code = t.currency
+		WHERE t.user_id=$1 AND t.type='expense' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
+	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExp)
+	surplus := (totalIncome / 3.0) - (totalExp / 3.0)
+	if surplus < 0 {
+		surplus = 0
+	}
+
+	// Reserved higher priority: adaptive EF gap (capped 50% surplus) + high-interest debt mins above 12%.
+	var efBalance, livingCost float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(a.balance * COALESCE(c.exchange_rate_to_idr,1)), 0)
+		FROM accounts a LEFT JOIN currencies c ON c.code=a.currency
+		WHERE a.user_id=$1 AND a.is_emergency_fund=true AND a.is_active=true AND a.deleted_at IS NULL
+	`, ownerID).Scan(&efBalance)
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr,1)), 0)/3.0
+		FROM transactions t LEFT JOIN currencies c ON c.code=t.currency
+		WHERE t.user_id=$1 AND t.type='expense' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
+	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&livingCost)
+
+	efRes := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   now,
+		EFBalance:              efBalance,
+		MonthlyLivingCost:      livingCost,
+		ConfiguredTargetMonths: kernel.EFDefaultTargetMonths,
+		UseAdaptive:            true,
+	})
+	efNeed := math.Max(0, efRes.TargetAmount-efBalance)
+	// Monthly EF top-up estimate: remaining / 6 months, cap 50% surplus (allocation hierarchy).
+	reservedEF := math.Min(efNeed/6.0, surplus*0.5)
+	if efRes.CoverageMonths >= float64(efRes.TargetMonths) {
+		reservedEF = 0
+	}
+
+	var highInterestMin float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(d.minimum_payment * COALESCE(c.exchange_rate_to_idr,1)), 0)
+		FROM debts d LEFT JOIN currencies c ON c.code=d.currency
+		WHERE d.user_id=$1 AND d.status='active' AND d.deleted_at IS NULL
+		AND d.interest_rate > 12 AND d.outstanding_balance > 0
+	`, ownerID).Scan(&highInterestMin)
+	// Extra beyond minimum is not reserved here — only signal capacity already committed to mins
+	// is reflected in surplus (expense path). ReservedForDebt stays 0 unless we want extra avalanche.
+	reservedDebt := 0.0
+	_ = highInterestMin
+
+	items := make([]kernel.GoalPlanItem, 0, len(goals))
+	for _, g := range goals {
+		if g.Status != "" && g.Status != "active" && g.Status != "achieved" {
+			continue
+		}
+		item := kernel.GoalPlanItem{
+			ID:                         g.ID,
+			Name:                       g.Name,
+			Type:                       g.Type,
+			TargetAmount:               g.TargetAmount,
+			CurrentAmount:              g.CurrentAmount,
+			AverageMonthlyContribution: g.AverageMonthlyContribution,
+		}
+		if g.TargetDate != nil && *g.TargetDate != "" {
+			if td, perr := time.Parse("2006-01-02", *g.TargetDate); perr == nil {
+				item.TargetDate = &td
+			}
+		}
+		items = append(items, item)
+	}
+
+	plan := kernel.ComputeGoalPlan(kernel.GoalPlanInputs{
+		AsOf:            now.UTC(),
+		MonthlySurplus:  surplus,
+		ReservedForEF:   reservedEF,
+		ReservedForDebt: reservedDebt,
+		Goals:           items,
+	})
+
+	out := &dto.GoalPlanResponse{
+		AsOf:                 plan.AsOf.Format(time.RFC3339),
+		FormulaVersion:       plan.FormulaVersion,
+		MonthlySurplus:       plan.MonthlySurplus,
+		ReservedHigher:       plan.ReservedHigher,
+		AvailableForGoals:    plan.AvailableForGoals,
+		TotalMonthlyRequired: plan.TotalMonthlyRequired,
+		TotalAllocated:       plan.TotalAllocated,
+		UnfundedGap:          plan.UnfundedGap,
+		TradeOffs:            plan.TradeOffs,
+		Assumptions:          plan.Assumptions,
+	}
+	for _, it := range plan.Items {
+		out.Items = append(out.Items, dto.GoalPlanItemDTO{
+			ID: it.ID, Name: it.Name, Type: it.Type, Priority: it.Priority,
+			Remaining: it.Remaining, MonthsRemaining: it.MonthsRemaining,
+			MonthlyRequired: it.MonthlyRequired, AllocatedMonthly: it.AllocatedMonthly,
+			FundingShare: it.FundingShare, FeasibilityStatus: it.FeasibilityStatus,
+			DelayMonths: it.DelayMonths, IsAffordable: it.IsAffordable,
+			FundingGap: it.FundingGap, Note: it.Note,
+		})
+	}
+	for _, c := range plan.Conflicts {
+		out.Conflicts = append(out.Conflicts, dto.GoalPlanConflictDTO{
+			Kind: c.Kind, GoalIDs: c.GoalIDs, GoalNames: c.GoalNames,
+			Message: c.Message, TradeOff: c.TradeOff,
+		})
+	}
+	if out.Items == nil {
+		out.Items = []dto.GoalPlanItemDTO{}
+	}
+	if out.Conflicts == nil {
+		out.Conflicts = []dto.GoalPlanConflictDTO{}
+	}
+	return out, nil
 }
 
 func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *pgxpool.Pool, ownerID string) {
-	if g.TargetDate == nil || g.Progress >= 100 {
+	// Already achieved
+	if g.Progress >= 100 {
+		onTrack := true
+		g.IsOnTrack = &onTrack
+		g.FeasibilityStatus = "achieved"
+		g.FeasibilityNote = "Target sudah tercapai."
+		return
+	}
+
+	// No deadline → feasibility is unknown (open-ended goal)
+	if g.TargetDate == nil {
+		g.FeasibilityStatus = "no_deadline"
+		g.FeasibilityNote = "Belum ada target tanggal; progress dipantau tanpa tenggat."
 		return
 	}
 
 	targetDate, err := time.Parse("2006-01-02", *g.TargetDate)
 	if err != nil {
+		g.FeasibilityStatus = "unknown"
+		g.FeasibilityNote = "Format target tanggal tidak valid."
 		return
 	}
 
@@ -601,29 +753,105 @@ func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *p
 
 	remaining := g.TargetAmount - g.CurrentAmount
 	if remaining <= 0 {
+		onTrack := true
+		g.IsOnTrack = &onTrack
+		g.FeasibilityStatus = "achieved"
+		g.FeasibilityNote = "Target sudah tercapai."
 		return
 	}
 
-	var monthlyReq float64
-	if monthsRemaining > 0 {
-		monthlyReq = remaining / monthsRemaining
+	// Past deadline with remaining balance → off track
+	if monthsRemaining <= 0 {
+		onTrack := false
+		g.IsOnTrack = &onTrack
+		g.FeasibilityStatus = "off_track"
+		g.FeasibilityNote = fmt.Sprintf(
+			"Tenggat sudah lewat dengan sisa Rp %s belum terkumpul.",
+			formatNumber(remaining),
+		)
+		// Still compute monthly required as remaining (treat as immediate need)
+		monthlyReq := remaining
+		g.MonthlyRequired = &monthlyReq
+		return
 	}
+
+	monthlyReq := remaining / monthsRemaining
 	g.MonthlyRequired = &monthlyReq
 
+	// Pace ratio: actual average monthly contribution vs required
+	if monthlyReq > 0 && g.AverageMonthlyContribution > 0 {
+		ratio := g.AverageMonthlyContribution / monthlyReq
+		g.RequiredVsActual = &ratio
+		onTrack := ratio >= 0.9
+		g.IsOnTrack = &onTrack
+		switch {
+		case ratio >= 1.0:
+			g.FeasibilityStatus = "on_track"
+			g.FeasibilityNote = fmt.Sprintf(
+				"On-track: kontribusi rata-rata %s/bulan ≥ kebutuhan %s/bulan.",
+				formatRupiah(g.AverageMonthlyContribution), formatRupiah(monthlyReq),
+			)
+		case ratio >= 0.7:
+			g.FeasibilityStatus = "at_risk"
+			g.FeasibilityNote = fmt.Sprintf(
+				"Berisiko: laju kontribusi %.0f%% dari kebutuhan. Naikkan ~%s/bulan agar tepat waktu.",
+				ratio*100, formatRupiah(monthlyReq-g.AverageMonthlyContribution),
+			)
+		default:
+			g.FeasibilityStatus = "off_track"
+			g.FeasibilityNote = fmt.Sprintf(
+				"Off-track: laju kontribusi hanya %.0f%% dari kebutuhan. Butuh %s/bulan, aktual %s/bulan.",
+				ratio*100, formatRupiah(monthlyReq), formatRupiah(g.AverageMonthlyContribution),
+			)
+		}
+	} else if g.ProjectedCompletionDate != nil {
+		// Fall back to projected completion vs target date when no contribution history yet
+		projDate, perr := time.Parse("2006-01-02", *g.ProjectedCompletionDate)
+		if perr == nil {
+			onTrack := !projDate.After(targetDate)
+			g.IsOnTrack = &onTrack
+			if onTrack {
+				g.FeasibilityStatus = "on_track"
+				g.FeasibilityNote = "Proyeksi penyelesaian masih di dalam tenggat."
+			} else {
+				g.FeasibilityStatus = "off_track"
+				g.FeasibilityNote = fmt.Sprintf(
+					"Proyeksi selesai %s — melewati tenggat %s.",
+					projDate.Format("2006-01-02"), targetDate.Format("2006-01-02"),
+				)
+			}
+		} else {
+			g.FeasibilityStatus = "unknown"
+			g.FeasibilityNote = "Belum ada histori kontribusi untuk menilai kelayakan."
+		}
+	} else {
+		// Brand-new goal without contributions — mark unknown, still surface monthly need
+		g.FeasibilityStatus = "unknown"
+		g.FeasibilityNote = fmt.Sprintf(
+			"Belum ada kontribusi. Mulai sisihkan ~%s/bulan agar on-track.",
+			formatRupiah(monthlyReq),
+		)
+	}
+
+	// Affordability vs 3-month average surplus
 	now := time.Now()
 	startOfMonth := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location())
 	threeMonthsAgo := startOfMonth.AddDate(0, -3, 0)
 
 	var totalIncome, totalExp float64
 	_ = dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount),0) FROM transactions
-		WHERE user_id=$1 AND type='income' AND status='confirmed'
-		AND date>=$2 AND date<$3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON c.code = t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalIncome)
 	_ = dbPool.QueryRow(ctx, `
-		SELECT COALESCE(SUM(amount),0) FROM transactions
-		WHERE user_id=$1 AND type='expense' AND status='confirmed'
-		AND date>=$2 AND date<$3 AND deleted_at IS NULL
+		SELECT COALESCE(SUM(amount * COALESCE(c.exchange_rate_to_idr, 1)), 0)
+		FROM transactions t
+		LEFT JOIN currencies c ON c.code = t.currency
+		WHERE t.user_id=$1 AND t.type='expense' AND t.status='confirmed'
+		AND t.date>=$2 AND t.date<$3 AND t.deleted_at IS NULL
 	`, ownerID, threeMonthsAgo, startOfMonth).Scan(&totalExp)
 
 	surplus := (totalIncome / 3.0) - (totalExp / 3.0)
@@ -634,6 +862,16 @@ func enrichGoalAffordability(g *dto.GoalResponse, ctx context.Context, dbPool *p
 		gap := monthlyReq - surplus
 		if gap > 0 {
 			g.FundingGap = &gap
+		}
+		// Downgrade feasibility note if not affordable even when pace looks fine
+		if g.FeasibilityStatus == "on_track" || g.FeasibilityStatus == "unknown" {
+			g.FeasibilityStatus = "at_risk"
+			g.FeasibilityNote = fmt.Sprintf(
+				"Kebutuhan bulanan %s melebihi surplus rata-rata %s. Kurangi target atau perpanjang tenggat.",
+				formatRupiah(monthlyReq), formatRupiah(math.Max(0, surplus)),
+			)
+			onTrack := false
+			g.IsOnTrack = &onTrack
 		}
 	}
 }

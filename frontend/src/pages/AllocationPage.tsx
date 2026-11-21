@@ -113,10 +113,19 @@ export const AllocationPage: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <PageHeader
-        title="Saran Alokasi Uang Sisa"
-        subtitle="Optimasi alokasi surplus kas bulanan Anda berdasarkan skala prioritas ketahanan keuangan keluarga."
-      />
+      <div>
+        <PageHeader
+          title="Saran Alokasi Uang Sisa"
+          subtitle="Estimasi surplus setelah kewajiban + buffer 10%. Bukan rekomendasi produk investasi."
+        />
+        {(advice.as_of || advice.formula_version) && (
+          <p className="mt-1 text-[11px] font-semibold text-slate-400 dark:text-slate-500">
+            Data hingga {advice.as_of ? new Date(advice.as_of).toLocaleString('id-ID') : 'sekarang'}
+            {advice.formula_version ? ` · formula ${advice.formula_version}` : ''}
+            {advice.data_sufficiency?.confidence ? ` · keyakinan ${advice.data_sufficiency.confidence}` : ''}.
+          </p>
+        )}
+      </div>
 
       {/* Surplus Banner */}
       <div className="p-6 rounded-2xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white shadow-md relative overflow-hidden">

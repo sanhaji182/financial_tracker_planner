@@ -14,3 +14,11 @@ export const useDailyProjections = (month?: string) => {
     queryFn: () => forecastService.getDailyProjections(month),
   });
 };
+
+export const useForecastBacktest = (months = 6) => {
+  return useQuery({
+    queryKey: ['forecast', 'backtest', months],
+    queryFn: () => forecastService.getBacktest(months),
+    staleTime: 120_000,
+  });
+};

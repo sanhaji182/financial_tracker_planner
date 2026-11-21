@@ -32,6 +32,28 @@ vi.mock('../hooks/useDashboard', () => ({
   useDashboardData: vi.fn(),
 }));
 
+vi.mock('../hooks/useDataQuality', () => ({
+  useDataQuality: vi.fn(() => ({
+    data: {
+      overall_score: 88,
+      overall_confidence: 'high',
+      grade: 'Good',
+      issues: [],
+      gates: [
+        { metric: 'dti', visible: true, degraded: false, confidence: 'high' },
+        { metric: 'health_score', visible: true, degraded: false, confidence: 'high' },
+        { metric: 'safe_to_spend', visible: true, degraded: false, confidence: 'high' },
+        { metric: 'forecast', visible: true, degraded: false, confidence: 'high' },
+      ],
+      decision_metrics_hidden: [],
+      decision_metrics_degraded: [],
+      missing_inputs: [],
+    },
+    isLoading: false,
+    isError: false,
+  })),
+}));
+
 // Mock authStore
 vi.mock('../stores/authStore', () => ({
   useAuthStore: () => ({
@@ -89,14 +111,29 @@ describe('DashboardPage component', () => {
         total_debts: { total_outstanding: 2000000, formatted_total_outstanding: 'Rp 2.000.000', active_count: 1 },
         dti_ratio: 15,
         dti_status: 'healthy',
-        health_score: { score: 85, rating: 'Excellent', status_color: 'Green' },
+        health_score: {
+          score: 85,
+          rating: 'Excellent',
+          status_color: 'Green',
+          reconciliation_rate: 0.9,
+          reconciliation_confidence: 0.97,
+        },
         upcoming_bills: [],
         forecast_end_month: { value: 4500000, formatted_value: 'Rp 4.500.000' },
         safe_to_spend: { value: 1200000, formatted_value: 'Rp 1.200.000' },
+        safe_to_spend_scenarios: {
+          conservative: { value: 1200000, formatted_value: 'Rp 1.200.000' },
+          expected: { value: 1800000, formatted_value: 'Rp 1.800.000' },
+          optimistic: { value: 2400000, formatted_value: 'Rp 2.400.000' },
+        },
+        data_sufficiency: { is_sufficient: true, missing_fields: [] },
         recent_alerts: [],
         insight_summary: 'Arus kas bersih keluarga Anda bulan ini positif.',
         next_action: { title: 'Tahan Kas (Buffer)', description: 'Tahan kas Anda', action_label: 'Detail', action_url: '/', priority: 1 },
         net_worth_trend: [],
+        as_of: '2026-07-15T00:00:00Z',
+        formula_version: 'kernel-v1',
+        assumptions: ['Surplus = estimated_income - fixed - variable - 10% income buffer (floored at 0)'],
       },
       isLoading: false,
       isError: false,

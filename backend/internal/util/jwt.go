@@ -22,7 +22,8 @@ type Claims struct {
 func getJWTSecret() []byte {
 	secret := os.Getenv("JWT_ACCESS_SECRET")
 	if secret == "" {
-		secret = "access-secret-key-change-this-in-production"
+		// Only reachable in misconfigured non-production paths; LoadConfig fails fast in production.
+		secret = "dev-access-secret-key-change-me-32chars"
 	}
 	return []byte(secret)
 }
@@ -82,6 +83,6 @@ func ValidateAccessToken(tokenString string) (*Claims, error) {
 }
 
 func HashToken(token string) string {
-	hash := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(hash[:])
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
 }

@@ -66,7 +66,7 @@ func (m *mockAuthService) GetMe(_ context.Context, _ string) (*model.User, error
 func setupAuthHandlerRouter(svc *mockAuthService) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
-	rg := r.Group("/api/v1")
+	rg := r.Group("/api/v1/auth")
 	h := NewAuthHandler(svc)
 	h.RegisterRoutes(rg)
 	return r

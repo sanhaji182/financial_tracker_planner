@@ -1,5 +1,13 @@
 import api from '../utils/api';
 
+export interface MetricState {
+  base: number;
+  scenario: number;
+  impact: number;
+  severity: 'positive' | 'neutral' | 'negative';
+  unit?: string;
+}
+
 export interface ScenarioChangeParam {
   debt_id?: string;
   category_id?: string;
@@ -15,18 +23,20 @@ export interface ScenarioChange {
   params: ScenarioChangeParam;
 }
 
-export interface MetricState {
-  base: number;
-  scenario: number;
-  impact: number;
-  severity: 'positive' | 'neutral' | 'negative';
-}
-
 export interface ScenarioResult {
   ending_balance: MetricState;
   total_debts: MetricState;
   ef_coverage: MetricState;
   cash_runway: MetricState;
+  debt_interest_cost?: MetricState;
+  goal_funding_gap?: MetricState;
+  goal_delay_months?: MetricState;
+  downside_runway?: MetricState;
+  as_of?: string;
+  formula_version?: string;
+  horizon_months?: number;
+  assumptions?: string[];
+  notes?: string[];
 }
 
 export interface ScenarioResponse {

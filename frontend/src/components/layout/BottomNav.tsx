@@ -78,7 +78,10 @@ export const BottomNav: React.FC = () => {
   return (
     <>
       {/* Bottom Bar Container */}
-      <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800 pb-safe lg:hidden">
+      <nav
+        aria-label="Navigasi mobile"
+        className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 dark:bg-slate-900/95 backdrop-blur-lg border-t border-slate-200/80 dark:border-slate-800 pb-safe lg:hidden"
+      >
         <div className="flex h-14 items-center justify-around">
           {isSpouse ? (
             <>
@@ -86,28 +89,28 @@ export const BottomNav: React.FC = () => {
                 to="/spouse"
                 className={isPathMatch('/spouse') ? activeStyle : inactiveStyle}
               >
-                <LayoutDashboard className="w-5 h-5" />
+                <LayoutDashboard className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Dashboard</span>
               </NavLink>
               <NavLink
                 to="/spouse?tab=assets"
                 className={isPathMatch('/spouse?tab=assets') ? activeStyle : inactiveStyle}
               >
-                <Coins className="w-5 h-5" />
+                <Coins className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Aset</span>
               </NavLink>
               <NavLink
                 to="/spouse?tab=debts"
                 className={isPathMatch('/spouse?tab=debts') ? activeStyle : inactiveStyle}
               >
-                <CreditCard className="w-5 h-5" />
+                <CreditCard className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Utang</span>
               </NavLink>
               <NavLink
                 to="/goals"
                 className={({ isActive }) => (isActive ? activeStyle : inactiveStyle)}
               >
-                <Target className="w-5 h-5" />
+                <Target className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Goals</span>
               </NavLink>
             </>
@@ -118,7 +121,7 @@ export const BottomNav: React.FC = () => {
                 end
                 className={({ isActive }) => (isActive ? activeStyle : inactiveStyle)}
               >
-                <LayoutDashboard className="w-5 h-5" />
+                <LayoutDashboard className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Dashboard</span>
               </NavLink>
 
@@ -126,7 +129,7 @@ export const BottomNav: React.FC = () => {
                 to="/transactions"
                 className={({ isActive }) => (isActive ? activeStyle : inactiveStyle)}
               >
-                <Receipt className="w-5 h-5" />
+                <Receipt className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Transaksi</span>
               </NavLink>
 
@@ -139,7 +142,7 @@ export const BottomNav: React.FC = () => {
                   title="Catat Transaksi Cepat"
                   aria-label="Catat Transaksi Cepat"
                 >
-                  <Plus className="w-5 h-5 stroke-[2.5]" />
+                  <Plus className="w-5 h-5 stroke-[2.5]" aria-hidden="true" />
                 </button>
               </div>
 
@@ -147,7 +150,7 @@ export const BottomNav: React.FC = () => {
                 to="/bills"
                 className={({ isActive }) => (isActive ? activeStyle : inactiveStyle)}
               >
-                <CalendarDays className="w-5 h-5" />
+                <CalendarDays className="w-5 h-5" aria-hidden="true" />
                 <span className="text-[10px] mt-0.5">Tagihan</span>
               </NavLink>
             </>
@@ -158,18 +161,26 @@ export const BottomNav: React.FC = () => {
             type="button"
             onClick={() => setMenuOpen(true)}
             className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 dark:text-slate-400 active:text-slate-800"
+            aria-label="Buka menu lainnya"
+            aria-haspopup="dialog"
+            aria-expanded={menuOpen}
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="w-5 h-5" aria-hidden="true" />
             <span className="text-[10px] mt-0.5 font-medium">Lainnya</span>
           </button>
         </div>
-      </div>
+      </nav>
 
       {/* 'Lainnya' Grouped Bottom Sheet */}
       {menuOpen && (() => {
         const sheet = (
-          <div className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/35 backdrop-blur-[2px] lg:hidden animate-backdrop-in">
-            <div className="flex-1" onClick={() => setMenuOpen(false)} />
+          <div
+            className="fixed inset-0 z-50 flex flex-col justify-end bg-slate-900/35 backdrop-blur-[2px] lg:hidden animate-backdrop-in"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Menu lainnya"
+          >
+            <div className="flex-1" onClick={() => setMenuOpen(false)} aria-hidden="true" />
 
             <div className="bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 rounded-t-2xl max-h-[85dvh] flex flex-col overflow-hidden animate-slide-up pb-safe">
               {/* Mobile grabber */}
@@ -188,7 +199,7 @@ export const BottomNav: React.FC = () => {
                   className="p-1.5 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200"
                   aria-label="Tutup menu"
                 >
-                  <X className="w-4 h-4" />
+                  <X className="w-4 h-4" aria-hidden="true" />
                 </button>
               </div>
 

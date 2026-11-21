@@ -23,11 +23,25 @@ func (h *GoalHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	{
 		group.POST("", middleware.RoleMiddleware("owner"), h.CreateGoal)
 		group.GET("", h.ListGoals)
+		// Static path before /:id so "plan" is not captured as an id.
+		group.GET("/plan", h.GetGoalPlan)
 		group.GET("/:id", h.GetGoalByID)
 		group.PUT("/:id", middleware.RoleMiddleware("owner"), h.UpdateGoal)
 		group.DELETE("/:id", middleware.RoleMiddleware("owner"), h.DeleteGoal)
 		group.POST("/:id/contribute", middleware.RoleMiddleware("owner"), h.ContributeToGoal)
 	}
+}
+
+func (h *GoalHandler) GetGoalPlan(c *gin.Context) {
+	userID := c.GetString("user_id")
+	resp, err := h.goalService.GetGoalPlan(c.Request.Context(), userID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{"code": "INTERNAL_SERVER_ERROR", "message": err.Error()},
+		})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"data": resp})
 }
 
 func (h *GoalHandler) CreateGoal(c *gin.Context) {

@@ -188,7 +188,7 @@ export const AccountSettingsPage: React.FC = () => {
                 </p>
                 <div className="flex flex-wrap gap-2 pt-1">
                   <Link
-                    to="/backup"
+                    to="/settings/backup"
                     className="inline-flex items-center gap-1.5 rounded-lg bg-emerald-50 dark:bg-emerald-950/50 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-950"
                   >
                     <Database className="w-3.5 h-3.5" />

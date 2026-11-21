@@ -89,6 +89,7 @@ func main() {
 	transferService := service.NewTransferService(dbPool)
 	reconciliationService := service.NewReconciliationService(dbPool)
 	closingService := service.NewClosingService(dbPool)
+	dataQualityService := service.NewDataQualityService(dbPool)
 	telegramService := service.NewTelegramService()
 	alertService := service.NewAlertService(dbPool)
 	alertGeneratorService := service.NewAlertGeneratorService(dbPool, telegramService)
@@ -104,6 +105,9 @@ func main() {
 	scenarioService := service.NewScenarioService(dbPool)
 	currencyService := service.NewCurrencyService(dbPool)
 	protectionService := service.NewProtectionService(dbPool, "/app/data")
+	retirementService := service.NewRetirementService(dbPool, "/app/data")
+	behavioralService := service.NewBehavioralService(dbPool, "/app/data")
+	privacyService := service.NewPrivacyService(dbPool, "/app/data")
 	ruleService := service.NewAutomationRuleService(dbPool, telegramService)
 
 	// Initialize Handlers
@@ -124,6 +128,7 @@ func main() {
 	transferHandler := handler.NewTransferHandler(transferService)
 	reconciliationHandler := handler.NewReconciliationHandler(reconciliationService)
 	closingHandler := handler.NewClosingHandler(closingService)
+	dataQualityHandler := handler.NewDataQualityHandler(dataQualityService)
 	alertHandler := handler.NewAlertHandler(alertService)
 	auditHandler := handler.NewAuditHandler(auditService)
 	docHandler := handler.NewDocumentHandler(docService)
@@ -138,7 +143,12 @@ func main() {
 	currencyHandler := handler.NewCurrencyHandler(currencyService)
 	ruleHandler := handler.NewAutomationRuleHandler(ruleService)
 	protectionHandler := handler.NewProtectionHandler(protectionService)
+	retirementHandler := handler.NewRetirementHandler(retirementService)
+	behavioralHandler := handler.NewBehavioralHandler(behavioralService)
+	privacyHandler := handler.NewPrivacyHandler(privacyService)
 	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService)
+	governanceHandler := handler.NewGovernanceHandler()
+	jobRunner := service.NewJobRunner(rdb, "")
 
 	// Initialize Gin engine
 	r := gin.New()
@@ -146,6 +156,7 @@ func main() {
 	// Global middlewares
 	r.Use(middleware.Logger())
 	r.Use(middleware.CORS())
+	r.Use(middleware.SecurityHeaders())
 	r.Use(gin.Recovery())
 
 	// Create uploads directory if it doesn't exist (NO static file exposure)
@@ -180,19 +191,13 @@ func main() {
 	v1.Use(middleware.DashboardCacheInvalidator(rdb))
 	{
 		// Register health check handler
-		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck)
+		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck, cfg.BuildVersion, cfg.BuildSHA)
 		healthHandler.RegisterRoutes(v1)
 
-		// Register Auth handler
-		authHandler.RegisterRoutes(v1)
-		authHandler.RegisterRoutes(&r.RouterGroup)
-
-		// Apply rate limiting to auth endpoints
-		authRateLimited := v1.Group("/auth")
-		authRateLimited.Use(middleware.RateLimit(30))
-		{
-			_ = authRateLimited
-		}
+		// Auth routes — rate limited (login/register/refresh brute-force protection)
+		authGroup := v1.Group("/auth")
+		authGroup.Use(middleware.RateLimit(30))
+		authHandler.RegisterRoutes(authGroup)
 
 		// Register Accounts handler
 		accountHandler.RegisterRoutes(v1)
@@ -211,6 +216,9 @@ func main() {
 
 		// Register Dashboard handler
 		dashboardHandler.RegisterRoutes(v1)
+
+		// Register Data Quality Center
+		dataQualityHandler.RegisterRoutes(v1)
 
 		// Register SharedView handler
 		sharedViewHandler.RegisterRoutes(v1)
@@ -259,7 +267,11 @@ func main() {
 		currencyHandler.RegisterRoutes(v1)
 		ruleHandler.RegisterRoutes(v1)
 		protectionHandler.RegisterRoutes(v1)
+		retirementHandler.RegisterRoutes(v1)
+		behavioralHandler.RegisterRoutes(v1)
+		privacyHandler.RegisterRoutes(v1)
 		aiSettingsHandler.RegisterRoutes(v1)
+		governanceHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {
@@ -275,7 +287,10 @@ func main() {
 		defer ticker.Stop()
 		for {
 			log.Info().Msg("Running daily background auto status update for bills...")
-			if err := billService.AutoUpdateStatus(context.Background()); err != nil {
+			idem := time.Now().UTC().Format("2006-01-02")
+			if _, err := jobRunner.Run(context.Background(), "bills_auto_overdue", idem, func(ctx context.Context) error {
+				return billService.AutoUpdateStatus(ctx)
+			}); err != nil {
 				log.Error().Err(err).Msg("Failed to run auto status update for bills")
 			}
 
@@ -290,7 +305,10 @@ func main() {
 	go func() {
 		// Run immediately on startup
 		log.Info().Msg("Running initial alert generation...")
-		if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
+		idem := time.Now().UTC().Format("2006-01-02-15")
+		if _, err := jobRunner.Run(context.Background(), "alert_generate", idem, func(ctx context.Context) error {
+			return alertGeneratorService.GenerateAlertsForAllUsers(ctx)
+		}); err != nil {
 			log.Error().Err(err).Msg("Initial alert generation failed")
 		}
 
@@ -300,7 +318,10 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Info().Msg("Running 6h alert generation cron...")
-				if err := alertGeneratorService.GenerateAlertsForAllUsers(context.Background()); err != nil {
+				idem := time.Now().UTC().Format("2006-01-02-15")
+				if _, err := jobRunner.Run(context.Background(), "alert_generate", idem, func(ctx context.Context) error {
+					return alertGeneratorService.GenerateAlertsForAllUsers(ctx)
+				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run alert generation")
 				}
 			}
@@ -311,10 +332,18 @@ func main() {
 	go func() {
 		// Run immediately on startup
 		log.Info().Msg("Running initial task overdue check...")
-		if affected, err := taskService.RunAutoOverdue(context.Background()); err != nil {
+		idem := time.Now().UTC().Format("2006-01-02-15")
+		if _, err := jobRunner.Run(context.Background(), "tasks_auto_overdue", idem, func(ctx context.Context) error {
+			affected, err := taskService.RunAutoOverdue(ctx)
+			if err != nil {
+				return err
+			}
+			if affected > 0 {
+				log.Info().Msgf("Initial task overdue check marked %d tasks as overdue", affected)
+			}
+			return nil
+		}); err != nil {
 			log.Error().Err(err).Msg("Initial task overdue check failed")
-		} else if affected > 0 {
-			log.Info().Msgf("Initial task overdue check marked %d tasks as overdue", affected)
 		}
 
 		ticker := time.NewTicker(1 * time.Hour)
@@ -323,10 +352,18 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Info().Msg("Running hourly task overdue check...")
-				if affected, err := taskService.RunAutoOverdue(context.Background()); err != nil {
+				idem := time.Now().UTC().Format("2006-01-02-15")
+				if _, err := jobRunner.Run(context.Background(), "tasks_auto_overdue", idem, func(ctx context.Context) error {
+					affected, err := taskService.RunAutoOverdue(ctx)
+					if err != nil {
+						return err
+					}
+					if affected > 0 {
+						log.Info().Msgf("Hourly task overdue check marked %d tasks as overdue", affected)
+					}
+					return nil
+				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run task overdue check")
-				} else if affected > 0 {
-					log.Info().Msgf("Hourly task overdue check marked %d tasks as overdue", affected)
 				}
 			}
 		}
@@ -336,7 +373,10 @@ func main() {
 	go func() {
 		// Run immediately on startup
 		log.Info().Msg("Running initial automation rules evaluation...")
-		if err := ruleService.EvaluateRules(context.Background()); err != nil {
+		idem := time.Now().UTC().Format("2006-01-02")
+		if _, err := jobRunner.Run(context.Background(), "automation_rules", idem, func(ctx context.Context) error {
+			return ruleService.EvaluateRules(ctx)
+		}); err != nil {
 			log.Error().Err(err).Msg("Initial automation rules evaluation failed")
 		}
 
@@ -346,7 +386,10 @@ func main() {
 			select {
 			case <-ticker.C:
 				log.Info().Msg("Running 24h automation rules evaluation cron...")
-				if err := ruleService.EvaluateRules(context.Background()); err != nil {
+				idem := time.Now().UTC().Format("2006-01-02")
+				if _, err := jobRunner.Run(context.Background(), "automation_rules", idem, func(ctx context.Context) error {
+					return ruleService.EvaluateRules(ctx)
+				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run automation rules evaluation")
 				}
 			}
@@ -390,8 +433,8 @@ func setupDatabase(cfg *config.Config) (*pgxpool.Pool, error) {
 func setupRedis(cfg *config.Config) *redis.Client {
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     fmt.Sprintf("%s:%s", cfg.RedisHost, cfg.RedisPort),
-		Password: "", // no password set
-		DB:       0,  // use default DB
+		Password: cfg.RedisPassword,
+		DB:       0, // use default DB
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)

@@ -280,17 +280,17 @@ export const SpouseDashboard: React.FC = () => {
                 ))
               )}
             </div>
-
             {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="hidden md:block overflow-x-auto" role="region" aria-label="Aset bersama" tabIndex={0}>
+              <table className="w-full text-left text-xs border-collapse min-w-[36rem]">
+                <caption className="sr-only">Daftar portofolio aset bersama</caption>
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Nama Aset</th>
-                    <th className="py-3 px-4">Kategori</th>
-                    <th className="py-3 px-4">Rekening Terkait</th>
-                    <th className="py-3 px-4 text-right">Nilai Saat Ini</th>
-                    <th className="py-3 px-4 text-right">Catatan</th>
+                    <th scope="col" className="py-3 px-4 sticky left-0 bg-slate-50/95 dark:bg-slate-900/95 z-10">Nama Aset</th>
+                    <th scope="col" className="py-3 px-4">Kategori</th>
+                    <th scope="col" className="py-3 px-4">Rekening Terkait</th>
+                    <th scope="col" className="py-3 px-4 text-right">Nilai Saat Ini</th>
+                    <th scope="col" className="py-3 px-4 text-right">Catatan</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -371,18 +371,18 @@ export const SpouseDashboard: React.FC = () => {
                 ))
               )}
             </div>
-
             {/* Desktop Table View */}
-            <div className="hidden md:block overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="hidden md:block overflow-x-auto" role="region" aria-label="Utang bersama" tabIndex={0}>
+              <table className="w-full text-left text-xs border-collapse min-w-[40rem]">
+                <caption className="sr-only">Daftar utang dan cicilan keluarga</caption>
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Nama Kontrak</th>
-                    <th className="py-3 px-4">Jenis</th>
-                    <th className="py-3 px-4">Kreditur</th>
-                    <th className="py-3 px-4 text-right">Bunga</th>
-                    <th className="py-3 px-4 text-right">Cicilan / Bln</th>
-                    <th className="py-3 px-4 text-right">Sisa Outstanding</th>
+                    <th scope="col" className="py-3 px-4 sticky left-0 bg-slate-50/95 dark:bg-slate-900/95 z-10">Nama Kontrak</th>
+                    <th scope="col" className="py-3 px-4">Jenis</th>
+                    <th scope="col" className="py-3 px-4">Kreditur</th>
+                    <th scope="col" className="py-3 px-4 text-right">Bunga</th>
+                    <th scope="col" className="py-3 px-4 text-right">Cicilan / Bln</th>
+                    <th scope="col" className="py-3 px-4 text-right">Sisa Outstanding</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">

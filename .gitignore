@@ -43,3 +43,4 @@ db-data/
 redis-data/
 .worktrees/
 .claude/worktrees/
+.env.production

@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
 
 jobs:
   backend:
@@ -67,15 +67,28 @@ jobs:
 
       - name: Lint
         working-directory: frontend
-        run: npx oxlint .
+        run: npm run lint
 
       - name: Build
         working-directory: frontend
         run: npm run build
+        env:
+          VITE_BUILD_SHA: ${{ github.sha }}
+          VITE_APP_VERSION: ${{ github.ref_name }}
 
       - name: Unit tests
         working-directory: frontend
-        run: npx vitest run
+        run: npm test
+
+      - name: Install Playwright browser
+        working-directory: frontend
+        run: npx playwright install --with-deps chromium
+
+      - name: E2E critical paths
+        working-directory: frontend
+        run: npm run test:e2e
+        env:
+          CI: true
 
   worker:
     name: Python Worker

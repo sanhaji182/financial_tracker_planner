@@ -96,7 +96,10 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
   };
 
   return (
-    <header className="sticky top-0 z-30 pt-safe bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800">
+    <header
+      role="banner"
+      className="sticky top-0 z-30 pt-safe bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800"
+    >
       <div className="h-14 sm:h-16 px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-3">
         {/* Left: Mobile drawer button + Page Context */}
         <div className="flex items-center gap-2 sm:gap-3 min-w-0">
@@ -106,7 +109,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
             className="lg:hidden p-2 -ml-1 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0"
             aria-label="Buka menu navigasi"
           >
-            <Menu className="w-5 h-5" />
+            <Menu className="w-5 h-5" aria-hidden="true" />
           </button>
 
           <div className="min-w-0">
@@ -178,9 +181,9 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
           aria-label={theme === 'light' ? 'Ganti ke Dark Mode' : 'Ganti ke Light Mode'}
         >
           {theme === 'light' ? (
-            <Moon className="w-4 h-4" />
+            <Moon className="w-4 h-4" aria-hidden="true" />
           ) : (
-            <Sun className="w-4 h-4 text-amber-400" />
+            <Sun className="w-4 h-4 text-amber-400" aria-hidden="true" />
           )}
         </button>
 
@@ -191,11 +194,16 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
             id="bell-btn"
             onClick={handleBellClick}
             className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors relative"
-            aria-label="Notifikasi"
+            aria-label={unreadCount > 0 ? `Notifikasi, ${unreadCount} belum dibaca` : 'Notifikasi'}
+            aria-haspopup="dialog"
+            aria-expanded={isOpen}
           >
-            <Bell className="w-4 h-4" />
+            <Bell className="w-4 h-4" aria-hidden="true" />
             {unreadCount > 0 && (
-              <span className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold px-1 ring-2 ring-white dark:ring-slate-900">
+              <span
+                className="absolute -top-0.5 -right-0.5 min-w-[17px] h-[17px] flex items-center justify-center rounded-full bg-rose-500 text-white text-[10px] font-bold px-1 ring-2 ring-white dark:ring-slate-900"
+                aria-hidden="true"
+              >
                 {unreadCount > 99 ? '99+' : unreadCount}
               </span>
             )}
@@ -203,10 +211,14 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
 
           {/* Light-First Notification Popover */}
           {isOpen && (
-            <div className="fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top))] sm:absolute sm:inset-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden z-50 animate-scale-up">
+            <div
+              role="dialog"
+              aria-label="Notifikasi"
+              className="fixed inset-x-3 top-[calc(3.75rem+env(safe-area-inset-top))] sm:absolute sm:inset-auto sm:right-0 sm:top-auto sm:mt-2 sm:w-96 rounded-2xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 shadow-xl overflow-hidden z-50 animate-scale-up"
+            >
               <div className="flex items-center justify-between px-4 py-3 border-b border-slate-100 dark:border-slate-800">
                 <div className="flex items-center gap-2">
-                  <Bell className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                  <Bell className="h-4 w-4 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
                   <span className="text-sm font-semibold text-slate-900 dark:text-white">
                     Notifikasi
                   </span>
@@ -223,8 +235,9 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
                       onClick={handleMarkAllRead}
                       className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                       title="Tandai semua dibaca"
+                      aria-label="Tandai semua dibaca"
                     >
-                      <CheckCheck className="h-4 w-4" />
+                      <CheckCheck className="h-4 w-4" aria-hidden="true" />
                     </button>
                   )}
                   <button
@@ -233,7 +246,7 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
                     className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
                     aria-label="Tutup notifikasi"
                   >
-                    <X className="h-4 w-4" />
+                    <X className="h-4 w-4" aria-hidden="true" />
                   </button>
                 </div>
               </div>
@@ -256,7 +269,15 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
                   previewAlerts.map((alert) => (
                     <div
                       key={alert.id}
+                      role="button"
+                      tabIndex={0}
                       onClick={(e) => handleMarkRead(alert, e)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                          e.preventDefault();
+                          handleMarkRead(alert, e as unknown as React.MouseEvent);
+                        }
+                      }}
                       className={`px-4 py-3 hover:bg-slate-50 dark:hover:bg-slate-800/60 transition-colors cursor-pointer flex items-start gap-3 ${
                         !alert.is_read ? 'bg-indigo-50/40 dark:bg-indigo-950/20' : ''
                       }`}

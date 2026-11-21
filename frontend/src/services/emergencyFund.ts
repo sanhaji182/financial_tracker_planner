@@ -9,6 +9,16 @@ export interface EFSummaryResponse {
   coverage_months: number;
   progress_percentage: number;
   status: 'Aman' | 'Kurang' | 'Kritis';
+  target_rationale?: string;
+  as_of?: string;
+  formula_version?: string;
+  assumptions?: string[];
+  data_sufficiency?: {
+    is_sufficient: boolean;
+    missing_fields?: string[];
+    uses_fallback_values?: boolean;
+    confidence?: string;
+  };
 }
 
 export interface UpdateEFConfigRequest {

@@ -3,6 +3,7 @@ import { useAvalancheSimulation } from '../hooks/useDebts';
 import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
 import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import { Zap } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -50,7 +51,12 @@ export const DebtAvalanchePage: React.FC = () => {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Simulator Debt Avalanche"
+        title={
+          <span className="inline-flex items-center gap-2">
+            Simulator Debt Avalanche
+            <MetricHelp metric="debt_avalanche" />
+          </span>
+        }
         subtitle="Bayar minimum semua utang dan fokuskan dana ekstra ke utang berbunga tertinggi untuk menghemat total bunga."
         backTo="/debts"
         backLabel="Kembali ke Daftar Utang"
@@ -82,6 +88,7 @@ export const DebtAvalanchePage: React.FC = () => {
                   const parsed = parseInt(raw, 10);
                   setExtraAmount(!isNaN(parsed) && parsed >= 0 ? parsed : 0);
                 }}
+                aria-label="Dana tambahan per bulan (Rupiah)"
                 className="w-36 h-9 rounded-xl border border-slate-200 bg-white px-3 text-xs font-semibold font-money text-slate-900 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 dark:bg-slate-800 dark:border-slate-700 dark:text-white"
               />
             </div>
@@ -137,11 +144,26 @@ export const DebtAvalanchePage: React.FC = () => {
         </Card>
       ) : (
         <div className="space-y-6">
+          {(simulation.as_of || simulation.formula_version) && (
+            <p className="text-[11px] text-slate-400 font-medium">
+              {simulation.as_of ? `as of ${new Date(simulation.as_of).toLocaleString('id-ID')}` : ''}
+              {simulation.formula_version ? ` · formula ${simulation.formula_version}` : ''}
+              {simulation.is_estimate !== false ? ' · estimasi' : ''}
+            </p>
+          )}
+
+          {simulation.negative_amortization && (
+            <Card className="p-4 border border-rose-200 bg-rose-50 dark:bg-rose-950/20 dark:border-rose-900 text-rose-700 dark:text-rose-300 text-sm font-semibold">
+              Anggaran pembayaran saat ini tidak cukup menutup bunga bulanan (negative amortization).
+              Naikkan extra payment atau restruktur utang — jadwal pelunasan di bawah tidak dapat diandalkan.
+            </Card>
+          )}
+
           {/* Summary Callout */}
           <div className="p-6 bg-gradient-to-br from-indigo-600 to-violet-600 rounded-2xl text-white shadow-md space-y-4">
             <div className="flex items-center gap-2.5">
               <div className="p-2 rounded-xl bg-white/15">
-                <Zap className="h-5 w-5 text-amber-300 fill-amber-300" />
+                <Zap className="h-5 w-5 text-amber-300 fill-amber-300" aria-hidden="true" />
               </div>
               <h2 className="font-display text-lg font-bold">
                 Rencana Pelunasan Optimal Terhitung
@@ -149,16 +171,22 @@ export const DebtAvalanchePage: React.FC = () => {
             </div>
 
             <p className="text-sm leading-relaxed text-indigo-50 max-w-2xl">
-              Dengan alokasi ekstra <strong className="text-white">{formatRupiah(extraAmount)}/bulan</strong>,
-              seluruh utang diproyeksikan lunas{' '}
-              <span className="inline-block bg-white/20 px-2 py-0.5 rounded-md font-bold text-white">
-                {simulation.savings_months} bulan lebih cepat
-              </span>{' '}
-              dan menghemat bunga sebesar{' '}
-              <span className="inline-block bg-white/20 px-2 py-0.5 rounded-md font-bold text-white">
-                {simulation.formatted_savings_interest}
-              </span>
-              .
+              {simulation.negative_amortization ? (
+                'Dengan anggaran saat ini, model mendeteksi utang yang tidak terlunasi. Hasil di bawah hanya untuk ilustrasi.'
+              ) : (
+                <>
+                  Dengan alokasi ekstra <strong className="text-white">{formatRupiah(extraAmount)}/bulan</strong>,
+                  seluruh utang diproyeksikan lunas{' '}
+                  <span className="inline-block bg-white/20 px-2 py-0.5 rounded-md font-bold text-white">
+                    {simulation.savings_months} bulan lebih cepat
+                  </span>{' '}
+                  dan menghemat bunga sebesar{' '}
+                  <span className="inline-block bg-white/20 px-2 py-0.5 rounded-md font-bold text-white">
+                    {simulation.formatted_savings_interest}
+                  </span>
+                  .
+                </>
+              )}
             </p>
 
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 border-t border-white/15 pt-4">
@@ -225,17 +253,18 @@ export const DebtAvalanchePage: React.FC = () => {
 
           {/* Comparison Table */}
           <Card title="Rincian Perbandingan Tiap Kontrak Utang" noPadding>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
+            <div className="overflow-x-auto" role="region" aria-label="Perbandingan utang avalanche" tabIndex={0}>
+              <table className="w-full text-left text-xs border-collapse min-w-[44rem]">
+                <caption className="sr-only">Perbandingan pelunasan utang dengan dan tanpa extra payment</caption>
                 <thead>
                   <tr className="border-b border-slate-100 dark:border-slate-800 bg-slate-50/70 dark:bg-slate-800/40 text-slate-500 font-semibold uppercase tracking-wider">
-                    <th className="py-3 px-4">Nama Utang</th>
-                    <th className="py-3 px-4 text-right">Tanpa Ekstra</th>
-                    <th className="py-3 px-4 text-right">Dengan Ekstra</th>
-                    <th className="py-3 px-4 text-right">Hemat Waktu</th>
-                    <th className="py-3 px-4 text-right">Bunga Tanpa Ekstra</th>
-                    <th className="py-3 px-4 text-right">Bunga Dengan Ekstra</th>
-                    <th className="py-3 px-4 text-right">Hemat Bunga</th>
+                    <th scope="col" className="py-3 px-4 sticky left-0 bg-slate-50/95 dark:bg-slate-900/95 z-10">Nama Utang</th>
+                    <th scope="col" className="py-3 px-4 text-right">Tanpa Ekstra</th>
+                    <th scope="col" className="py-3 px-4 text-right">Dengan Ekstra</th>
+                    <th scope="col" className="py-3 px-4 text-right">Hemat Waktu</th>
+                    <th scope="col" className="py-3 px-4 text-right">Bunga Tanpa Ekstra</th>
+                    <th scope="col" className="py-3 px-4 text-right">Bunga Dengan Ekstra</th>
+                    <th scope="col" className="py-3 px-4 text-right">Hemat Bunga</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -281,6 +310,17 @@ export const DebtAvalanchePage: React.FC = () => {
               </table>
             </div>
           </Card>
+
+          {simulation.assumptions && simulation.assumptions.length > 0 && (
+            <Card className="p-4 space-y-2">
+              <h3 className="text-[11px] font-bold text-slate-400 uppercase tracking-wider">Asumsi model</h3>
+              <ul className="list-disc pl-4 space-y-1 text-[11px] text-slate-500 dark:text-slate-400">
+                {simulation.assumptions.map((a) => (
+                  <li key={a}>{a}</li>
+                ))}
+              </ul>
+            </Card>
+          )}
         </div>
       )}
     </div>

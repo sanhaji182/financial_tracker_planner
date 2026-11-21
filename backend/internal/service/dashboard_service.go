@@ -4,12 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/user/financial-os/internal/dto"
+	"github.com/user/financial-os/internal/kernel"
 )
 
 type DashboardService interface {
@@ -189,100 +189,122 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		return nil, fmt.Errorf("failed to fetch emergency fund: %w", err)
 	}
 
-	// 8. Calculations: DTI, EF Coverage, Health Score components
-	var dtiRatio float64
-	if incomeThisMonth > 0 {
-		dtiRatio = (totalMinDebtPayments / incomeThisMonth) * 100
+	// 8. EF (ef-v1) + governed health score (health-v1). No false-healthy DTI without income.
+	var minIncome, maxIncome float64
+	_ = s.dbPool.QueryRow(ctx, `SELECT COALESCE(MIN(monthly),0), COALESCE(MAX(monthly),0) FROM (
+		SELECT SUM(t.amount * COALESCE(curr.exchange_rate_to_idr,t.exchange_rate,1)) monthly
+		FROM transactions t LEFT JOIN currencies curr ON curr.code=t.currency
+		WHERE t.user_id=$1 AND t.type='income' AND t.status='confirmed' AND t.date >= $2 AND t.date < $3 AND t.deleted_at IS NULL
+		GROUP BY DATE_TRUNC('month',t.date)) x`, userID, threeMonthsAgo, startOfMonth).Scan(&minIncome, &maxIncome)
+
+	var configuredTargetMonths int
+	var livingCostOverride float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(target_months, 6), COALESCE(monthly_living_cost_override, 0)
+		FROM emergency_fund_configs WHERE user_id = $1
+	`, userID).Scan(&configuredTargetMonths, &livingCostOverride)
+	if configuredTargetMonths <= 0 {
+		configuredTargetMonths = kernel.EFDefaultTargetMonths
+	}
+	efLivingCost := monthlyLivingCost
+	if livingCostOverride > 0 {
+		efLivingCost = livingCostOverride
+	}
+	efRes := kernel.ComputeEF(kernel.EFInputs{
+		AsOf:                   now,
+		EFBalance:              efTotal,
+		MonthlyLivingCost:      efLivingCost,
+		ConfiguredTargetMonths: configuredTargetMonths,
+		UseAdaptive:            livingCostOverride <= 0,
+		MinMonthlyIncome:       minIncome,
+		MaxMonthlyIncome:       maxIncome,
+	})
+	efCoverageMonths := efRes.CoverageMonths
+	efTargetMonths := float64(efRes.TargetMonths)
+	if efTargetMonths <= 0 {
+		efTargetMonths = float64(kernel.EFDefaultTargetMonths)
 	}
 
-	var dtiStatus string
-	if dtiRatio < 20 {
-		dtiStatus = "healthy"
-	} else if dtiRatio <= 50 {
-		dtiStatus = "warning"
-	} else {
-		dtiStatus = "danger"
+	// Reconciliation rate (last 90 days) feeds health confidence.
+	var totalTx90, reconciledTx90 float64
+	_ = s.dbPool.QueryRow(ctx, `
+		SELECT
+			COUNT(*)::float,
+			COUNT(*) FILTER (WHERE reconciled = true)::float
+		FROM transactions
+		WHERE user_id = $1
+		  AND status = 'confirmed'
+		  AND deleted_at IS NULL
+		  AND date >= CURRENT_DATE - INTERVAL '90 days'
+	`, userID).Scan(&totalTx90, &reconciledTx90)
+
+	reconciliationRate := 1.0
+	if totalTx90 > 0 {
+		reconciliationRate = reconciledTx90 / totalTx90
 	}
 
-	// DTI Score (Weight 30%)
-	dtiScore := 0.0
-	if dtiRatio < 20 {
-		dtiScore = 100
-	} else if dtiRatio <= 60 {
-		dtiScore = 100 - (dtiRatio-20)*(100.0/40.0)
-	}
+	health := kernel.ComputeHealthScore(kernel.HealthInputs{
+		AsOf:                 now,
+		IncomeThisMonth:      incomeThisMonth,
+		ExpenseThisMonth:     expenseThisMonth,
+		TotalMinDebtPayments: totalMinDebtPayments,
+		CashAvailable:        cashAvailable,
+		MonthlyLivingCost:    monthlyLivingCost,
+		EFCoverageMonths:     efCoverageMonths,
+		EFTargetMonths:       efTargetMonths,
+		ReconciliationRate:   reconciliationRate,
+		MinMonthlyIncome:     minIncome,
+		MaxMonthlyIncome:     maxIncome,
+	})
+	dtiRatio := health.DTIRatio
+	dtiStatus := health.DTIStatus
+	healthScoreVal := health.Score
+	healthRating := health.Rating
+	healthColor := health.StatusColor
+	reconciliationConfidence := health.ReconciliationConfidence
 
-	// EF Score (Weight 30%)
-	efCoverageMonths := 0.0
-	if monthlyLivingCost > 0 {
-		efCoverageMonths = efTotal / monthlyLivingCost
-	}
-	efScore := math.Min(100, (efCoverageMonths/6.0)*100)
-
-	// Cash Score (Weight 20%)
-	cashScore := 0.0
-	if monthlyLivingCost > 0 {
-		cashScore = math.Min(100, (cashAvailable/monthlyLivingCost)*50.0)
-	}
-
-	// Savings Rate Score (Weight 20%)
-	savingsThisMonth := incomeThisMonth - expenseThisMonth
-	if savingsThisMonth < 0 {
-		savingsThisMonth = 0
-	}
-	savingsRateScore := 0.0
-	if incomeThisMonth > 0 {
-		savingsRateScore = math.Min(100, (savingsThisMonth/incomeThisMonth)*200)
-	}
-
-	healthScoreVal := int(math.Round((0.3 * dtiScore) + (0.3 * efScore) + (0.2 * cashScore) + (0.2 * savingsRateScore)))
-	var healthRating, healthColor string
-	if healthScoreVal >= 80 {
-		healthRating = "Excellent"
-		healthColor = "Green"
-	} else if healthScoreVal >= 60 {
-		healthRating = "Good"
-		healthColor = "Green"
-	} else if healthScoreVal >= 40 {
-		healthRating = "Fair"
-		healthColor = "Yellow"
-	} else if healthScoreVal >= 20 {
-		healthRating = "Poor"
-		healthColor = "Orange"
-	} else {
-		healthRating = "Critical"
-		healthColor = "Red"
-	}
-
-	// 9. Forecast & Safe to Spend Calculations
+	// 9. Forecast & Safe to Spend — shared calculation kernel.
 	daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
 	daysRemaining := daysInMonth - now.Day()
 	if daysRemaining < 0 {
 		daysRemaining = 0
 	}
-	dailyVariableExpense := monthlyLivingCost / 30.0
-	projectedRemainingExpenses := dailyVariableExpense * float64(daysRemaining)
-
-	forecastEndMonth := cashAvailable - projectedRemainingExpenses
+	cf := kernel.ComputeCashflow(kernel.CashflowInputs{
+		AsOf:                      now,
+		CashAvailable:             cashAvailable,
+		IncomeMTD:                 incomeThisMonth,
+		ExpenseMTD:                expenseThisMonth,
+		EstimatedIncome:           incomeThisMonth, // dashboard has MTD only; treat as current-month signal
+		EstimatedFixedExpenses:    totalMinDebtPayments,
+		EstimatedVariableExpenses: monthlyLivingCost,
+		MonthlyLivingCost:         monthlyLivingCost,
+		MinDebtPayments:           totalMinDebtPayments,
+		IsCurrentMonth:            true,
+		DaysRemaining:             daysRemaining,
+		DaysInMonth:               daysInMonth,
+	})
+	conservativeSTS := cf.SafeToSpendScenarios.Conservative
+	expectedSTS := cf.SafeToSpendScenarios.Expected
+	optimisticSTS := cf.SafeToSpendScenarios.Optimistic
+	safeToSpend := cf.SafeToSpend
+	forecastEndMonth := cf.ProjectedEndBalance
 	if forecastEndMonth < 0 {
 		forecastEndMonth = 0
 	}
-
-	safeToSpend := incomeThisMonth - totalMinDebtPayments - (projectedRemainingExpenses * 0.8) - (incomeThisMonth * 0.05)
-	if safeToSpend < 0 {
-		safeToSpend = 0
-	}
+	dataSufficient := cf.DataQuality.IsSufficient
 
 	// 10. Next Action Advice Rule Engine
 	var nextAction dto.NextActionDto
-	if efCoverageMonths < 6.0 {
-		needed := (6.0 * monthlyLivingCost) - efTotal
+	if !dataSufficient {
+		nextAction = dto.NextActionDto{Title: "Lengkapi Data Keuangan", Description: "Belum cukup histori pendapatan dan pengeluaran untuk memberi rekomendasi yang aman.", ActionLabel: "Catat Transaksi", ActionUrl: "/transactions", Priority: 0}
+	} else if efCoverageMonths < efTargetMonths {
+		needed := (efTargetMonths * monthlyLivingCost) - efTotal
 		if needed < 0 {
 			needed = 0
 		}
 		nextAction = dto.NextActionDto{
 			Title:       "Top Up Dana Darurat",
-			Description: fmt.Sprintf("Dana darurat Anda saat ini baru mencakup %.1f bulan pengeluaran hidup. Segera top up Rp %s lagi untuk mencapai target aman 6 bulan.", efCoverageMonths, formatNumber(needed)),
+			Description: fmt.Sprintf("Dana darurat Anda saat ini baru mencakup %.1f bulan pengeluaran hidup. Segera top up Rp %s lagi untuk mencapai target aman %.0f bulan (%s).", efCoverageMonths, formatNumber(needed), efTargetMonths, efRes.TargetRationale),
 			ActionLabel: "Top Up Sekarang",
 			ActionUrl:   "/accounts",
 			Priority:    1,
@@ -304,15 +326,15 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			Priority:    3,
 		}
 	} else {
-		surplus := incomeThisMonth - expenseThisMonth - totalMinDebtPayments
-		if surplus < 0 {
-			surplus = 0
-		}
+		surplus := cf.Surplus
 		nextAction = dto.NextActionDto{
-			Title:       "Alokasikan ke Investasi",
-			Description: fmt.Sprintf("Kondisi keuangan Anda prima! Alokasikan dana surplus bulan ini sekitar Rp %s ke instrumen reksa dana atau saham produktif.", formatNumber(surplus)),
-			ActionLabel: "Lihat Investasi",
-			ActionUrl:   "/assets",
+			Title: "Tinjau Alokasi Surplus",
+			Description: fmt.Sprintf(
+				"Estimasi surplus ~Rp %s tersedia setelah kewajiban. Tinjau opsi: tambah buffer kas, percepat target, atau sisihkan untuk tujuan jangka panjang. Bukan rekomendasi produk investasi.",
+				formatNumber(surplus),
+			),
+			ActionLabel: "Lihat Opsi Alokasi",
+			ActionUrl:   "/allocation",
 			Priority:    4,
 		}
 	}
@@ -347,6 +369,7 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			FROM accounts a
 			LEFT JOIN currencies curr ON a.currency = curr.code
 			WHERE a.user_id = $1 AND a.created_at <= $2 AND (a.deleted_at IS NULL OR a.deleted_at > $2)
+			  AND NOT EXISTS (SELECT 1 FROM assets linked WHERE linked.linked_account_id = a.id AND linked.deleted_at IS NULL)
 		`, userID, monthEnd).Scan(&currentAccountsTotal)
 
 		var netTxAfterMonth float64
@@ -436,15 +459,35 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 	}
 
 	// 14. Insight Summary
+	savingsThisMonth := incomeThisMonth - expenseThisMonth
+	if savingsThisMonth < 0 {
+		savingsThisMonth = 0
+	}
 	insightSummary := "Arus kas bersih keluarga Anda bulan ini positif. "
-	if savingsThisMonth > 0 {
+	if savingsThisMonth > 0 && incomeThisMonth > 0 {
 		insightSummary += fmt.Sprintf("Anda telah menyisihkan surplus sebesar Rp %s (%d%% dari income) bulan ini.", formatNumber(savingsThisMonth), int(savingsThisMonth/incomeThisMonth*100))
 	} else {
 		insightSummary += "Pengeluaran Anda bulan ini sama atau lebih besar dari pendapatan. Batasi pengeluaran non-primer."
 	}
 
-	// Net Worth (Total Assets - Total Debts)
-	netWorth := totalAssets - totalDebts
+	// Canonical net worth includes independently valued assets plus account
+	// balances, less liabilities. Assets linked to an account already source their
+	// value from that account, so exclude the linked account from the second sum.
+	var netWorthAccounts float64
+	err = s.dbPool.QueryRow(ctx, `
+		SELECT COALESCE(SUM(ac.balance * COALESCE(curr.exchange_rate_to_idr, 1.0)), 0)
+		FROM accounts ac
+		LEFT JOIN currencies curr ON ac.currency = curr.code
+		WHERE ac.user_id = $1 AND ac.is_active = true AND ac.deleted_at IS NULL
+		  AND NOT EXISTS (
+			SELECT 1 FROM assets a
+			WHERE a.linked_account_id = ac.id AND a.deleted_at IS NULL
+		  )
+	`, userID).Scan(&netWorthAccounts)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch net-worth accounts: %w", err)
+	}
+	netWorth := totalAssets + netWorthAccounts - totalDebts
 
 	resp := dto.DashboardResponse{
 		NetWorth: dto.MoneyValue{
@@ -472,11 +515,33 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 		},
 		DTIRatio:  dtiRatio,
 		DTIStatus: dtiStatus,
-		HealthScore: dto.HealthScoreDto{
-			Score:       healthScoreVal,
-			Rating:      healthRating,
-			StatusColor: healthColor,
-		},
+		HealthScore: func() dto.HealthScoreDto {
+			comps := make([]dto.HealthComponentDto, 0, len(health.Components))
+			for _, c := range health.Components {
+				comps = append(comps, dto.HealthComponentDto{
+					Key: c.Key, Label: c.Label, Weight: c.Weight,
+					RawScore: c.RawScore, Weighted: c.Weighted, Included: c.Included,
+					Explain: c.Explain, ValueLabel: c.ValueLabel,
+				})
+			}
+			return dto.HealthScoreDto{
+				Score:                    healthScoreVal,
+				Rating:                   healthRating,
+				StatusColor:              healthColor,
+				ReconciliationRate:       reconciliationRate,
+				ReconciliationConfidence: reconciliationConfidence,
+				FormulaVersion:           health.FormulaVersion,
+				RawScore:                 health.RawScore,
+				DataConfidence:           health.DataConfidence,
+				IsSufficient:             health.IsSufficient,
+				MissingFields:            health.MissingFields,
+				Components:               comps,
+				Methodology:              health.Methodology,
+				Disclaimer:               health.Disclaimer,
+				IsCreditScore:            false,
+				Assumptions:              health.Assumptions,
+			}
+		}(),
 		UpcomingBills: dbBills,
 		ForecastEndMonth: dto.MoneyValue{
 			Value:          forecastEndMonth,
@@ -486,10 +551,24 @@ func (s *dashboardService) GetDashboardData(ctx context.Context, userID string) 
 			Value:          safeToSpend,
 			FormattedValue: formatRupiah(safeToSpend),
 		},
+		SafeToSpendScenarios: dto.SafeToSpendScenarios{
+			Conservative: dto.MoneyValue{Value: conservativeSTS, FormattedValue: formatRupiah(conservativeSTS)},
+			Expected:     dto.MoneyValue{Value: expectedSTS, FormattedValue: formatRupiah(expectedSTS)},
+			Optimistic:   dto.MoneyValue{Value: optimisticSTS, FormattedValue: formatRupiah(optimisticSTS)},
+		},
+		DataSufficiency: &dto.DataSufficiency{
+			IsSufficient:       cf.DataQuality.IsSufficient,
+			MissingFields:      cf.DataQuality.MissingFields,
+			UsesFallbackValues: cf.DataQuality.UsesFallbackValues,
+			Confidence:         cf.DataQuality.Confidence,
+		},
 		RecentAlerts:   recentAlerts,
 		InsightSummary: insightSummary,
 		NextAction:     nextAction,
 		NetWorthTrend:  netWorthTrend,
+		AsOf:           cf.AsOf.Format(time.RFC3339),
+		FormulaVersion: cf.FormulaVersion,
+		Assumptions:    cf.Assumptions,
 	}
 
 	// Cache to Redis with 5 minutes TTL

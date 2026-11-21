@@ -11,6 +11,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
+import { MetricHelp } from '../components/ui/MetricHelp';
 import {
   Shield,
   Coins,
@@ -140,18 +141,32 @@ export const EmergencyFundPage: React.FC = () => {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <PageHeader
-        title="Dana Darurat & Investasi"
-        subtitle="Pantau ketahanan finansial keluarga serta proporsi kas likuid terhadap portofolio investasi."
-        actions={
-          isOwner && (
-            <Button variant="secondary" onClick={openConfig}>
-              <Settings className="h-4 w-4" />
-              Konfigurasi Target
-            </Button>
-          )
-        }
-      />
+      <div className="space-y-1">
+        <PageHeader
+          title={
+            <span className="inline-flex items-center gap-2">
+              Dana Darurat &amp; Investasi
+              <MetricHelp metric="ef_coverage" />
+            </span>
+          }
+          subtitle="Pantau ketahanan finansial keluarga serta proporsi kas likuid terhadap portofolio investasi."
+          actions={
+            isOwner && (
+              <Button variant="secondary" onClick={openConfig}>
+                <Settings className="h-4 w-4" />
+                Konfigurasi Target
+              </Button>
+            )
+          }
+        />
+        {(ef.formula_version || ef.as_of || ef.target_rationale) && (
+          <p className="text-[11px] font-medium text-slate-400">
+            {ef.target_rationale ? `Target: ${ef.target_rationale}` : ''}
+            {ef.formula_version ? ` · formula ${ef.formula_version}` : ''}
+            {ef.as_of ? ` · as of ${new Date(ef.as_of).toLocaleString('id-ID')}` : ''}
+          </p>
+        )}
+      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Emergency Fund Card */}
