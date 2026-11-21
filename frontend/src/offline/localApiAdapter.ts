@@ -1790,6 +1790,53 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
   }
 
   // ---------------- GOALS ----------------
+  if (path === '/goals/plan' && method === 'GET') {
+    const dash = computeDashboard(db);
+    const activeGoals = db.goals.filter((g) => g.status === 'active');
+    const items = activeGoals.map((g, idx) => {
+      const rem = Math.max(0, g.target_amount - g.current_amount);
+      const monthsRem = g.target_date
+        ? Math.max(
+            1,
+            Math.ceil((new Date(g.target_date).getTime() - Date.now()) / (1000 * 60 * 60 * 24 * 30))
+          )
+        : undefined;
+      const monthlyReq = monthsRem ? Math.round(rem / monthsRem) : 0;
+      return {
+        id: g.id,
+        name: g.name,
+        type: g.type,
+        priority: g.priority ?? idx + 1,
+        remaining: rem,
+        months_remaining: monthsRem,
+        monthly_required: monthlyReq,
+        allocated_monthly: Math.min(monthlyReq, Math.max(0, Math.round(dash.safe_to_spend.value))),
+        funding_share: 100,
+        feasibility_status: g.target_date ? 'on_track' : 'no_deadline',
+        delay_months: 0,
+        is_affordable: true,
+        funding_gap: 0,
+        note: 'Perhitungan lokal on-device',
+      };
+    });
+    const totalReq = items.reduce((s, i) => s + i.monthly_required, 0);
+    return makeOk(config, {
+      data: {
+        as_of: nowIso(),
+        formula_version: 'local-offline-v1',
+        monthly_surplus: dash.safe_to_spend.value,
+        reserved_higher_priority: 0,
+        available_for_goals: dash.safe_to_spend.value,
+        total_monthly_required: totalReq,
+        total_allocated: Math.min(totalReq, Math.max(0, dash.safe_to_spend.value)),
+        unfunded_gap: Math.max(0, totalReq - Math.max(0, dash.safe_to_spend.value)),
+        items,
+        conflicts: [],
+        trade_offs: [],
+        assumptions: ['Dihitung secara lokal dari saldo kas dan target aktif di perangkat.'],
+      },
+    });
+  }
   if (path === '/goals' && method === 'GET') return makeOk(config, { data: db.goals });
   if (path === '/goals' && method === 'POST') {
     const req = parseJsonBody<CreateGoalPayload>(config.data);
@@ -2522,6 +2569,144 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
     const found = db.backups.find((b) => b.file_name === decodeURIComponent(backupDlMatch[1]));
     if (!found) makeError(config, 404, 'File backup tidak ditemukan.');
     return makeOk(config, new Blob([found.snapshot], { type: 'application/json' }));
+  }
+
+  // ---------------- DATA QUALITY, BACKTEST & PRIVACY (Offline-first) ----------------
+  if (path === '/data-quality' && method === 'GET') {
+    const hasAccounts = db.accounts.length > 0;
+    const hasTx = db.transactions.length > 0;
+    const score = (hasAccounts ? 50 : 20) + (hasTx ? 40 : 15) + 10;
+    const confidence = hasAccounts && hasTx ? 'high' : hasAccounts ? 'medium' : 'low';
+    const issues = !hasAccounts
+      ? [
+          {
+            code: 'no_accounts',
+            severity: 'warning',
+            title: 'Belum ada rekening terdaftar',
+            detail: 'Tambahkan minimal 1 rekening atau dompet agar proyeksi & kesehatan kas akurat.',
+            cta_label: 'Tambah Rekening',
+            cta_url: '/accounts',
+          },
+        ]
+      : [];
+    return makeOk(config, {
+      data: {
+        as_of: nowIso(),
+        formula_version: 'local-offline-v1',
+        overall_score: score,
+        overall_confidence: confidence,
+        grade: score >= 85 ? 'A' : score >= 65 ? 'B' : 'C',
+        completeness_score: score,
+        freshness_score: 100,
+        hygiene_score: 95,
+        reconciliation_rate: 1,
+        reconciliation_confidence: 1,
+        uncategorized_rate: 0,
+        issues,
+        accounts: db.accounts.map((a) => ({
+          account_id: a.id,
+          account_name: a.name,
+          type: a.type,
+          currency: a.currency,
+          score: 100,
+          freshness: 'fresh',
+          has_recent_reconcile: true,
+          days_since_last_tx: 0,
+          balance: a.balance,
+          formatted_balance: formatRupiah(a.balance),
+        })),
+        gates: [
+          { metric: 'dti', visible: true, degraded: !hasTx, confidence },
+          { metric: 'health_score', visible: true, degraded: !hasTx, confidence },
+          { metric: 'safe_to_spend', visible: true, degraded: !hasAccounts, confidence },
+          { metric: 'forecast', visible: true, degraded: !hasTx, confidence },
+        ],
+        missing_inputs: [
+          ...(hasAccounts ? [] : ['rekening']),
+          ...(hasTx ? [] : ['riwayat transaksi']),
+        ],
+        decision_metrics_hidden: [],
+        decision_metrics_degraded: [],
+      },
+    });
+  }
+  if (path === '/forecast/backtest' && method === 'GET') {
+    return makeOk(config, {
+      data: {
+        as_of: nowIso(),
+        formula_version: 'local-offline-v1',
+        overall: {
+          horizon_days: 30,
+          label: '30 Hari',
+          sample_size: 0,
+          mae: 0,
+          formatted_mae: formatRupiah(0),
+          wape: 0,
+          bias: 0,
+          formatted_bias: formatRupiah(0),
+          directional_accuracy: 0,
+        },
+        by_horizon: [],
+        points: [],
+        points_used: 0,
+        points_skipped: 0,
+        metric_note: 'Backtest historis membutuhkan riwayat tutup buku bulanan.',
+      },
+    });
+  }
+  if (path === '/protection/assessment' && method === 'GET') {
+    const ef = computeEmergencyFundSummary(db);
+    return makeOk(config, {
+      data: {
+        as_of: nowIso(),
+        formula_version: 'local-offline-v1',
+        has_health_insurance: false,
+        has_life_insurance: false,
+        has_emergency_fund: ef.coverage_months >= 3,
+        emergency_fund_months: ef.coverage_months,
+        income_earners_count: 1,
+        dependents_count: 0,
+        protection_score: ef.coverage_months >= 6 ? 75 : 45,
+        gaps: [],
+        recommendations: ['Lengkapi dana darurat minimal 6 bulan pengeluaran rutin.'],
+        life_cover_need: 0,
+        existing_life_cover: 0,
+        life_cover_gap: 0,
+        income_replacement: 0,
+        debt_clearance: db.debts.filter((d) => d.status === 'active').reduce((s, d) => s + d.outstanding_balance, 0),
+        dependent_education_buffer: 0,
+        funeral_buffer: 0,
+        liquid_offset: ef.total_emergency_fund.value,
+        is_sufficient: true,
+        is_product_advice: false,
+      },
+    });
+  }
+  if (path === '/privacy/policy' && method === 'GET') {
+    return makeOk(config, {
+      data: {
+        as_of: nowIso(),
+        formula_version: 'local-offline-v1',
+        retention_rules: [
+          {
+            data_class: 'Data Keuangan Lokal Perangkat',
+            retention_days: 0,
+            rationale: 'Tersimpan 100% di memori lokal HP sampai Anda menghapusnya atau uninstall aplikasi.',
+            user_deletable: true,
+          },
+        ],
+        ai_consent_granted: db.ai_settings.ai_enabled,
+        ai_consent_required: true,
+        export_available: true,
+        delete_available: true,
+        redaction_enabled: true,
+        rights: ['Ekspor seluruh data JSON/CSV', 'Hapus seluruh data lokal kapan saja'],
+      },
+    });
+  }
+  if (path === '/privacy/export' && method === 'GET') {
+    const snapshot = JSON.stringify({ ...db, backups: [] }, null, 2);
+    return makeOk(config, new Blob([snapshot], { type: 'application/json' }));
   }
 
   // ---------------- SHARED VIEW (Read-only fallback in local mode) ----------------

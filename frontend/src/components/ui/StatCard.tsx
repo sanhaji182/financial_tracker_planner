@@ -4,7 +4,7 @@ import { ArrowUpRight } from 'lucide-react';
 type IconTone = 'indigo' | 'emerald' | 'rose' | 'amber' | 'sky' | 'slate';
 
 interface StatCardProps {
-  label: string;
+  label: React.ReactNode;
   value: React.ReactNode;
   subtext?: React.ReactNode;
   icon?: React.ReactNode;
