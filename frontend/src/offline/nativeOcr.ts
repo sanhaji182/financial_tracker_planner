@@ -1,17 +1,31 @@
-import { Capacitor, registerPlugin } from '@capacitor/core';
+import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
 import type { Account, AccountScanParsedData, AccountScanResponse } from '../services/accounts';
 import type { Category } from '../services/categories';
 import type {
+  Debt,
   DebtPaymentScanParsedData,
   DebtScanParsedData,
   DebtScanResponse,
 } from '../services/debts';
 import type {
   DocumentUploadParseResponse,
+  ParsedOCRItem,
   ParsedPDFTransaction,
 } from '../services/transactions';
 import { getTodayLocalDate } from '../utils/date';
-import type { LocalAISettings } from './storage';
+import {
+  findMerchantMemory,
+  getHybridAISettings,
+  type LocalAISettings,
+} from './storage';
+
+export interface SharedFilePayload {
+  id?: string;
+  base64: string;
+  mimeType: string;
+  fileName: string;
+  extraText?: string;
+}
 
 export interface LocalOcrPlugin {
   isAvailable(): Promise<{ available: boolean; engine: string }>;
@@ -26,6 +40,11 @@ export interface LocalOcrPlugin {
     totalPages?: number;
     engine: string;
   }>;
+  consumePendingShares(): Promise<{ files: SharedFilePayload[] }>;
+  addListener(
+    eventName: 'sharedFilesReceived',
+    listenerFunc: (data: { files: SharedFilePayload[] }) => void
+  ): Promise<PluginListenerHandle>;
 }
 
 export const LocalOcr = registerPlugin<LocalOcrPlugin>('LocalOcr');
@@ -34,7 +53,95 @@ export const localOcrBridge = {
   recognizeImage: (options: { base64: string }) => LocalOcr.recognizeImage(options),
   recognizePdf: (options: { base64: string; maxPages?: number; password?: string }) =>
     LocalOcr.recognizePdf(options),
+  consumePendingShares: async (): Promise<{ files: SharedFilePayload[] }> => {
+    if (!Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('LocalOcr')) {
+      return { files: [] };
+    }
+    return LocalOcr.consumePendingShares();
+  },
+  addShareListener: async (
+    listener: (data: { files: SharedFilePayload[] }) => void
+  ): Promise<{ remove: () => Promise<void> | void }> => {
+    if (!Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('LocalOcr')) {
+      return { remove: () => {} };
+    }
+    return LocalOcr.addListener('sharedFilesReceived', listener);
+  },
 };
+
+const bufferedSharedPayloads: SharedFilePayload[] = [];
+const seenSharedIds = new Set<string>();
+
+function deduplicateSharePayloads(items: SharedFilePayload[]): SharedFilePayload[] {
+  const unique: SharedFilePayload[] = [];
+  for (const item of items) {
+    if (!item || (!item.base64 && !item.extraText)) continue;
+    const key = item.id || `${item.fileName}:${item.base64.slice(0, 48)}`;
+    if (seenSharedIds.has(key)) continue;
+    seenSharedIds.add(key);
+    unique.push(item);
+  }
+  return unique;
+}
+
+export function enqueueSharedPayloads(items: SharedFilePayload[]): SharedFilePayload[] {
+  const fresh = deduplicateSharePayloads(items);
+  if (fresh.length > 0) {
+    bufferedSharedPayloads.push(...fresh);
+  }
+  return fresh;
+}
+
+export async function pullPendingSharedPayloads(): Promise<SharedFilePayload[]> {
+  let nativeFiles: SharedFilePayload[] = [];
+  try {
+    const res = await localOcrBridge.consumePendingShares();
+    if (Array.isArray(res?.files) && res.files.length > 0) {
+      nativeFiles = deduplicateSharePayloads(res.files);
+    }
+  } catch {
+    nativeFiles = [];
+  }
+
+  const buffered = bufferedSharedPayloads.splice(0, bufferedSharedPayloads.length);
+  return [...buffered, ...nativeFiles];
+}
+
+export async function peekBufferedSharedPayloads(): Promise<boolean> {
+  try {
+    const res = await localOcrBridge.consumePendingShares();
+    if (Array.isArray(res?.files) && res.files.length > 0) {
+      enqueueSharedPayloads(res.files);
+    }
+  } catch {
+    // Ignore when plugin is unavailable
+  }
+  return bufferedSharedPayloads.length > 0;
+}
+
+export function sharedPayloadToFile(payload: SharedFilePayload): File {
+  const cleanBase64 = stripDataUrlPrefix(payload.base64 || '');
+  const mimeType = payload.mimeType || 'image/jpeg';
+  const fileName =
+    payload.fileName || (mimeType.includes('pdf') ? 'shared-receipt.pdf' : 'shared-receipt.jpg');
+
+  let bytes: Uint8Array<ArrayBuffer>;
+  if (!cleanBase64 && payload.extraText) {
+    const encoded = new TextEncoder().encode(payload.extraText);
+    const buf = new ArrayBuffer(encoded.byteLength);
+    bytes = new Uint8Array(buf);
+    bytes.set(encoded);
+  } else {
+    const binary = typeof atob === 'function' ? atob(cleanBase64) : '';
+    const buf = new ArrayBuffer(binary.length);
+    bytes = new Uint8Array(buf);
+    for (let i = 0; i < binary.length; i += 1) {
+      bytes[i] = binary.charCodeAt(i);
+    }
+  }
+
+  return new File([bytes], fileName, { type: mimeType });
+}
 
 const MONTH_MAP: Record<string, string> = {
   jan: '01',
@@ -122,6 +229,16 @@ export async function extractRawTextFromFile(
   const dataUrl = await fileToDataUrl(file);
   const base64 = stripDataUrlPrefix(dataUrl);
 
+  if (file.type.startsWith('text/') || /\.(txt|csv)$/i.test(file.name)) {
+    const textContent = (await file.text().catch(() => '')).trim();
+    return {
+      text: textContent,
+      engine: 'shared-text',
+      isPdf: false,
+      dataUrl,
+    };
+  }
+
   const canCallNativePlugin =
     Capacitor.isNativePlatform() || Capacitor.isPluginAvailable('LocalOcr');
 
@@ -194,6 +311,36 @@ export async function extractRawTextFromFile(
   };
 }
 
+const NON_MONEY_LINE_RE =
+  /\b(?:n\s*p\s*w\s*p|n\.?p\.?w\.?p|npwf|mpwp|nfwp|nmid|nik|pkp|wajib\s*pajak|telp|telepon|phone|tlp|fax|whatsapp|kode\s*pos|no\.?\s*(?:seri|urut|anggota|member|kartu|rek(?:ening)?|va|virtual|meter|pelanggan|tlp|hp|struk|nota|bon|faktur|kasir|meja|transaksi|ref(?:erensi)?)|id\s*(?:pelanggan|transaksi|merchant|agen)|mid|tid|stan|appr(?:oval)?|batch|trace|rrn|ref\s*id|kode\s*referensi)\b/i;
+
+function stripNonMoneyIdentifiers(line: string): string {
+  return line
+    // Indonesian 15/16-digit NPWP like 01.308.524.8-092.000 or 01.308.524.8.092.000
+    .replace(
+      /(?<![.,\d])[0-9OIl]{2,3}[.,\s][0-9OIl]{3}[.,\s][0-9OIl]{3}[.,\s][0-9OIl](?:\s*(?:-|–|[.,\s])\s*[0-9OIl]{3}[.,\s][0-9OIl]{3})?(?![.,\d])/g,
+      ' '
+    )
+    // Hyphen-connected digit/OCR sequences like O1.308.524-8-092.000 or 1234-5678-9012
+    .replace(
+      /(?<![.,\d])[0-9OIl][0-9OIl.,]{3,}\s*(?:-|–)\s*[0-9OIl.,]*\d[0-9OIl.,]*/g,
+      ' '
+    )
+    // Multi-dot IDs ending in a single check digit like 1.308.524.8
+    .replace(/(?<![.,\d])\d{1,3}(?:[.,]\d{3})+[.,]\d(?!\d)(?:\s*(?:-|–|[.,])\s*\d+)*/g, ' ')
+    // Dotted number sequences starting with zero like 01.308.524 or 092.000
+    .replace(/(?<![.,\d])0\d{1,2}(?:[.,]\d{1,3})+(?![.,\d])/g, ' ')
+    // Unprefixed long contiguous numbers (barcodes, NIK, Virtual Accounts)
+    .replace(/(?<!(?:rp|idr)\.?\s*)\b\d{10,16}\b/gi, ' ')
+    // Dates and timestamps so numbers inside dates/times are not picked as money
+    .replace(/(?<![.,\d])20\d{2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{1,2}(?![.,\d])/g, ' ')
+    .replace(/(?<![.,\d])\d{1,2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{2,4}(?![.,\d])/g, ' ')
+    .replace(/(?<![.,\d])\d{1,2}:\d{2}(?::\d{2})?(?:\s*(?:wib|wita|wit))?\b/gi, ' ')
+    .replace(/(?<![.,\d])\d{1,2}\.\d{2}(?:\.\d{2})?\s*(?:wib|wita|wit)\b/gi, ' ')
+    // Indonesian phone numbers
+    .replace(/(?<![.,\d])(?:\+62|62|08)\d[\d\s.-]{6,14}\b/g, ' ');
+}
+
 export function parseIndonesianMoney(raw: string): number {
   let clean = raw
     .replace(/(?:rp|idr)/gi, '')
@@ -202,6 +349,11 @@ export function parseIndonesianMoney(raw: string): number {
     .trim();
 
   if (!clean) return 0;
+
+  // Reject dotted codes that have irregular group sizes (e.g. 01.308.524.8)
+  if (/^\d{1,3}(?:[.,]\d{3})+[.,]\d$/.test(clean)) {
+    return 0;
+  }
 
   // Handle decimal comma like 1.250.000,00 or 250000,50
   if (/,\d{1,2}$/.test(clean)) {
@@ -221,17 +373,53 @@ export function parseIndonesianMoney(raw: string): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-function extractMoneyCandidates(line: string): number[] {
+function extractMoneyCandidates(
+  line: string,
+  options?: { allowPlainInteger?: boolean }
+): number[] {
+  const sanitized = stripNonMoneyIdentifiers(line);
+  const hasNonMoneyKeyword = NON_MONEY_LINE_RE.test(line);
+
   const candidates: number[] = [];
-  const pattern = /(?:rp|idr)?\s*\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{1,2})?|(?:rp|idr)\s*\d+(?:[.,]\d{1,2})?/gi;
-  let match: RegExpExecArray | null = pattern.exec(line);
+  const pattern = hasNonMoneyKeyword
+    ? /(?:rp|idr)\.?\s*[1-9]\d*(?:[.,]\d{3})*(?:[.,]\d{2})?(?:,-)?(?![.,]\d|\d)/gi
+    : /(?:rp|idr)\.?\s*[1-9]\d*(?:[.,]\d{3})*(?:[.,]\d{2})?(?:,-)?(?![.,]\d|\d)|(?<![.,\d-])[1-9]\d{0,2}(?:[.,]\d{3})+(?:[.,]\d{2})?(?:,-)?(?![.,]\d|\d)/gi;
+
+  let match: RegExpExecArray | null = pattern.exec(sanitized);
   while (match) {
     const val = parseIndonesianMoney(match[0]);
-    if (val >= 500) {
+    const isPrefixed = /^(?:rp|idr)/i.test(match[0].trim());
+    if (val >= 500 && (isPrefixed ? val < 100_000_000_000 : val < 1_000_000_000)) {
       candidates.push(val);
     }
-    match = pattern.exec(line);
+    match = pattern.exec(sanitized);
   }
+
+  // Handle faded thermal paper where ML Kit omits dots (e.g. "TOTAL : 29500" or "29 500")
+  if (candidates.length === 0 && options?.allowPlainInteger && !hasNonMoneyKeyword) {
+    const spacedPattern = /\b([1-9]\d{0,2}(?:\s\d{3})+)\b/g;
+    let spMatch: RegExpExecArray | null = spacedPattern.exec(sanitized);
+    while (spMatch) {
+      const val = parseIndonesianMoney(spMatch[1].replace(/\s+/g, ''));
+      if (val >= 500 && val < 1_000_000_000) {
+        candidates.push(val);
+      }
+      spMatch = spacedPattern.exec(sanitized);
+    }
+
+    if (candidates.length === 0) {
+      const plainPattern = /(?<![.,\d-])([1-9]\d{2,7})(?![.,\d])/g;
+      let plMatch: RegExpExecArray | null = plainPattern.exec(sanitized);
+      while (plMatch) {
+        const val = Number.parseInt(plMatch[1], 10);
+        if (val >= 500 && val < 100_000_000) {
+          candidates.push(val);
+        }
+        plMatch = plainPattern.exec(sanitized);
+      }
+    }
+  }
+
   return candidates;
 }
 
@@ -370,33 +558,41 @@ function suggestCategoryForText(
   const findByKeyword = (kw: RegExp) => pool.find((c) => kw.test(c.name.toLowerCase()));
 
   if (txType === 'expense') {
-    if (/indomaret|alfamart|superindo|hypermart|grocery|belanja|tokopedia|shopee|lazada/.test(lower)) {
+    if (
+      /indomaret|alfamart|superindo|hypermart|minimarket|familymart|lawson|circle\s*k|guardian|watsons|grocery|belanja|tokopedia|shopee|lazada|blibli/.test(
+        lower
+      )
+    ) {
       const cat = findByKeyword(/belanja/);
-      if (cat) return { id: cat.id, name: cat.name, confidence: 0.78 };
-    }
-    if (/kopi|cafe|resto|warung|makan|gofood|grabfood|shopeefood|kfc|mcd|starbucks/.test(lower)) {
-      const cat = findByKeyword(/makan/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.8 };
     }
-    if (/pertamina|shell|spbu|bensin|parkir|tol|grab|gojek|kereta|mrt|buss/.test(lower)) {
-      const cat = findByKeyword(/transport/);
-      if (cat) return { id: cat.id, name: cat.name, confidence: 0.78 };
+    if (
+      /kopi|cafe|resto|warung|makan|gofood|grabfood|shopeefood|kfc|mcd|starbucks|kenangan|janji\s*jiwa|fore|mixue|chatime|bakery|roti|nasi|bakso|ayam|soto|kedai/.test(
+        lower
+      )
+    ) {
+      const cat = findByKeyword(/makan/);
+      if (cat) return { id: cat.id, name: cat.name, confidence: 0.84 };
     }
-    if (/pln|listrik|pdam|wifi|indihome|biznet|telkomsel|pulsa|paket data|bpjs/.test(lower)) {
+    if (/pertamina|shell|spbu|bensin|parkir|tol|grab|gojek|kereta|mrt|busway|transjakarta|kai/.test(lower)) {
+      const cat = findByKeyword(/transport/);
+      if (cat) return { id: cat.id, name: cat.name, confidence: 0.8 };
+    }
+    if (/pln|listrik|pdam|wifi|indihome|biznet|telkomsel|indosat|xl\b|pulsa|paket\s*data|bpjs/.test(lower)) {
       const cat = findByKeyword(/tagihan|utilitas/);
+      if (cat) return { id: cat.id, name: cat.name, confidence: 0.84 };
+    }
+    if (/cicilan|spaylater|kredivo|akulaku|angsuran|kartu\s*kredit|kpr/.test(lower)) {
+      const cat = findByKeyword(/cicilan|utang/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.82 };
     }
-    if (/cicilan|spaylater|kredivo|angsuran|kartu kredit|kpr/.test(lower)) {
-      const cat = findByKeyword(/cicilan|utang/);
+    if (/apotek|kimia\s*farma|k24|klinik|rumah\s*sakit|dokter|halodoc/.test(lower)) {
+      const cat = findByKeyword(/kesehatan/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.8 };
     }
-    if (/apotek|kimia farma|klinik|rumah sakit|dokter|halodoc/.test(lower)) {
-      const cat = findByKeyword(/kesehatan/);
-      if (cat) return { id: cat.id, name: cat.name, confidence: 0.78 };
-    }
-    if (/netflix|spotify|youtube|bioskop|xxi|cgv|game/.test(lower)) {
+    if (/netflix|spotify|youtube|bioskop|xxi|cgv|game|steam/.test(lower)) {
       const cat = findByKeyword(/hiburan|langganan/);
-      if (cat) return { id: cat.id, name: cat.name, confidence: 0.76 };
+      if (cat) return { id: cat.id, name: cat.name, confidence: 0.78 };
     }
   } else {
     if (/gaji|payroll|salary/.test(lower)) {
@@ -412,6 +608,351 @@ function suggestCategoryForText(
   return { confidence: 0.3 };
 }
 
+const GENERIC_RECEIPT_HEADER_RE =
+  /^(?:struk|receipt|nota|invoice|mybca|bca\s*mobile|livin(?:'|\s+by\s+mandiri)?|brimo|wondr|bni\s*mobile|octo\s*mobile|seabank|bank\s*jago|gopay|ovo|dana|shopeepay|linkaja|qris|bi-?fast|rincian\s*transaksi|detail\s*transaksi|bukti\s*(?:transaksi|pembayaran|transfer)|(?:status\s*)?(?:transaksi|pembayaran(?:\s+\w+){0,2}|transfer(?:\s+\w+){0,2}|top\s*up)\s*(?:berhasil|sukses|selesai|diproses)|berhasil|sukses|selesai|terima\s*kasih)\b/i;
+
+const FIELD_LABEL_ONLY_RE =
+  /^(?:tanggal|waktu|date|time|nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran))?|total(?:\s*(?:bayar|tagihan|belanja|pembayaran|transaksi))?|subtotal|jumlah(?:\s*(?:bayar|transfer|transaksi))?|qty|harga|biaya\s*admin|sumber\s*dana|dari\s*rekening|rekening\s*sumber|metode\s*pembayaran|no\.?\s*ref(?:erensi)?|kode\s*referensi|id\s*transaksi|no\.?\s*transaksi|rrn|catatan|keterangan)\b(?:\s*(?::|=))?\s*$/i;
+
+const MERCHANT_LABEL_RE =
+  /^(?:nama\s*merchant|merchant\s*name|merchant|nama\s*toko|toko|outlet|nama\s*penerima|penerima|bayar\s*ke|pembayaran\s*ke|rekening\s*tujuan|tujuan|kepada|ke)\b(?:\s*(?::|=)\s*|\s{2,})?(.*)$/i;
+
+const PRODUCT_LABEL_RE =
+  /^(?:nama\s*produk|produk|nama\s*barang|barang|item|detail\s*pesanan|rincian\s*pesanan|pesanan|menu|paket|layanan|deskripsi\s*produk|untuk\s*pembelian|berita|catatan|keterangan)\b(?:\s*(?::|=)\s*|\s{2,})?(.*)$/i;
+
+const EXCLUDE_TOTAL_LINE_RE =
+  /\b(?:total\s*(?:item|qty|kuantitas|barang|pcs|diskon|discount|hemat|potongan|saving|ppn|pajak)|kembali(?:an)?|change|diskon|discount|hemat|potongan|saving|ppn|pajak|tax|dpp|biaya\s*admin|admin\s*bank|saldo)\b/i;
+
+const PRIMARY_TOTAL_LINE_RE =
+  /(?:grand\s*total|total\s*(?:bayar|tagihan|belanja|pembayaran|transaksi|harga|akhir)|jumlah\s*(?:bayar|tagihan|pembayaran|transfer|transaksi)|jml\s*(?:bayar|tagihan|belanja)|harga\s*jual|nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran|tagihan))?|bayar\s*qris)\b|^(?:total|nominal|jumlah)\b(?:\s*(?::|=|$))/i;
+
+const SECONDARY_TOTAL_LINE_RE =
+  /\b(?:sub\s*total|subtotal|tagihan|pembayaran|qris|debit|kredit)\b/i;
+
+const SUMMARY_STOP_LINE_RE =
+  /^(?:sub\s*total|subtotal|harga\s*jual|grand\s*total|total(?:\s*(?:bayar|belanja|tagihan|pembayaran|transaksi|item|qty|diskon))?|jml\s*(?:bayar|tagihan|belanja)|tunai|cash|kembali|kembalian|diskon|anda\s*hemat|ppn|dpp|npwp|nmid|sumber\s*dana|no\.?\s*ref)\b/i;
+
+function isNoiseMerchantCandidate(line: string): boolean {
+  const clean = line.trim();
+  if (!clean || clean.length < 2) return true;
+  if (/^[\d\W]+$/.test(clean)) return true;
+  if (/^(?:rp|idr)\s*[\d.,]+$/i.test(clean)) return true;
+  if (GENERIC_RECEIPT_HEADER_RE.test(clean)) return true;
+  if (FIELD_LABEL_ONLY_RE.test(clean)) return true;
+  if (NON_MONEY_LINE_RE.test(clean)) return true;
+  if (/\d{1,2}\s*(?::|\.)\d{2}\s*(?:wib|wita|wit)\b/i.test(clean)) return true;
+  if (/^(?:struk|receipt|tanggal|date|nota|invoice|total|qty|harga)/i.test(clean)) return true;
+  return false;
+}
+
+function buildWrappedNonMoneyIndexes(lines: string[]): Set<number> {
+  const skipIndexes = new Set<number>();
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!NON_MONEY_LINE_RE.test(line)) continue;
+    skipIndexes.add(i);
+
+    const digitCount = (line.match(/\d/g) || []).length;
+    if (digitCount < 6 && i + 1 < lines.length) {
+      const nextLine = lines[i + 1].trim();
+      if (/^[0-9OIl\s.,-]+$/.test(nextLine) && (nextLine.match(/\d/g) || []).length >= 5) {
+        skipIndexes.add(i + 1);
+      }
+    }
+  }
+  return skipIndexes;
+}
+
+function cleanPosItemName(rawName: string): string {
+  return rawName
+    // Strip leading numeric SKU / PLU barcode prefix (4-13 digits followed by letter or space)
+    .replace(/^\d{4,13}\s*(?=[A-Za-z])/, '')
+    .replace(/^[-*#.\s]+|[-*#.\s]+$/g, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
+}
+
+export function extractReceiptItemsAndProduct(
+  rawText: string,
+  merchantName: string,
+  _totalAmount = 0
+): { items: ParsedOCRItem[]; productName: string } {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+  const nonMoneyLineIndexes = buildWrappedNonMoneyIndexes(lines);
+
+  let labeledProduct = '';
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i].match(PRODUCT_LABEL_RE);
+    if (!m) continue;
+    const inlineVal = (m[1] || '').replace(/^(?::|=)\s*/, '').trim();
+    if (
+      inlineVal &&
+      !isNoiseMerchantCandidate(inlineVal) &&
+      !/^(?:berhasil|sukses|qris|transaksi|pembayaran)$/i.test(inlineVal)
+    ) {
+      labeledProduct = inlineVal.slice(0, 120);
+      break;
+    }
+    if (!inlineVal && i + 1 < lines.length) {
+      const nextVal = lines[i + 1].trim();
+      if (
+        !isNoiseMerchantCandidate(nextVal) &&
+        !/^(?:berhasil|sukses|qris|transaksi|pembayaran)$/i.test(nextVal)
+      ) {
+        labeledProduct = nextVal.slice(0, 120);
+        break;
+      }
+    }
+  }
+
+  const items: ParsedOCRItem[] = [];
+  const lowerMerchant = merchantName.trim().toLowerCase();
+
+  const shouldSkipItemLine = (line: string, idx: number): boolean => {
+    if (nonMoneyLineIndexes.has(idx)) return true;
+    if (!line || !/[A-Za-z]{2,}/.test(line)) return true;
+    if (NON_MONEY_LINE_RE.test(line)) return true;
+    if (EXCLUDE_TOTAL_LINE_RE.test(line)) return true;
+    if (GENERIC_RECEIPT_HEADER_RE.test(line)) return true;
+    if (FIELD_LABEL_ONLY_RE.test(line)) return true;
+    if (PRODUCT_LABEL_RE.test(line)) return true;
+    if (MERCHANT_LABEL_RE.test(line)) return true;
+    if (/\b(?:jl\.|jalan|kec\.|kel\.|kab\.|kota|rt\s*\d|rw\s*\d)\b/i.test(line)) return true;
+    if (/^\d{1,2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{2,4}/.test(line)) return true;
+    if (lowerMerchant && line.toLowerCase() === lowerMerchant) return true;
+    return false;
+  };
+
+  // Price group supports dotted Indonesian prices (10.500) OR plain integers (10500) on faded thermal receipts
+  const POS_PRICE = '(?:[1-9]\\d{0,2}(?:[.,]\\d{3})+|[1-9]\\d{3,6}|[5-9]\\d{2})';
+  const leadQtyRe = new RegExp(
+    `^(\\d{1,3})\\s*[xX*]\\s+([A-Za-z0-9][A-Za-z0-9\\s./&()-]{1,55}?)\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
+    'i'
+  );
+  const inlineQtyRe = new RegExp(
+    `^([A-Za-z0-9][A-Za-z0-9\\s./&()-]{2,55}?)\\s+(\\d{1,3})\\s*(?:pcs|btl|cup|porsi|x)?\\s*[xX*@]\\s*(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
+    'i'
+  );
+  const colQtyRe = new RegExp(
+    `^([A-Za-z0-9][A-Za-z0-9\\s./&()-]{2,55}?)\\s+(\\d{1,3})\\s+(${POS_PRICE})\\s+(${POS_PRICE})$`
+  );
+  const nextQtyRe = new RegExp(
+    `^(\\d{1,3})\\s*(?:pcs|btl|cup|porsi|item|ltr|kg)?\\s*[xX*@]?\\s*(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
+    'i'
+  );
+  const singleLineRe = new RegExp(
+    `^([A-Za-z0-9][A-Za-z0-9\\s./&()-]{2,55}?)\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s*[A-Z])?$`,
+    'i'
+  );
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (SUMMARY_STOP_LINE_RE.test(line)) {
+      if (items.length > 0) break;
+      continue;
+    }
+    if (shouldSkipItemLine(line, i)) continue;
+
+    // Pattern A1: leading qty e.g. "2x Es Kopi Susu 36.000" or "2x Es Kopi 36000"
+    const leadQty = line.match(leadQtyRe);
+    if (leadQty) {
+      const qty = Number.parseInt(leadQty[1], 10);
+      const name = cleanPosItemName(leadQty[2]);
+      const firstPrice = parseIndonesianMoney(leadQty[3]);
+      const secondPrice = leadQty[4] ? parseIndonesianMoney(leadQty[4]) : 0;
+      const lineTotal = secondPrice > 0 ? secondPrice : firstPrice;
+      const unitPrice = secondPrice > 0 ? firstPrice : Math.round(lineTotal / Math.max(1, qty));
+      if (qty > 0 && lineTotal >= 500 && /[A-Za-z]{2,}/.test(name) && !SUMMARY_STOP_LINE_RE.test(name)) {
+        items.push({ name, quantity: qty, price: unitPrice, total: lineTotal });
+        continue;
+      }
+    }
+
+    // Pattern A2: inline qty e.g. "200451INDOMIE GORENG 2 X 3100 6200" or "BEAR BRAND 2 X 10.500 21.000"
+    const inlineQty = line.match(inlineQtyRe);
+    if (inlineQty) {
+      const name = cleanPosItemName(inlineQty[1]);
+      const qty = Number.parseInt(inlineQty[2], 10);
+      const unitPrice = parseIndonesianMoney(inlineQty[3]);
+      const explicitTotal = inlineQty[4] ? parseIndonesianMoney(inlineQty[4]) : 0;
+      const lineTotal = explicitTotal > 0 ? explicitTotal : qty * unitPrice;
+      if (qty > 0 && unitPrice >= 500 && /[A-Za-z]{2,}/.test(name) && !SUMMARY_STOP_LINE_RE.test(name)) {
+        items.push({ name, quantity: qty, price: unitPrice, total: lineTotal });
+        continue;
+      }
+    }
+
+    // Pattern A3: POS columnar row e.g. "INDOMIE GORENG 2 3100 6200"
+    const colQty = line.match(colQtyRe);
+    if (colQty) {
+      const name = cleanPosItemName(colQty[1]);
+      const qty = Number.parseInt(colQty[2], 10);
+      const unitPrice = parseIndonesianMoney(colQty[3]);
+      const lineTotal = parseIndonesianMoney(colQty[4]);
+      if (
+        qty > 0 &&
+        unitPrice >= 500 &&
+        lineTotal >= 500 &&
+        /[A-Za-z]{2,}/.test(name) &&
+        !SUMMARY_STOP_LINE_RE.test(name)
+      ) {
+        items.push({ name, quantity: qty, price: unitPrice, total: lineTotal });
+        continue;
+      }
+    }
+
+    // Pattern B: Two-line POS item (Product name on line i, qty/price or price on line i + 1)
+    if (i + 1 < lines.length && extractMoneyCandidates(line).length === 0) {
+      const nextLine = lines[i + 1];
+      const nextQtyMatch = nextLine.match(nextQtyRe);
+      if (nextQtyMatch && !SUMMARY_STOP_LINE_RE.test(line) && !nonMoneyLineIndexes.has(i + 1)) {
+        const qty = Number.parseInt(nextQtyMatch[1], 10);
+        const unitPrice = parseIndonesianMoney(nextQtyMatch[2]);
+        const explicitTotal = nextQtyMatch[3] ? parseIndonesianMoney(nextQtyMatch[3]) : 0;
+        const lineTotal = explicitTotal > 0 ? explicitTotal : qty * unitPrice;
+        const name = cleanPosItemName(line).slice(0, 60);
+        if (qty > 0 && unitPrice >= 500 && /[A-Za-z]{2,}/.test(name)) {
+          items.push({ name, quantity: qty, price: unitPrice, total: lineTotal });
+          i += 1;
+          continue;
+        }
+      } else if (/^(?:(?:rp|idr)\.?\s*)?([1-9]\d{0,2}(?:[.,]\d{3})+|[1-9]\d{3,6})$/i.test(nextLine)) {
+        const nextPrice = parseIndonesianMoney(nextLine);
+        const name = cleanPosItemName(line).slice(0, 60);
+        if (
+          nextPrice >= 500 &&
+          /[A-Za-z]{2,}/.test(name) &&
+          !SUMMARY_STOP_LINE_RE.test(line) &&
+          !nonMoneyLineIndexes.has(i + 1)
+        ) {
+          items.push({ name, quantity: 1, price: nextPrice, total: nextPrice });
+          i += 1;
+          continue;
+        }
+      }
+    }
+
+    // Pattern C: Single-line "ES KOPI SUSU   22.000" or "TEH BOTOL SOSRO 4500"
+    const singleLine = line.match(singleLineRe);
+    if (singleLine) {
+      const name = cleanPosItemName(singleLine[1]);
+      const price = parseIndonesianMoney(singleLine[2]);
+      const isMetaKeyword =
+        /\b(?:total|bayar|tunai|cash|kembali|diskon|hemat|ppn|pajak|qris|saldo|biaya|admin|referensi|npwp|nmid|mandiri|bca|bni|bri|bsi|gopay|ovo|dana|shopeepay|transfer|nominal|jumlah|lokasi|sumber)\b/i.test(
+          name
+        );
+      if (
+        !isMetaKeyword &&
+        /[A-Za-z]{2,}/.test(name) &&
+        !SUMMARY_STOP_LINE_RE.test(name) &&
+        !PRIMARY_TOTAL_LINE_RE.test(name) &&
+        price >= 500
+      ) {
+        items.push({ name, quantity: 1, price, total: price });
+      }
+    }
+  }
+
+  let productName = labeledProduct;
+  if (!productName && items.length > 0) {
+    const summaryParts = items
+      .slice(0, 4)
+      .map((it) => (it.quantity > 1 ? `${it.name} (${it.quantity}x)` : it.name));
+    productName = summaryParts.join(', ');
+    if (items.length > 4) {
+      productName += ` (+${items.length - 4} item)`;
+    }
+  }
+
+  // Pass 3: Contextual descriptive item line between merchant header and summary/total
+  if (!productName && items.length === 0) {
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (SUMMARY_STOP_LINE_RE.test(line) || PRIMARY_TOTAL_LINE_RE.test(line)) break;
+      if (shouldSkipItemLine(line, i)) continue;
+      if (/^lokasi\b/i.test(line) || (i > 0 && /^lokasi\b/i.test(lines[i - 1]))) continue;
+      if (/\b(?:pusat|barat|timur|selatan|utara|indonesia|kota|provinsi|wib|wita|wit)\b/i.test(line)) {
+        continue;
+      }
+      if (/\b(?:berhasil|sukses|selesai|pembayaran|transaksi|transfer|rincian|detail|bukti)\b/i.test(line)) {
+        continue;
+      }
+      if (/^(?:rp|idr)\b/i.test(line) || /\d{5,}$/.test(line.replace(/\s+/g, ''))) continue;
+
+      const candidate = cleanPosItemName(line);
+      const provOnly = detectProviderKeyword(candidate).provider;
+      if (
+        candidate.length >= 4 &&
+        /[A-Za-z]{3,}/.test(candidate) &&
+        (!provOnly || candidate.toLowerCase() !== provOnly.toLowerCase())
+      ) {
+        productName = candidate;
+        break;
+      }
+    }
+  }
+
+  return {
+    items,
+    productName: productName.slice(0, 120),
+  };
+}
+
+export function extractQrisOrReceiptMerchant(rawText: string): string {
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  // Pass 1: Explicit QRIS/Transfer recipient labels (inline or next line)
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i];
+    const m = line.match(MERCHANT_LABEL_RE);
+    if (!m) continue;
+
+    // Avoid mistaking "Lokasi Merchant" as merchant name when "Merchant" already exists separately
+    if (/^lokasi\b/i.test(line)) continue;
+
+    const inlineValue = (m[1] || '').replace(/^(?::|=)\s*/, '').trim();
+    if (inlineValue && !isNoiseMerchantCandidate(inlineValue)) {
+      return inlineValue.slice(0, 80);
+    }
+
+    if (!inlineValue && i + 1 < lines.length) {
+      const nextLine = lines[i + 1].trim();
+      if (!isNoiseMerchantCandidate(nextLine)) {
+        return nextLine.slice(0, 80);
+      }
+    }
+  }
+
+  // Pass 2: Fallback top meaningful lines (excluding generic bank headers & timestamps)
+  for (const line of lines.slice(0, 8)) {
+    if (isNoiseMerchantCandidate(line)) continue;
+    return line.slice(0, 80);
+  }
+
+  const prov = detectProviderKeyword(rawText).provider;
+  return prov ? `Transaksi ${prov}` : 'Struk / Dokumen';
+}
+
+export function extractReferenceNumber(rawText: string): string {
+  const re =
+    /(?:no\.?\s*ref(?:erensi)?|kode\s*referensi|rrn|ref\s*id|no\.?\s*transaksi|id\s*transaksi)\s*(?::|=|#|\s)*([A-Z0-9][A-Z0-9-]{3,35})/gi;
+  let match = re.exec(rawText);
+  while (match) {
+    const candidate = (match[1] || '').trim();
+    if (/\d/.test(candidate)) {
+      return candidate;
+    }
+    match = re.exec(rawText);
+  }
+  return '';
+}
+
 export function parseReceiptFromText(
   rawText: string,
   engine: string,
@@ -424,44 +965,85 @@ export function parseReceiptFromText(
     .filter(Boolean);
 
   const date = parseIndonesianDate(rawText) || getTodayLocalDate();
-
-  let merchant = '';
-  for (const line of lines.slice(0, 6)) {
-    if (/^[\d\W]+$/.test(line)) continue;
-    if (/struk|receipt|tanggal|date|nota|invoice|total|qty|harga/i.test(line)) continue;
-    merchant = line.slice(0, 80);
-    break;
-  }
-  if (!merchant) {
-    const prov = detectProviderKeyword(rawText).provider;
-    merchant = prov ? `Transaksi ${prov}` : 'Struk / Dokumen';
-  }
+  const merchant = extractQrisOrReceiptMerchant(rawText);
+  const nonMoneyLineIndexes = buildWrappedNonMoneyIndexes(lines);
 
   let total = 0;
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i];
-    if (/(?:grand\s*total|total\s*(?:bayar|tagihan|belanja|pembayaran|transaksi)?|jumlah\s*bayar|subtotal)/i.test(line)) {
-      const amounts = extractMoneyCandidates(line);
+    if (EXCLUDE_TOTAL_LINE_RE.test(line)) continue;
+    if (nonMoneyLineIndexes.has(i) && !PRIMARY_TOTAL_LINE_RE.test(line)) continue;
+
+    if (PRIMARY_TOTAL_LINE_RE.test(line)) {
+      const amounts = extractMoneyCandidates(line, { allowPlainInteger: true });
       if (amounts.length > 0) {
-        total = Math.max(...amounts);
+        total = amounts[amounts.length - 1];
         break;
       }
-      if (i + 1 < lines.length) {
-        const nextAmounts = extractMoneyCandidates(lines[i + 1]);
-        if (nextAmounts.length > 0) {
-          total = Math.max(...nextAmounts);
-          break;
+      if (!/\d/.test(line) && i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        if (!EXCLUDE_TOTAL_LINE_RE.test(nextLine) && !nonMoneyLineIndexes.has(i + 1)) {
+          const nextAmounts = extractMoneyCandidates(nextLine, { allowPlainInteger: true });
+          if (nextAmounts.length > 0) {
+            total = nextAmounts[nextAmounts.length - 1];
+            break;
+          }
         }
       }
     }
   }
 
   if (total === 0) {
-    const allAmounts = extractMoneyCandidates(rawText);
-    if (allAmounts.length > 0) {
-      total = Math.max(...allAmounts);
+    for (let i = lines.length - 1; i >= 0; i -= 1) {
+      const line = lines[i];
+      if (EXCLUDE_TOTAL_LINE_RE.test(line) || nonMoneyLineIndexes.has(i)) continue;
+      if (/\b(?:tunai|cash)\b/i.test(line)) continue;
+
+      if (SECONDARY_TOTAL_LINE_RE.test(line)) {
+        const amounts = extractMoneyCandidates(line, { allowPlainInteger: true });
+        if (amounts.length > 0) {
+          total = Math.max(...amounts);
+          break;
+        }
+        if (!/\d/.test(line) && i + 1 < lines.length) {
+          const nextLine = lines[i + 1];
+          if (!EXCLUDE_TOTAL_LINE_RE.test(nextLine) && !nonMoneyLineIndexes.has(i + 1)) {
+            const nextAmounts = extractMoneyCandidates(nextLine, { allowPlainInteger: true });
+            if (nextAmounts.length > 0) {
+              total = Math.max(...nextAmounts);
+              break;
+            }
+          }
+        }
+      }
     }
   }
+
+  if (total === 0) {
+    let headerBoundary = -1;
+    const headerScanLimit = Math.min(8, lines.length);
+    for (let i = 0; i < headerScanLimit; i += 1) {
+      if (
+        NON_MONEY_LINE_RE.test(lines[i]) ||
+        /\b(?:jl\.|jalan|kec\.|kel\.|kab\.|kota)\b/i.test(lines[i])
+      ) {
+        headerBoundary = i;
+      }
+    }
+
+    const safeCandidates: number[] = [];
+    for (let i = headerBoundary + 1; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (nonMoneyLineIndexes.has(i) || EXCLUDE_TOTAL_LINE_RE.test(line)) continue;
+      if (/\b(?:tunai|cash|kembali|change|saldo)\b/i.test(line)) continue;
+      safeCandidates.push(...extractMoneyCandidates(line));
+    }
+    if (safeCandidates.length > 0) {
+      total = Math.max(...safeCandidates);
+    }
+  }
+
+  const { items, productName } = extractReceiptItemsAndProduct(rawText, merchant, total);
 
   let paymentMethod = 'Tunai';
   if (/qris/i.test(rawText)) paymentMethod = 'QRIS';
@@ -471,9 +1053,13 @@ export function parseReceiptFromText(
   else if (/\bdana\b/i.test(rawText)) paymentMethod = 'DANA';
   else if (/debit/i.test(rawText)) paymentMethod = 'Kartu Debit';
   else if (/kredit|credit/i.test(rawText)) paymentMethod = 'Kartu Kredit';
-  else if (/transfer/i.test(rawText)) paymentMethod = 'Transfer Bank';
+  else if (/transfer|bi-?fast/i.test(rawText)) paymentMethod = 'Transfer Bank';
 
-  const catSuggestion = suggestCategoryForText(`${merchant} ${rawText}`, categories, 'expense');
+  const catSuggestion = suggestCategoryForText(
+    `${merchant} ${productName} ${rawText}`,
+    categories,
+    'expense'
+  );
   const confidence = rawText.trim().length > 15 && total > 0 ? 0.78 : total > 0 ? 0.62 : 0.35;
 
   return {
@@ -488,7 +1074,7 @@ export function parseReceiptFromText(
       parsed_data: {
         merchant_name: merchant,
         date,
-        items: [],
+        items,
         total,
         payment_method: paymentMethod,
       },
@@ -855,26 +1441,36 @@ function findMatchingAccount(
 }
 
 /**
- * Optional direct cloud Vision call when user explicitly enables online AI Vision & enters an API key.
+ * Optional direct cloud Vision/LLM call when user enables Hybrid Online AI & enters an API key.
  * Only supports HTTPS endpoints (compatible with Android usesCleartextTraffic=false).
  */
 export async function tryDirectVisionJson(
   file: File,
   dataUrl: string,
   settings: LocalAISettings,
-  prompt: string
+  prompt: string,
+  options?: { ocrText?: string }
 ): Promise<Record<string, unknown> | null> {
-  if (isPdfFile(file)) return null;
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
   if (!settings.ai_enabled || !settings.ocr_escalation_enabled || !settings.api_key) {
     return null;
   }
 
-  const base64 = stripDataUrlPrefix(dataUrl);
+  const isImg =
+    !isPdfFile(file) &&
+    (file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|heic)$/i.test(file.name));
+  const textContext = options?.ocrText?.trim() || '';
+  if (!isImg && !textContext) return null;
+
+  const base64 = isImg ? stripDataUrlPrefix(dataUrl) : '';
   const mime = file.type || 'image/jpeg';
   const provider = settings.ai_provider;
   const apiKey = settings.api_key.trim();
   if (!apiKey) return null;
+
+  const fullPrompt = textContext
+    ? `${prompt}\n\nTeks hasil OCR/dokumen:\n${textContext.slice(0, 2500)}`
+    : prompt;
 
   try {
     let rawJsonText = '';
@@ -883,21 +1479,18 @@ export async function tryDirectVisionJson(
       const model =
         settings.ai_model && settings.ai_model !== 'default'
           ? settings.ai_model
-          : 'gemini-2.0-flash';
+          : 'gemini-2.5-flash';
+      const parts: Array<Record<string, unknown>> = [{ text: fullPrompt }];
+      if (isImg && base64) {
+        parts.push({ inline_data: { mime_type: mime, data: base64 } });
+      }
       const resp = await fetch(
         `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            contents: [
-              {
-                parts: [
-                  { text: prompt },
-                  { inline_data: { mime_type: mime, data: base64 } },
-                ],
-              },
-            ],
+            contents: [{ parts }],
             generationConfig: { responseMimeType: 'application/json' },
           }),
         }
@@ -910,6 +1503,13 @@ export async function tryDirectVisionJson(
     } else if (provider === 'openai') {
       const model =
         settings.ai_model && settings.ai_model !== 'default' ? settings.ai_model : 'gpt-4o-mini';
+      const contentParts: Array<Record<string, unknown>> = [{ type: 'text', text: fullPrompt }];
+      if (isImg && base64) {
+        contentParts.push({
+          type: 'image_url',
+          image_url: { url: `data:${mime};base64,${base64}` },
+        });
+      }
       const resp = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -918,15 +1518,7 @@ export async function tryDirectVisionJson(
         },
         body: JSON.stringify({
           model,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                { type: 'text', text: prompt },
-                { type: 'image_url', image_url: { url: `data:${mime};base64,${base64}` } },
-              ],
-            },
-          ],
+          messages: [{ role: 'user', content: contentParts }],
           response_format: { type: 'json_object' },
         }),
       });
@@ -940,6 +1532,14 @@ export async function tryDirectVisionJson(
         settings.ai_model && settings.ai_model !== 'default'
           ? settings.ai_model
           : 'claude-3-5-haiku-latest';
+      const contentParts: Array<Record<string, unknown>> = [];
+      if (isImg && base64) {
+        contentParts.push({
+          type: 'image',
+          source: { type: 'base64', media_type: mime, data: base64 },
+        });
+      }
+      contentParts.push({ type: 'text', text: fullPrompt });
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: {
@@ -950,18 +1550,7 @@ export async function tryDirectVisionJson(
         body: JSON.stringify({
           model,
           max_tokens: 1024,
-          messages: [
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  source: { type: 'base64', media_type: mime, data: base64 },
-                },
-                { type: 'text', text: prompt },
-              ],
-            },
-          ],
+          messages: [{ role: 'user', content: contentParts }],
         }),
       });
       if (!resp.ok) return null;
@@ -977,4 +1566,415 @@ export async function tryDirectVisionJson(
   } catch {
     return null;
   }
+}
+
+export type SharedReceiptMode = 'expense' | 'transfer' | 'debt_payment';
+
+export interface SharedReceiptAnalysis {
+  rawText: string;
+  engine: string;
+  dataUrl: string;
+  isPdf: boolean;
+  isImage: boolean;
+  isHybridOnline?: boolean;
+  learnedFromMemory?: boolean;
+  suggestedMode: SharedReceiptMode;
+  amount: number;
+  date: string;
+  merchantName: string;
+  productName: string;
+  items: ParsedOCRItem[];
+  paymentMethod: string;
+  providerHint: string;
+  referenceNumber: string;
+  notes: string;
+  matchedAccountId?: string;
+  matchedAccountName?: string;
+  suggestedCategoryId?: string;
+  suggestedCategoryName?: string;
+  creditorHint?: string;
+  matchedDebtId?: string;
+  matchedDebtName?: string;
+}
+
+function findMatchingDebt(debts: Debt[], creditorHint: string, rawText: string): Debt | undefined {
+  const activeDebts = debts.filter((d) => d.status === 'active');
+  if (activeDebts.length === 0) return undefined;
+
+  const lowerText = rawText.toLowerCase();
+  const lowerCreditor = creditorHint.toLowerCase();
+
+  return activeDebts.find((d) => {
+    const creditor = (d.creditor || '').toLowerCase();
+    const name = d.name.toLowerCase();
+    if (
+      lowerCreditor &&
+      lowerCreditor !== 'kreditur' &&
+      ((creditor && (creditor.includes(lowerCreditor) || lowerCreditor.includes(creditor))) ||
+        name.includes(lowerCreditor))
+    ) {
+      return true;
+    }
+    if (creditor && lowerText.includes(creditor)) return true;
+    if (name && lowerText.includes(name)) return true;
+    if (/spaylater|shopee/.test(lowerText) && /spaylater|shopee/.test(`${creditor} ${name}`)) {
+      return true;
+    }
+    if (/kredivo/.test(lowerText) && /kredivo/.test(`${creditor} ${name}`)) {
+      return true;
+    }
+    return false;
+  });
+}
+
+export async function analyzeSharedReceiptFile(
+  file: File,
+  options: {
+    extraText?: string;
+    accounts: Account[];
+    categories: Category[];
+    debts: Debt[];
+  }
+): Promise<SharedReceiptAnalysis> {
+  const extracted = await extractRawTextFromFile(file);
+  const combinedText = [extracted.text, options.extraText?.trim()]
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+
+  const receipt = parseReceiptFromText(
+    combinedText,
+    extracted.engine,
+    options.categories,
+    'shared-preview'
+  );
+  const parsedData = receipt.parsed_ocr?.parsed_data;
+
+  const lines = combinedText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean);
+
+  let sourceSnippet = '';
+  for (let i = 0; i < lines.length; i += 1) {
+    if (
+      /^(?:sumber\s*dana|dari\s*rekening|rekening\s*sumber|metode\s*pembayaran|bayar\s*(?:via|dengan|pakai))\b/i.test(
+        lines[i]
+      )
+    ) {
+      sourceSnippet += ` ${lines[i]} ${lines[i + 1] || ''}`;
+    }
+  }
+
+  const sourceProv = sourceSnippet.trim()
+    ? detectProviderKeyword(sourceSnippet)
+    : { provider: '', accountType: 'bank' as const };
+  const globalProv = detectProviderKeyword(combinedText);
+  const providerHint = sourceProv.provider || globalProv.provider;
+
+  const matchedAccount =
+    (sourceSnippet.trim()
+      ? findMatchingAccount(options.accounts, sourceProv.provider, sourceSnippet)
+      : undefined) || findMatchingAccount(options.accounts, providerHint, combinedText);
+
+  const referenceNumber = extractReferenceNumber(combinedText);
+  const hasStrongCreditor =
+    /spaylater|shopee\s*paylater|gopay\s*later|gopaylater|kredivo|akulaku|atome|home\s*credit|kartu\s*kredit|\bkpr\b|tagihan\s*(?:cicilan|angsuran|paylater)/i.test(
+      combinedText
+    );
+  const isPaymentProof =
+    /berhasil|sukses|pembayaran|bayar|lunas|nominal|total\s*(?:bayar|pembayaran|transaksi)/i.test(
+      combinedText
+    );
+
+  const creditorInfo = detectDebtCreditorAndType(combinedText);
+  const matchedDebt = findMatchingDebt(options.debts, creditorInfo.creditor, combinedText);
+
+  let suggestedMode: SharedReceiptMode = 'expense';
+  if (hasStrongCreditor && isPaymentProof) {
+    suggestedMode = 'debt_payment';
+  } else if (
+    /transfer\s*(?:berhasil|sukses)|bi-?fast|transfer\s*antar|rekening\s*tujuan/i.test(
+      combinedText
+    ) &&
+    !/qris|nama\s*merchant|merchant/i.test(combinedText)
+  ) {
+    suggestedMode = 'transfer';
+  }
+
+  const paymentMethod = parsedData?.payment_method || 'QRIS';
+  const notesParts = [
+    paymentMethod,
+    providerHint ? `via ${providerHint}` : '',
+    referenceNumber ? `Ref: ${referenceNumber}` : '',
+  ].filter(Boolean);
+
+  const isImage =
+    file.type.startsWith('image/') || /\.(jpg|jpeg|png|webp|gif|heic)$/i.test(file.name);
+
+  const merchantName = parsedData?.merchant_name || 'Pembayaran QRIS';
+  const items = parsedData?.items || [];
+  const extractedItems = extractReceiptItemsAndProduct(
+    combinedText,
+    merchantName,
+    parsedData?.total || 0
+  );
+
+  // Layer 3: Check self-learning merchant memory
+  const memory = findMerchantMemory(merchantName);
+  let resolvedProductName = extractedItems.productName;
+  let learnedFromMemory = false;
+  if (!resolvedProductName && memory?.productName) {
+    resolvedProductName = memory.productName;
+    learnedFromMemory = true;
+  }
+
+  let resolvedAccount = matchedAccount;
+  if (!resolvedAccount && memory?.accountId) {
+    resolvedAccount = options.accounts.find((a) => a.id === memory.accountId);
+  }
+
+  let suggestedCategoryId = receipt.suggested_category_id;
+  let suggestedCategoryName = receipt.suggested_category_name;
+  if ((receipt.suggested_category_confidence ?? 0) < 0.75 && memory?.categoryId) {
+    const memCat = options.categories.find((c) => c.id === memory.categoryId && c.type === 'expense');
+    if (memCat) {
+      suggestedCategoryId = memCat.id;
+      suggestedCategoryName = memCat.name;
+    }
+  }
+
+  return {
+    rawText: combinedText,
+    engine: extracted.engine,
+    dataUrl: extracted.dataUrl,
+    isPdf: extracted.isPdf,
+    isImage,
+    isHybridOnline: false,
+    learnedFromMemory,
+    suggestedMode,
+    amount: parsedData?.total || 0,
+    date: parsedData?.date || getTodayLocalDate(),
+    merchantName,
+    productName: resolvedProductName,
+    items,
+    paymentMethod,
+    providerHint,
+    referenceNumber,
+    notes: notesParts.join(' • '),
+    matchedAccountId: resolvedAccount?.id,
+    matchedAccountName: resolvedAccount?.name,
+    suggestedCategoryId,
+    suggestedCategoryName,
+    creditorHint: hasStrongCreditor ? creditorInfo.creditor : undefined,
+    matchedDebtId: matchedDebt?.id,
+    matchedDebtName: matchedDebt?.name,
+  };
+}
+
+function normalizeHybridItems(rawItems: unknown): ParsedOCRItem[] {
+  if (!Array.isArray(rawItems)) return [];
+  const result: ParsedOCRItem[] = [];
+  for (const item of rawItems) {
+    if (!item || typeof item !== 'object') continue;
+    const obj = item as Record<string, unknown>;
+    const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+    if (!name) continue;
+    const qtyRaw = Number(obj.quantity ?? obj.qty ?? 1);
+    const quantity = Number.isFinite(qtyRaw) && qtyRaw > 0 ? Math.round(qtyRaw) : 1;
+    const priceRaw = Number(obj.price ?? 0);
+    const price = Number.isFinite(priceRaw) && priceRaw > 0 ? Math.round(priceRaw) : 0;
+    const totalRaw = Number(obj.total ?? price * quantity);
+    const total = Number.isFinite(totalRaw) && totalRaw > 0 ? Math.round(totalRaw) : price * quantity;
+    result.push({ name, quantity, price, total });
+  }
+  return result;
+}
+
+export async function refineReceiptWithHybridAI(
+  file: File,
+  baseAnalysis: SharedReceiptAnalysis,
+  options: {
+    accounts: Account[];
+    categories: Category[];
+    debts: Debt[];
+    settings?: LocalAISettings;
+  }
+): Promise<SharedReceiptAnalysis | null> {
+  const settings = options.settings || getHybridAISettings();
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return null;
+  if (!settings.ai_enabled || !settings.ocr_escalation_enabled || !settings.api_key?.trim()) {
+    return null;
+  }
+  if (settings.ai_provider === 'local') return null;
+
+  const expenseCategories = options.categories
+    .filter((c) => c.type === 'expense')
+    .map((c) => c.name);
+  const activeDebts = options.debts
+    .filter((d) => d.status === 'active')
+    .map((d) => `${d.name}${d.creditor ? ` (${d.creditor})` : ''}`);
+
+  const prompt = [
+    'Ekstrak bukti pembayaran / struk belanja / bukti QRIS Indonesia ini menjadi JSON valid dengan key berikut:',
+    '- suggested_mode: "expense" | "transfer" | "debt_payment"',
+    '- amount: integer nominal total yang dibayar (ABAIKAN NPWP, NMID, NIK, nomor telepon, ID referensi, kembalian/change)',
+    '- date: tanggal transaksi format YYYY-MM-DD',
+    '- merchant_name: nama merchant / toko / penerima dana',
+    '- product_name: ringkasan nama produk/barang/menu yang dibeli (kosong "" jika bukti QRIS bank memang tidak mencantumkan nama barang)',
+    '- items: array objek { name, quantity, price, total } jika ada rincian barang',
+    '- payment_method: "QRIS" | "Transfer Bank" | "GoPay" | "OVO" | "DANA" | "ShopeePay" | "Kartu Debit" | "Kartu Kredit" | "Tunai"',
+    '- source_bank_or_wallet: nama bank/e-wallet sumber dana (contoh: BCA, Mandiri, BRI, BNI, BSI, GoPay, OVO, DANA, ShopeePay, SeaBank, Bank Jago)',
+    '- reference_number: nomor referensi/RRN/ID transaksi jika ada',
+    `- category_hint: pilih paling cocok dari [${expenseCategories.join(', ')}]`,
+    activeDebts.length > 0
+      ? `- creditor_hint: jika pembayaran utang/cicilan, pilih dari [${activeDebts.join(', ')}]`
+      : '- creditor_hint: nama kreditur jika pembayaran cicilan/paylater, else ""',
+  ].join('\n');
+
+  const aiJson = await tryDirectVisionJson(file, baseAnalysis.dataUrl, settings, prompt, {
+    ocrText: baseAnalysis.rawText,
+  });
+  if (!aiJson) return null;
+
+  const aiModeRaw = typeof aiJson.suggested_mode === 'string' ? aiJson.suggested_mode.trim() : '';
+  const suggestedMode: SharedReceiptMode =
+    aiModeRaw === 'transfer' || aiModeRaw === 'debt_payment' || aiModeRaw === 'expense'
+      ? aiModeRaw
+      : baseAnalysis.suggestedMode;
+
+  let amount = baseAnalysis.amount;
+  if (typeof aiJson.amount === 'number' && Number.isFinite(aiJson.amount) && aiJson.amount > 0) {
+    amount = Math.round(aiJson.amount);
+  } else if (typeof aiJson.amount === 'string') {
+    const parsedAmt = parseIndonesianMoney(aiJson.amount);
+    if (parsedAmt > 0) amount = parsedAmt;
+  }
+
+  const aiDate =
+    typeof aiJson.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(aiJson.date.trim())
+      ? aiJson.date.trim()
+      : baseAnalysis.date;
+
+  const merchantName =
+    typeof aiJson.merchant_name === 'string' && aiJson.merchant_name.trim()
+      ? aiJson.merchant_name.trim().slice(0, 80)
+      : baseAnalysis.merchantName;
+
+  const aiItems = normalizeHybridItems(aiJson.items);
+  const items = aiItems.length > 0 ? aiItems : baseAnalysis.items;
+
+  const aiProductRaw =
+    typeof aiJson.product_name === 'string' ? aiJson.product_name.trim().slice(0, 120) : '';
+  let productName = aiProductRaw;
+  if (!productName && aiItems.length > 0) {
+    const parts = aiItems
+      .slice(0, 4)
+      .map((it) => (it.quantity > 1 ? `${it.name} (${it.quantity}x)` : it.name));
+    productName = parts.join(', ');
+  }
+
+  const memory = findMerchantMemory(merchantName);
+  let learnedFromMemory = false;
+  if (!productName) {
+    if (memory?.productName) {
+      productName = memory.productName;
+      learnedFromMemory = true;
+    } else if (baseAnalysis.productName) {
+      productName = baseAnalysis.productName;
+      learnedFromMemory = Boolean(baseAnalysis.learnedFromMemory);
+    }
+  }
+
+  const paymentMethod =
+    typeof aiJson.payment_method === 'string' && aiJson.payment_method.trim()
+      ? aiJson.payment_method.trim()
+      : baseAnalysis.paymentMethod;
+
+  const sourceBankRaw =
+    typeof aiJson.source_bank_or_wallet === 'string' ? aiJson.source_bank_or_wallet.trim() : '';
+  const detectedProv = sourceBankRaw ? detectProviderKeyword(sourceBankRaw).provider : '';
+  const providerHint = detectedProv || sourceBankRaw || baseAnalysis.providerHint;
+
+  const matchedAccount =
+    (sourceBankRaw
+      ? findMatchingAccount(options.accounts, providerHint, sourceBankRaw)
+      : undefined) ||
+    findMatchingAccount(options.accounts, providerHint, baseAnalysis.rawText) ||
+    (memory?.accountId ? options.accounts.find((a) => a.id === memory.accountId) : undefined) ||
+    options.accounts.find((a) => a.id === baseAnalysis.matchedAccountId);
+
+  const referenceNumber =
+    typeof aiJson.reference_number === 'string' && aiJson.reference_number.trim()
+      ? aiJson.reference_number.trim()
+      : baseAnalysis.referenceNumber;
+
+  const categoryHint =
+    typeof aiJson.category_hint === 'string' ? aiJson.category_hint.trim() : '';
+  const expensePool = options.categories.filter((c) => c.type === 'expense');
+  let suggestedCategory = categoryHint
+    ? expensePool.find(
+        (c) =>
+          c.name.toLowerCase() === categoryHint.toLowerCase() ||
+          c.name.toLowerCase().includes(categoryHint.toLowerCase()) ||
+          categoryHint.toLowerCase().includes(c.name.toLowerCase())
+      )
+    : undefined;
+
+  if (!suggestedCategory) {
+    const suggestion = suggestCategoryForText(
+      `${merchantName} ${productName} ${categoryHint} ${baseAnalysis.rawText}`,
+      options.categories,
+      'expense'
+    );
+    if (suggestion.id) {
+      suggestedCategory = expensePool.find((c) => c.id === suggestion.id);
+    }
+  }
+  if (!suggestedCategory && memory?.categoryId) {
+    suggestedCategory = expensePool.find((c) => c.id === memory.categoryId);
+  }
+  if (!suggestedCategory && baseAnalysis.suggestedCategoryId) {
+    suggestedCategory = expensePool.find((c) => c.id === baseAnalysis.suggestedCategoryId);
+  }
+
+  const creditorHint =
+    typeof aiJson.creditor_hint === 'string' && aiJson.creditor_hint.trim()
+      ? aiJson.creditor_hint.trim()
+      : baseAnalysis.creditorHint;
+  const matchedDebt =
+    suggestedMode === 'debt_payment'
+      ? findMatchingDebt(options.debts, creditorHint || merchantName, baseAnalysis.rawText) ||
+        options.debts.find((d) => d.id === baseAnalysis.matchedDebtId)
+      : undefined;
+
+  const notesParts = [
+    paymentMethod,
+    providerHint ? `via ${providerHint}` : '',
+    referenceNumber ? `Ref: ${referenceNumber}` : '',
+  ].filter(Boolean);
+
+  return {
+    ...baseAnalysis,
+    engine: `${settings.ai_provider}-hybrid-online`,
+    isHybridOnline: true,
+    learnedFromMemory,
+    suggestedMode,
+    amount,
+    date: aiDate,
+    merchantName,
+    productName,
+    items,
+    paymentMethod,
+    providerHint,
+    referenceNumber,
+    notes: notesParts.join(' • '),
+    matchedAccountId: matchedAccount?.id,
+    matchedAccountName: matchedAccount?.name,
+    suggestedCategoryId: suggestedCategory?.id,
+    suggestedCategoryName: suggestedCategory?.name,
+    creditorHint,
+    matchedDebtId: matchedDebt?.id,
+    matchedDebtName: matchedDebt?.name,
+  };
 }

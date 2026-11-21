@@ -1,13 +1,26 @@
 package digital.asisten.keuangan;
 
+import android.content.ClipData;
+import android.content.ContentResolver;
+import android.content.Context;
+import android.content.Intent;
+import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Rect;
 import android.graphics.pdf.PdfRenderer;
+import android.media.ExifInterface;
+import android.net.Uri;
+import android.os.Build;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.ParcelFileDescriptor;
+import android.provider.OpenableColumns;
 import android.util.Base64;
+import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
@@ -19,12 +32,17 @@ import com.google.mlkit.vision.text.Text;
 import com.google.mlkit.vision.text.TextRecognition;
 import com.google.mlkit.vision.text.TextRecognizer;
 import com.google.mlkit.vision.text.latin.TextRecognizerOptions;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -32,7 +50,168 @@ import java.util.concurrent.Executors;
 public class LocalOcrPlugin extends Plugin {
     private static final int MAX_IMAGE_DIMENSION = 2200;
     private static final int MAX_PDF_PAGES_LIMIT = 30;
+    private static final int MAX_SHARED_FILES = 10;
+    private static final int MAX_SHARED_FILE_BYTES = 15 * 1024 * 1024;
+    private static final String SHARE_CONSUMED_EXTRA = "kb_share_consumed";
+
+    private static final List<JSObject> PENDING_SHARES =
+            Collections.synchronizedList(new ArrayList<>());
+    private static final ExecutorService SHARE_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static volatile LocalOcrPlugin activeInstance;
+
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    private static final class PendingStreamSource {
+        final InputStream stream;
+        final String mimeType;
+        final String fileName;
+
+        PendingStreamSource(InputStream stream, String mimeType, String fileName) {
+            this.stream = stream;
+            this.mimeType = mimeType;
+            this.fileName = fileName;
+        }
+    }
+
+    @Override
+    public void load() {
+        super.load();
+        activeInstance = this;
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        if (activeInstance == this) {
+            activeInstance = null;
+        }
+        super.handleOnDestroy();
+    }
+
+    public static void handleIncomingIntent(Context context, Intent intent) {
+        if (context == null || intent == null) {
+            return;
+        }
+
+        String action = intent.getAction();
+        if (!Intent.ACTION_SEND.equals(action) && !Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            return;
+        }
+
+        if (intent.getBooleanExtra(SHARE_CONSUMED_EXTRA, false)) {
+            return;
+        }
+        intent.putExtra(SHARE_CONSUMED_EXTRA, true);
+
+        final String extraText = combineExtraText(
+                intent.getStringExtra(Intent.EXTRA_SUBJECT),
+                intent.getStringExtra(Intent.EXTRA_TEXT)
+        );
+        final String intentType = intent.getType();
+        final List<Uri> uris = extractUrisFromIntent(intent);
+        final ContentResolver resolver = context.getContentResolver();
+        final List<PendingStreamSource> sources = new ArrayList<>();
+
+        int limit = Math.min(uris.size(), MAX_SHARED_FILES);
+        for (int i = 0; i < limit; i++) {
+            Uri uri = uris.get(i);
+            if (uri == null) {
+                continue;
+            }
+            try {
+                InputStream stream = resolver.openInputStream(uri);
+                if (stream == null) {
+                    continue;
+                }
+                String mimeType = resolveMimeType(resolver, uri, intentType);
+                String fileName = resolveFileName(resolver, uri, mimeType, i + 1);
+                sources.add(new PendingStreamSource(stream, mimeType, fileName));
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (sources.isEmpty() && extraText.isEmpty()) {
+            return;
+        }
+
+        SHARE_EXECUTOR.execute(() -> {
+            List<JSObject> extracted = new ArrayList<>();
+            for (PendingStreamSource source : sources) {
+                try {
+                    byte[] bytes = readBytesLimited(source.stream, MAX_SHARED_FILE_BYTES);
+                    if (bytes == null || bytes.length == 0) {
+                        continue;
+                    }
+                    JSObject item = new JSObject();
+                    item.put("id", "share-" + UUID.randomUUID().toString());
+                    item.put("base64", Base64.encodeToString(bytes, Base64.NO_WRAP));
+                    item.put("mimeType", source.mimeType);
+                    item.put("fileName", source.fileName);
+                    if (!extraText.isEmpty()) {
+                        item.put("extraText", extraText);
+                    }
+                    extracted.add(item);
+                } catch (Exception ignored) {
+                } finally {
+                    try {
+                        source.stream.close();
+                    } catch (Exception ignored) {
+                    }
+                }
+            }
+
+            if (extracted.isEmpty() && !extraText.isEmpty()) {
+                JSObject textItem = new JSObject();
+                textItem.put("id", "share-" + UUID.randomUUID().toString());
+                textItem.put(
+                        "base64",
+                        Base64.encodeToString(
+                                extraText.getBytes(StandardCharsets.UTF_8),
+                                Base64.NO_WRAP
+                        )
+                );
+                textItem.put("mimeType", "text/plain");
+                textItem.put("fileName", "shared-receipt.txt");
+                textItem.put("extraText", extraText);
+                extracted.add(textItem);
+            }
+
+            if (extracted.isEmpty()) {
+                return;
+            }
+
+            PENDING_SHARES.addAll(extracted);
+
+            final JSArray files = new JSArray();
+            for (JSObject item : extracted) {
+                files.put(item);
+            }
+            final JSObject payload = new JSObject();
+            payload.put("files", files);
+
+            new Handler(Looper.getMainLooper()).post(() -> {
+                LocalOcrPlugin live = activeInstance;
+                if (live != null) {
+                    live.notifyListeners("sharedFilesReceived", payload);
+                }
+            });
+        });
+    }
+
+    @PluginMethod
+    public void consumePendingShares(PluginCall call) {
+        SHARE_EXECUTOR.execute(() -> {
+            JSArray files = new JSArray();
+            synchronized (PENDING_SHARES) {
+                for (JSObject item : PENDING_SHARES) {
+                    files.put(item);
+                }
+                PENDING_SHARES.clear();
+            }
+            JSObject ret = new JSObject();
+            ret.put("files", files);
+            call.resolve(ret);
+        });
+    }
 
     @PluginMethod
     public void isAvailable(PluginCall call) {
@@ -233,6 +412,8 @@ public class LocalOcrPlugin extends Plugin {
             return null;
         }
 
+        decoded = applyExifOrientation(decoded, bytes);
+
         // Flatten alpha channel onto white canvas so transparent PNG receipts stay legible
         if (decoded.hasAlpha()) {
             Bitmap opaque = Bitmap.createBitmap(decoded.getWidth(), decoded.getHeight(), Bitmap.Config.ARGB_8888);
@@ -245,9 +426,56 @@ public class LocalOcrPlugin extends Plugin {
         return decoded;
     }
 
+    private static Bitmap applyExifOrientation(Bitmap bitmap, byte[] bytes) {
+        try {
+            ExifInterface exif = new ExifInterface(new ByteArrayInputStream(bytes));
+            int orientation = exif.getAttributeInt(
+                    ExifInterface.TAG_ORIENTATION,
+                    ExifInterface.ORIENTATION_NORMAL
+            );
+            Matrix matrix = new Matrix();
+            switch (orientation) {
+                case ExifInterface.ORIENTATION_ROTATE_90:
+                    matrix.postRotate(90f);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_180:
+                    matrix.postRotate(180f);
+                    break;
+                case ExifInterface.ORIENTATION_ROTATE_270:
+                    matrix.postRotate(270f);
+                    break;
+                case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                    matrix.preScale(-1f, 1f);
+                    break;
+                case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                    matrix.preScale(1f, -1f);
+                    break;
+                case ExifInterface.ORIENTATION_TRANSPOSE:
+                    matrix.postRotate(90f);
+                    matrix.preScale(-1f, 1f);
+                    break;
+                case ExifInterface.ORIENTATION_TRANSVERSE:
+                    matrix.postRotate(270f);
+                    matrix.preScale(-1f, 1f);
+                    break;
+                default:
+                    return bitmap;
+            }
+            Bitmap rotated = Bitmap.createBitmap(
+                    bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true
+            );
+            if (rotated != bitmap) {
+                bitmap.recycle();
+            }
+            return rotated;
+        } catch (Exception ignored) {
+            return bitmap;
+        }
+    }
+
     /**
      * Groups ML Kit lines into horizontal visual rows (left-to-right within a row)
-     * so two-column bank statements and paylater summaries stay paired on the same line.
+     * so two-column bank statements and slightly tilted receipts stay paired on the same line.
      */
     private static String extractRowOrderedText(Text result) {
         List<Text.Line> lines = new ArrayList<>();
@@ -278,28 +506,39 @@ public class LocalOcrPlugin extends Plugin {
         List<Text.Line> currentRow = new ArrayList<>();
         int rowAnchorY = 0;
         int rowAnchorHeight = 20;
+        int currentRowMaxRight = 0;
 
         for (Text.Line line : lines) {
             Rect box = line.getBoundingBox();
             int cy = box != null ? box.centerY() : rowAnchorY;
             int h = box != null ? Math.max(12, box.height()) : 20;
+            int left = box != null ? box.left : 0;
+            int right = box != null ? box.right : 0;
 
             if (currentRow.isEmpty()) {
                 currentRow.add(line);
                 rowAnchorY = cy;
                 rowAnchorHeight = h;
+                currentRowMaxRight = right;
                 continue;
             }
 
-            int tolerance = Math.max(10, Math.round(Math.min(rowAnchorHeight, h) * 0.65f));
+            boolean horizontallySeparate = box != null && left > (currentRowMaxRight - 20);
+            float factor = horizontallySeparate ? 0.95f : 0.65f;
+            int refHeight = horizontallySeparate
+                    ? Math.max(rowAnchorHeight, h)
+                    : Math.min(rowAnchorHeight, h);
+            int tolerance = Math.max(horizontallySeparate ? 14 : 10, Math.round(refHeight * factor));
             if (Math.abs(cy - rowAnchorY) <= tolerance) {
                 currentRow.add(line);
+                currentRowMaxRight = Math.max(currentRowMaxRight, right);
             } else {
                 rows.add(currentRow);
                 currentRow = new ArrayList<>();
                 currentRow.add(line);
                 rowAnchorY = cy;
                 rowAnchorHeight = h;
+                currentRowMaxRight = right;
             }
         }
         if (!currentRow.isEmpty()) {
@@ -339,6 +578,107 @@ public class LocalOcrPlugin extends Plugin {
         }
 
         return out.toString().trim();
+    }
+
+    private static String combineExtraText(String subject, String text) {
+        StringBuilder sb = new StringBuilder();
+        if (subject != null && !subject.trim().isEmpty()) {
+            sb.append(subject.trim());
+        }
+        if (text != null && !text.trim().isEmpty()) {
+            if (sb.length() > 0) {
+                sb.append('\n');
+            }
+            sb.append(text.trim());
+        }
+        return sb.toString();
+    }
+
+    @SuppressWarnings("deprecation")
+    private static List<Uri> extractUrisFromIntent(Intent intent) {
+        List<Uri> uris = new ArrayList<>();
+        String action = intent.getAction();
+        if (Intent.ACTION_SEND.equals(action)) {
+            Uri single = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    ? intent.getParcelableExtra(Intent.EXTRA_STREAM, Uri.class)
+                    : intent.getParcelableExtra(Intent.EXTRA_STREAM);
+            if (single != null) {
+                uris.add(single);
+            }
+        } else if (Intent.ACTION_SEND_MULTIPLE.equals(action)) {
+            ArrayList<Uri> multi = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                    ? intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM, Uri.class)
+                    : intent.getParcelableArrayListExtra(Intent.EXTRA_STREAM);
+            if (multi != null) {
+                for (Uri u : multi) {
+                    if (u != null) {
+                        uris.add(u);
+                    }
+                }
+            }
+        }
+
+        if (uris.isEmpty() && intent.getClipData() != null) {
+            ClipData clipData = intent.getClipData();
+            for (int i = 0; i < clipData.getItemCount(); i++) {
+                Uri clipUri = clipData.getItemAt(i).getUri();
+                if (clipUri != null) {
+                    uris.add(clipUri);
+                }
+            }
+        }
+        return uris;
+    }
+
+    private static String resolveMimeType(ContentResolver resolver, Uri uri, String fallback) {
+        try {
+            String detected = resolver.getType(uri);
+            if (detected != null && !detected.trim().isEmpty()) {
+                return detected;
+            }
+        } catch (Exception ignored) {
+        }
+        if (fallback != null && !fallback.trim().isEmpty() && !"*/*".equals(fallback)) {
+            return fallback;
+        }
+        return "image/jpeg";
+    }
+
+    private static String resolveFileName(
+            ContentResolver resolver, Uri uri, String mimeType, int index) {
+        try (Cursor cursor = resolver.query(
+                uri, new String[] {OpenableColumns.DISPLAY_NAME}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int idx = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME);
+                if (idx >= 0) {
+                    String name = cursor.getString(idx);
+                    if (name != null && !name.trim().isEmpty()) {
+                        return name.trim();
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        String ext = mimeType != null && mimeType.contains("pdf")
+                ? ".pdf"
+                : mimeType != null && mimeType.contains("png") ? ".png" : ".jpg";
+        return "qris-share-" + System.currentTimeMillis() + "-" + index + ext;
+    }
+
+    private static byte[] readBytesLimited(InputStream stream, int maxBytes) throws Exception {
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        byte[] buffer = new byte[16384];
+        int total = 0;
+        int read;
+        while ((read = stream.read(buffer)) != -1) {
+            if (total + read > maxBytes) {
+                out.write(buffer, 0, Math.max(0, maxBytes - total));
+                break;
+            }
+            out.write(buffer, 0, read);
+            total += read;
+        }
+        return out.toByteArray();
     }
 
     private static String safeErrorMessage(Exception e) {

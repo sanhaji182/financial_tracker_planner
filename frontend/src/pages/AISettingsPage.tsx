@@ -14,6 +14,7 @@ import {
   Eye,
 } from 'lucide-react';
 import { aiSettingsService } from '../services/aiSettings';
+import { saveHybridAISettings } from '../offline/storage';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
@@ -89,6 +90,17 @@ export const AISettingsPage: React.FC = () => {
         advisor_enabled: advisorEnabled,
         anomaly_detection_enabled: anomalyEnabled,
         api_key: apiKey || undefined,
+      });
+
+      saveHybridAISettings({
+        ai_enabled: aiEnabled,
+        ai_provider: aiProvider,
+        ai_model: aiModel,
+        ocr_escalation_enabled: ocrEscalation,
+        auto_categorization_enabled: autoCategorization,
+        advisor_enabled: advisorEnabled,
+        anomaly_detection_enabled: anomalyEnabled,
+        ...(apiKey.trim() ? { api_key: apiKey.trim() } : {}),
       });
 
       toast.success('Pengaturan AI berhasil diperbarui');

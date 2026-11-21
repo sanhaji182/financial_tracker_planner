@@ -22,6 +22,8 @@ import { getTodayLocalDate } from '../utils/date';
 
 export const LOCAL_DB_STORAGE_KEY = 'kb_local_db_v1';
 const CLOUD_GET_CACHE_PREFIX = 'kb_cloud_get_cache_v1:';
+const MERCHANT_MEMORY_KEY = 'kb_merchant_memory_v1';
+const HYBRID_AI_SETTINGS_KEY = 'kb_hybrid_ai_settings_v1';
 const LOCAL_USER_ID = 'local-owner';
 
 export interface LocalDraftTransaction {
@@ -364,4 +366,181 @@ export function clearCloudGetCache(): void {
   } catch {
     // Ignore errors
   }
+}
+
+export interface MerchantMemoryEntry {
+  key: string;
+  merchantName: string;
+  productName?: string;
+  categoryId?: string;
+  accountId?: string;
+  count: number;
+  updatedAt: string;
+}
+
+const GENERIC_MERCHANT_KEYS = new Set([
+  'struk dokumen',
+  'pembayaran qris',
+  'transaksi',
+  'merchant unknown',
+]);
+
+export function normalizeMerchantKey(merchantName: string): string {
+  return merchantName
+    .toLowerCase()
+    .replace(/^(?:qris|pembayaran|transaksi)\s+/i, '')
+    .replace(
+      /\b(?:jakarta|bandung|surabaya|medan|yogyakarta|jogja|tangerang|bekasi|depok|bogor|pusat|selatan|utara|barat|timur)\b/gi,
+      ''
+    )
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function loadMerchantMemoryMap(): Record<string, MerchantMemoryEntry> {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return {};
+    const raw = window.localStorage.getItem(MERCHANT_MEMORY_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as Record<string, MerchantMemoryEntry>;
+    return parsed && typeof parsed === 'object' ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+export function learnMerchantMemory(entry: {
+  merchantName: string;
+  productName?: string;
+  categoryId?: string;
+  accountId?: string;
+}): void {
+  const key = normalizeMerchantKey(entry.merchantName || '');
+  if (key.length < 3 || GENERIC_MERCHANT_KEYS.has(key)) return;
+
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return;
+    const map = loadMerchantMemoryMap();
+    const prev = map[key];
+    map[key] = {
+      key,
+      merchantName: entry.merchantName.trim(),
+      productName: entry.productName?.trim() || prev?.productName,
+      categoryId: entry.categoryId || prev?.categoryId,
+      accountId: entry.accountId || prev?.accountId,
+      count: (prev?.count || 0) + 1,
+      updatedAt: nowIso(),
+    };
+
+    const entries = Object.values(map);
+    if (entries.length > 200) {
+      entries.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const trimmed: Record<string, MerchantMemoryEntry> = {};
+      for (const item of entries.slice(0, 200)) {
+        trimmed[item.key] = item;
+      }
+      window.localStorage.setItem(MERCHANT_MEMORY_KEY, JSON.stringify(trimmed));
+      return;
+    }
+    window.localStorage.setItem(MERCHANT_MEMORY_KEY, JSON.stringify(map));
+  } catch {
+    // Ignore storage quota errors
+  }
+}
+
+export function findMerchantMemory(merchantName: string): MerchantMemoryEntry | null {
+  const key = normalizeMerchantKey(merchantName || '');
+  if (key.length < 3 || GENERIC_MERCHANT_KEYS.has(key)) return null;
+
+  const map = loadMerchantMemoryMap();
+  if (map[key]) return map[key];
+
+  if (key.length < 4) return null;
+  const candidates = Object.values(map).filter((entry) => {
+    if (entry.key.length < 4) return false;
+    return key.startsWith(`${entry.key} `) || entry.key.startsWith(`${key} `);
+  });
+  if (candidates.length === 0) return null;
+
+  candidates.sort((a, b) => b.count - a.count || b.key.length - a.key.length);
+  return candidates[0];
+}
+
+function getDeveloperEnvAISettings(): Partial<LocalAISettings> {
+  const env = (import.meta as unknown as { env?: Record<string, string | undefined> }).env;
+  if (!env) return {};
+  const apiKey = env.VITE_OCR_AI_API_KEY?.trim();
+  if (!apiKey) return {};
+  const rawProvider = (env.VITE_OCR_AI_PROVIDER || 'gemini').toLowerCase();
+  const provider: LocalAISettings['ai_provider'] =
+    rawProvider === 'openai' || rawProvider === 'anthropic' || rawProvider === 'gemini'
+      ? rawProvider
+      : 'gemini';
+  const enabled = env.VITE_OCR_AI_ENABLED !== 'false';
+  return {
+    ai_enabled: enabled,
+    ai_provider: provider,
+    ai_model:
+      env.VITE_OCR_AI_MODEL?.trim() ||
+      (provider === 'gemini' ? 'gemini-2.5-flash' : 'default'),
+    ocr_escalation_enabled: enabled,
+    api_key: apiKey,
+    has_api_key: true,
+  };
+}
+
+export function getHybridAISettings(): LocalAISettings {
+  const localDbSettings = loadLocalDB().ai_settings;
+  const devEnvSettings = getDeveloperEnvAISettings();
+  const base: LocalAISettings = {
+    ...localDbSettings,
+    ...devEnvSettings,
+    api_key: localDbSettings.api_key || devEnvSettings.api_key,
+    has_api_key: Boolean((localDbSettings.api_key || devEnvSettings.api_key)?.trim()),
+  };
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) {
+      return base;
+    }
+    const raw = window.localStorage.getItem(HYBRID_AI_SETTINGS_KEY);
+    if (!raw) return base;
+    const parsed = JSON.parse(raw) as Partial<LocalAISettings>;
+    const mergedKey = parsed.api_key !== undefined ? parsed.api_key : base.api_key;
+    return {
+      ...base,
+      ...parsed,
+      api_key: mergedKey,
+      has_api_key: Boolean(mergedKey?.trim()),
+    };
+  } catch {
+    return base;
+  }
+}
+
+export function saveHybridAISettings(patch: Partial<LocalAISettings>): LocalAISettings {
+  const current = getHybridAISettings();
+  const nextApiKey = patch.api_key !== undefined ? patch.api_key.trim() : current.api_key;
+  const next: LocalAISettings = {
+    ...current,
+    ...patch,
+    api_key: nextApiKey,
+    has_api_key: Boolean(nextApiKey),
+  };
+
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(HYBRID_AI_SETTINGS_KEY, JSON.stringify(next));
+      const rawDb = window.localStorage.getItem(LOCAL_DB_STORAGE_KEY);
+      if (rawDb) {
+        const db = loadLocalDB();
+        db.ai_settings = next;
+        saveLocalDB(db);
+      }
+    }
+  } catch {
+    // Ignore storage quota errors
+  }
+
+  return next;
 }

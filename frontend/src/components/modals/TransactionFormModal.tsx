@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import {
   useCreateTransaction,
   useUpdateTransaction,
@@ -6,13 +6,20 @@ import {
   useCategories,
 } from '../../hooks/useTransactions';
 import { useAccounts } from '../../hooks/useAccounts';
+import { useDebts } from '../../hooks/useDebts';
 import type { Transaction, CreateTransactionRequest } from '../../services/transactions';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
 import { toast } from '../../stores/useToastStore';
 import { formatLocalDate, getTodayLocalDate } from '../../utils/date';
-import { Loader2, AlertCircle, Upload, X, FileImage } from 'lucide-react';
+import {
+  analyzeSharedReceiptFile,
+  refineReceiptWithHybridAI,
+} from '../../offline/nativeOcr';
+import { getHybridAISettings } from '../../offline/storage';
+import { captureReceiptPhoto, isNativeMobile } from '../../utils/mobile';
+import { Loader2, AlertCircle, Upload, X, FileImage, Camera, Sparkles } from 'lucide-react';
 
 interface TransactionFormModalProps {
   isOpen: boolean;
@@ -33,6 +40,10 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
 
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
+  const { data: debts = [] } = useDebts();
+
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
 
   const [type, setType] = useState<'income' | 'expense' | 'transfer'>('expense');
   const [date, setDate] = useState('');
@@ -81,6 +92,7 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
     setAccountError(null);
     setCategoryError(null);
     setErrorMsg(null);
+    setIsScanningReceipt(false);
   }, [editTransaction, isOpen]);
 
   useEffect(() => {
@@ -137,6 +149,116 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
 
   const removeFile = (index: number) => {
     setFiles((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const processReceiptFileForForm = async (file: File) => {
+    setIsScanningReceipt(true);
+    setErrorMsg(null);
+    try {
+      const base = await analyzeSharedReceiptFile(file, {
+        accounts: accounts || [],
+        categories: categories || [],
+        debts,
+      });
+
+      let resolved = base;
+      const hybridSettings = getHybridAISettings();
+      const online = typeof navigator === 'undefined' || navigator.onLine !== false;
+      if (
+        online &&
+        hybridSettings.ai_enabled &&
+        hybridSettings.ocr_escalation_enabled &&
+        hybridSettings.api_key &&
+        hybridSettings.ai_provider !== 'local'
+      ) {
+        const refined = await refineReceiptWithHybridAI(file, base, {
+          accounts: accounts || [],
+          categories: categories || [],
+          debts,
+          settings: hybridSettings,
+        });
+        if (refined) {
+          resolved = refined;
+        }
+      }
+
+      if (resolved.suggestedMode === 'transfer') {
+        setType('transfer');
+        setCategoryId('');
+      } else {
+        setType('expense');
+        if (resolved.suggestedCategoryId) {
+          setCategoryId(resolved.suggestedCategoryId);
+          setCategoryError(null);
+        }
+      }
+
+      if (resolved.matchedAccountId) {
+        setAccountId(resolved.matchedAccountId);
+        setAccountError(null);
+      }
+      if (resolved.amount > 0) {
+        setAmount(String(resolved.amount));
+        setAmountError(null);
+      }
+      if (resolved.date) {
+        setDate(resolved.date);
+      }
+
+      const prod = resolved.productName.trim();
+      const merch = resolved.merchantName.trim();
+      const combinedDesc =
+        prod && merch && merch.toLowerCase() !== prod.toLowerCase()
+          ? `${prod} — ${merch}`
+          : prod || merch;
+      if (combinedDesc) {
+        setDescription(combinedDesc);
+      }
+
+      const noteParts = [prod ? `Produk: ${prod}` : '', resolved.notes || ''].filter(Boolean);
+      if (noteParts.length > 0) {
+        setNotes(noteParts.join(' • '));
+      }
+
+      if (file.type.startsWith('image/')) {
+        setFiles((prev) => [...prev, file]);
+      }
+
+      toast.success(
+        resolved.isHybridOnline
+          ? 'Struk dibaca otomatis (Hybrid AI Online)'
+          : 'Struk dibaca otomatis (OCR Offline)'
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Gagal membaca struk dengan OCR.';
+      setErrorMsg(msg);
+    } finally {
+      setIsScanningReceipt(false);
+    }
+  };
+
+  const handleScanCameraClick = async () => {
+    if (isNativeMobile()) {
+      try {
+        const captured = await captureReceiptPhoto('camera');
+        if (captured) {
+          await processReceiptFileForForm(captured);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'Gagal mengakses kamera.';
+        setErrorMsg(msg);
+      }
+      return;
+    }
+    scanInputRef.current?.click();
+  };
+
+  const handleScanFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (file) {
+      void processReceiptFileForForm(file);
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -249,6 +371,56 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
         <div className="mb-4 flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
           <AlertCircle className="h-5 w-5 shrink-0" />
           <span>{errorMsg}</span>
+        </div>
+      )}
+
+      {!isEditMode && (
+        <div className="mb-4 rounded-xl border border-indigo-200/80 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <Sparkles className="h-4 w-4 text-indigo-600 dark:text-indigo-400 shrink-0" />
+            <div className="min-w-0">
+              <p className="text-xs font-semibold text-indigo-950 dark:text-indigo-100">
+                Scan Struk / QRIS untuk Isi Otomatis
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                Isi nominal, toko, produk &amp; lampiran secara instan
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="secondary"
+              disabled={isScanningReceipt}
+              onClick={() => void handleScanCameraClick()}
+            >
+              {isScanningReceipt ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Camera className="h-3.5 w-3.5" />
+              )}
+              <span>Kamera</span>
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={isScanningReceipt}
+              onClick={() => scanInputRef.current?.click()}
+            >
+              <Upload className="h-3.5 w-3.5" />
+              <span>Galeri / File</span>
+            </Button>
+            <input
+              ref={scanInputRef}
+              type="file"
+              accept="image/*,application/pdf"
+              aria-label="Pilih file struk untuk isi otomatis"
+              onChange={handleScanFileChange}
+              className="hidden"
+            />
+          </div>
         </div>
       )}
 

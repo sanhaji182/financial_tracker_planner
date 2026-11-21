@@ -9,6 +9,12 @@ import { Toaster } from './components/ui/Toaster';
 import { authService } from './services/auth';
 import { useAuthStore } from './stores/authStore';
 import { syncAppModeFromNative } from './utils/appMode';
+import {
+  enqueueSharedPayloads,
+  localOcrBridge,
+  peekBufferedSharedPayloads,
+  type SharedFilePayload,
+} from './offline/nativeOcr';
 
 // Lazy load route pages
 const DashboardPage = React.lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })));
@@ -69,6 +75,7 @@ const App: React.FC = () => {
 
   React.useEffect(() => {
     let active = true;
+    let removeShareListener: () => void = () => {};
 
     syncAppModeFromNative()
       .catch(() => 'cloud')
@@ -76,12 +83,43 @@ const App: React.FC = () => {
       .then((data) => {
         if (active) setAuth(data.user, data.access_token);
       })
-      .catch(() => {
+      .catch(async () => {
+        const hasPendingShare = await peekBufferedSharedPayloads().catch(() => false);
+        if (hasPendingShare) {
+          const offlineAuth = await authService.enterLocalOfflineMode();
+          if (active) setAuth(offlineAuth.user, offlineAuth.access_token);
+          return;
+        }
         if (active) clearAuth();
+      });
+
+    void localOcrBridge
+      .addShareListener(async (data) => {
+        if (!active || !Array.isArray(data?.files) || data.files.length === 0) return;
+        const fresh = enqueueSharedPayloads(data.files as SharedFilePayload[]);
+        if (!useAuthStore.getState().isAuthenticated) {
+          await localOcrBridge.consumePendingShares().catch(() => {});
+          const offlineAuth = await authService.enterLocalOfflineMode();
+          if (active) setAuth(offlineAuth.user, offlineAuth.access_token);
+          return;
+        }
+        if (fresh.length > 0) {
+          window.dispatchEvent(new CustomEvent('kb:shared-files-updated'));
+        }
+      })
+      .then((handle) => {
+        if (active) {
+          removeShareListener = () => {
+            void handle.remove();
+          };
+        } else {
+          void handle.remove();
+        }
       });
 
     return () => {
       active = false;
+      removeShareListener();
     };
   }, [clearAuth, setAuth]);
 

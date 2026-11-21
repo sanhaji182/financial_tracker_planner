@@ -8,6 +8,7 @@ import { TableSkeleton } from '../ui/TableSkeleton';
 import { CommandPalette } from '../ui/CommandPalette';
 import { TransactionFormModal } from '../modals/TransactionFormModal';
 import { TransferModal } from '../modals/TransferModal';
+import { SharedReceiptQuickModal } from '../modals/SharedReceiptQuickModal';
 import { useQuickActionStore } from '../../stores/useQuickActionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { DocumentMeta } from '../DocumentMeta';
@@ -100,6 +101,7 @@ export const AppShell: React.FC = () => {
             onClose={closeQuickTransfer}
             defaultSourceAccountId={quickTransferSourceId}
           />
+          <SharedReceiptQuickModal />
         </>
       )}
     </div>

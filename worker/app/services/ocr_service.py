@@ -317,8 +317,17 @@ def parse_receipt_text(text: str, data_df: Dict[str, List[Any]]) -> Dict[str, An
     total_val = 0.0
     total_conf = 0.0
 
-    exclude_total_line = r"\b(sub\s*total|subtotal|kembali(?:an)?|change|diskon|discount|hemat|potongan|ppn|tax|pajak)\b"
-    primary_total_kw = r"grand\s*total|total\s*bayar|total\s*belanja|total\s*tagihan|jumlah\s*bayar|total\s*pembayaran|net\s*amount|netto|total"
+    exclude_total_line = (
+        r"\b(sub\s*total|subtotal|kembali(?:an)?|change|diskon|discount|hemat|potongan|"
+        r"ppn|tax|pajak|npwp|n\.?p\.?w\.?p|nmid|nik|telp|telepon|phone|"
+        r"total\s*(?:item|qty|kuantitas|barang|pcs))\b"
+    )
+    primary_total_kw = (
+        r"grand\s*total|total\s*(?:bayar|belanja|tagihan|pembayaran|transaksi)|"
+        r"jumlah\s*bayar|jml\s*(?:bayar|tagihan|belanja)|harga\s*jual|"
+        r"nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran))?|bayar\s*qris|"
+        r"net\s*amount|netto|total"
+    )
     fallback_total_kw = r"jumlah|bayar|tunai|cash|qris"
 
     primary_pattern = rf"(?:{primary_total_kw})[:\s]*(?:[Rr]p\.?\s*|IDR\s*)?([\d.,\s]+)"
@@ -351,12 +360,22 @@ def parse_receipt_text(text: str, data_df: Dict[str, List[Any]]) -> Dict[str, An
                         total_conf = extract_confidence_metrics(data_df, line.split())
 
     if total_val == 0.0:
-        nums = re.findall(r"(?:[Rr]p\.?\s*)?([\d.,]{4,})\b", text)
-        for num in nums:
-            cleaned = clean_amount(num)
-            if cleaned > total_val:
-                total_val = cleaned
-                total_conf = 0.4
+        non_money_meta = (
+            r"\b(?:npwp|n\.?p\.?w\.?p|nmid|nik|telp|telepon|phone|no\.?\s*(?:ref|struk|nota|bon|transaksi)|mid|tid|rrn)\b"
+        )
+        npwp_re = re.compile(r"\b\d{2,3}[.,\s]\d{3}[.,\s]\d{3}[.,\s]\d(?:\s*[-.,\s]*\d{3}[.,\s]\d{3})?\b")
+        for line in lines:
+            if re.search(exclude_total_line, line, re.IGNORECASE) or re.search(non_money_meta, line, re.IGNORECASE):
+                continue
+            safe_line = npwp_re.sub(" ", line)
+            nums = re.findall(r"(?:[Rr]p\.?\s*)?\b([1-9][\d.,]{3,})\b", safe_line)
+            for num in nums:
+                if re.search(r"\.\d{3}\.\d$", num):
+                    continue
+                cleaned = clean_amount(num)
+                if cleaned > total_val:
+                    total_val = cleaned
+                    total_conf = 0.4
 
     # 4. Extract Payment Method
     payment_method = "cash"

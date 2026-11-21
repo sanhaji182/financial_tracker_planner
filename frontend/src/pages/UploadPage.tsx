@@ -31,6 +31,7 @@ import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/useToastStore';
 import { captureReceiptPhoto, isNativeMobile } from '../utils/mobile';
 import { getTodayLocalDate } from '../utils/date';
+import { findMerchantMemory, learnMerchantMemory } from '../offline/storage';
 
 export const UploadPage: React.FC = () => {
   const navigate = useNavigate();
@@ -58,6 +59,7 @@ export const UploadPage: React.FC = () => {
   const [attachmentId, setAttachmentId] = useState<string | null>(null);
 
   const [merchantName, setMerchantName] = useState('');
+  const [productName, setProductName] = useState('');
   const [txDate, setTxDate] = useState('');
   const [amountStr, setAmountStr] = useState('');
   const [txType, setTxType] = useState<'expense' | 'income'>('expense');
@@ -274,6 +276,10 @@ export const UploadPage: React.FC = () => {
         setShowRawText(false);
 
         if (items.length > 0) {
+          const summaryParts = items
+            .slice(0, 4)
+            .map((it) => (it.quantity > 1 ? `${it.name} (${it.quantity}x)` : it.name));
+          setProductName(summaryParts.join(', '));
           const itemLines = items.map(
             (it) => `${it.name} (${it.quantity}x Rp ${it.price.toLocaleString('id-ID')})`
           );
@@ -281,8 +287,12 @@ export const UploadPage: React.FC = () => {
             ? `Metode: ${ocr.parsed_data.payment_method.toUpperCase()}\n`
             : '';
           setNotes(`${payLabel}Item: ${itemLines.join(', ')}`);
-        } else if (ocr.parsed_data?.payment_method) {
-          setNotes(`Metode bayar: ${ocr.parsed_data.payment_method.toUpperCase()}`);
+        } else {
+          const memory = findMerchantMemory(ocr.parsed_data?.merchant_name || '');
+          setProductName(memory?.productName || '');
+          if (ocr.parsed_data?.payment_method) {
+            setNotes(`Metode bayar: ${ocr.parsed_data.payment_method.toUpperCase()}`);
+          }
         }
 
         if (res.suggested_category_id && res.suggested_category_name) {
@@ -389,18 +399,33 @@ export const UploadPage: React.FC = () => {
     setErrorMsg(null);
 
     try {
+      const merchantClean = merchantName.trim();
+      const productClean = productName.trim();
+      const combinedDescription =
+        productClean && merchantClean && merchantClean.toLowerCase() !== productClean.toLowerCase()
+          ? `${productClean} — ${merchantClean}`
+          : productClean || merchantClean || 'Transaksi OCR';
+
       const payload: ConfirmDraftTransactionRequest = {
         date: parsedDate.toISOString(),
         amount: parsedAmount,
         type: txType,
         account_id: selectedAccountId,
         category_id: selectedCategoryId || undefined,
-        description: merchantName || 'Transaksi OCR',
+        description: combinedDescription,
         notes: notes || undefined,
         source: draftSource,
       };
 
       await transactionsService.confirmDraftTransaction(currentDraftId, payload);
+      if (txType === 'expense') {
+        learnMerchantMemory({
+          merchantName: merchantClean,
+          productName: productClean,
+          categoryId: selectedCategoryId || undefined,
+          accountId: selectedAccountId,
+        });
+      }
       toast.success('Transaksi berhasil disimpan');
       navigate('/transactions');
     } catch (err) {
@@ -464,6 +489,7 @@ export const UploadPage: React.FC = () => {
     setCurrentDraftId(null);
     setAttachmentId(null);
     setMerchantName('');
+    setProductName('');
     setTxDate('');
     setAmountStr('');
     setTxType('expense');
@@ -875,6 +901,23 @@ export const UploadPage: React.FC = () => {
                               Confidence: {(confidenceScores.merchant_name * 100).toFixed(0)}%
                             </span>
                           )}
+                      </div>
+
+                      <div className="flex flex-col gap-1.5">
+                        <label
+                          htmlFor="upload-product-name"
+                          className="text-xs font-semibold text-slate-600 dark:text-slate-300"
+                        >
+                          Nama Produk / Item
+                        </label>
+                        <input
+                          id="upload-product-name"
+                          type="text"
+                          value={productName}
+                          onChange={(e) => setProductName(e.target.value)}
+                          placeholder="Contoh: Kopi Susu, Belanja Harian"
+                          className="h-10 px-3 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-sm focus:outline-none focus:border-indigo-500 text-slate-900 dark:text-white"
+                        />
                       </div>
 
                       <div className="flex flex-col gap-1.5">
