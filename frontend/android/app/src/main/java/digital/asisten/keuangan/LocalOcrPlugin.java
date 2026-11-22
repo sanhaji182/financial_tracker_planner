@@ -250,7 +250,8 @@ public class LocalOcrPlugin extends Plugin {
                 String text = extractRowOrderedText(result);
 
                 String compactText = text.replaceAll("\\s+", "");
-                if (compactText.length() < 20 || !compactText.matches(".*\\d.*")) {
+                boolean initialHasMoneySignal = hasMoneyOrTotalSignal(text);
+                if (compactText.length() < 20 || !compactText.matches(".*\\d.*") || !initialHasMoneySignal) {
                     try {
                         enhancedBitmap = createHighContrastGrayscaleBitmap(bitmap);
                         InputImage enhancedImage = InputImage.fromBitmap(enhancedBitmap, 0);
@@ -259,8 +260,12 @@ public class LocalOcrPlugin extends Plugin {
                         String compactRetry = retryText.replaceAll("\\s+", "");
                         boolean firstHasDigits = compactText.matches(".*\\d.*");
                         boolean retryHasDigits = compactRetry.matches(".*\\d.*");
-                        if ((!firstHasDigits && retryHasDigits)
-                                || (compactRetry.length() > compactText.length() && (retryHasDigits || !firstHasDigits))) {
+                        boolean retryHasMoneySignal = hasMoneyOrTotalSignal(retryText);
+                        if ((!initialHasMoneySignal && retryHasMoneySignal)
+                                || (!firstHasDigits && retryHasDigits)
+                                || (compactRetry.length() > compactText.length()
+                                        && (retryHasDigits || !firstHasDigits)
+                                        && (!initialHasMoneySignal || retryHasMoneySignal))) {
                             text = retryText;
                         }
                     } catch (Exception ignored) {
@@ -523,6 +528,15 @@ public class LocalOcrPlugin extends Plugin {
         return out;
     }
 
+    private static boolean hasMoneyOrTotalSignal(String text) {
+        if (text == null || text.trim().isEmpty()) {
+            return false;
+        }
+        return text.matches(
+                "(?is).*(?:total|bayar|jumlah|nominal|harga\\s*jual|tunai|qris|\\b[1-9]\\d{0,2}(?:[.,]\\d{3})+).*"
+        );
+    }
+
     /**
      * Groups ML Kit lines into horizontal visual rows (left-to-right within a row)
      * so two-column bank statements and slightly tilted receipts stay paired on the same line.
@@ -578,7 +592,10 @@ public class LocalOcrPlugin extends Plugin {
             int refHeight = horizontallySeparate
                     ? Math.max(rowAnchorHeight, h)
                     : Math.min(rowAnchorHeight, h);
-            int tolerance = Math.max(horizontallySeparate ? 14 : 10, Math.round(refHeight * factor));
+            int tiltPadding = horizontallySeparate
+                    ? Math.min(45, Math.round(Math.max(0, left - currentRowMaxRight) * 0.08f))
+                    : 0;
+            int tolerance = Math.max(horizontallySeparate ? 14 : 10, Math.round(refHeight * factor) + tiltPadding);
             if (Math.abs(cy - rowAnchorY) <= tolerance) {
                 currentRow.add(line);
                 currentRowMaxRight = Math.max(currentRowMaxRight, right);

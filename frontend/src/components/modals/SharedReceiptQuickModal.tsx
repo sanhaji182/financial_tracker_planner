@@ -445,6 +445,8 @@ export const SharedReceiptQuickModal: React.FC = () => {
 
         learnMerchantMemory({
           merchantName: merchantClean,
+          rawMerchantName: analysis?.merchantName,
+          rawText: analysis?.rawText,
           productName: productClean,
           categoryId,
           accountId: sourceAccountId,

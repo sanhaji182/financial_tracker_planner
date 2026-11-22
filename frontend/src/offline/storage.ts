@@ -385,6 +385,9 @@ const GENERIC_MERCHANT_KEYS = new Set([
   'merchant unknown',
 ]);
 
+const HEADER_NOISE_LINE_RE =
+  /^(?:struk|receipt|nota|invoice|bukti\s*(?:transaksi|pembayaran|transfer)|rincian\s*(?:transaksi|pesanan|pembayaran)|detail\s*transaksi|tanggal|tgl|date|waktu|time|npwp|nmid|nik|telp|telepon|no\.?\s*(?:ref|transaksi|struk|nota|bon|pesanan)|id\s*transaksi|berhasil|sukses|selesai|terima\s*kasih)\b/i;
+
 export function normalizeMerchantKey(merchantName: string): string {
   return merchantName
     .toLowerCase()
@@ -396,6 +399,29 @@ export function normalizeMerchantKey(merchantName: string): string {
     .replace(/[^a-z0-9\s]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
+}
+
+export function extractReceiptHeaderFingerprint(rawText?: string): string {
+  if (!rawText) return '';
+  const lines = rawText
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l || l.length < 3 || !/[A-Za-z]{3,}/.test(l)) return false;
+      if (HEADER_NOISE_LINE_RE.test(l)) return false;
+      if (/^\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}/.test(l)) return false;
+      if (/\d{1,2}\s*(?::|\.)\d{2}\s*(?:wib|wita|wit)\b/i.test(l)) return false;
+      return true;
+    })
+    .slice(0, 2);
+
+  const normalized = lines
+    .map((l) => normalizeMerchantKey(l))
+    .filter((k) => k.length >= 3 && !GENERIC_MERCHANT_KEYS.has(k));
+
+  if (normalized.length === 0) return '';
+  const fingerprint = `fp:${normalized.join('|').slice(0, 96)}`;
+  return fingerprint.length >= 7 ? fingerprint : '';
 }
 
 function loadMerchantMemoryMap(): Record<string, MerchantMemoryEntry> {
@@ -410,28 +436,66 @@ function loadMerchantMemoryMap(): Record<string, MerchantMemoryEntry> {
   }
 }
 
+function upsertMemoryEntry(
+  map: Record<string, MerchantMemoryEntry>,
+  key: string,
+  entry: {
+    merchantName: string;
+    productName?: string;
+    categoryId?: string;
+    accountId?: string;
+  }
+): void {
+  const prev = map[key];
+  map[key] = {
+    key,
+    merchantName: entry.merchantName,
+    productName: entry.productName?.trim() || prev?.productName,
+    categoryId: entry.categoryId || prev?.categoryId,
+    accountId: entry.accountId || prev?.accountId,
+    count: (prev?.count || 0) + 1,
+    updatedAt: nowIso(),
+  };
+}
+
 export function learnMerchantMemory(entry: {
   merchantName: string;
+  rawMerchantName?: string;
+  rawText?: string;
   productName?: string;
   categoryId?: string;
   accountId?: string;
 }): void {
-  const key = normalizeMerchantKey(entry.merchantName || '');
-  if (key.length < 3 || GENERIC_MERCHANT_KEYS.has(key)) return;
+  const canonicalName = (entry.merchantName || '').trim();
+  const canonicalKey = normalizeMerchantKey(canonicalName);
+  const rawAliasKey = entry.rawMerchantName ? normalizeMerchantKey(entry.rawMerchantName) : '';
+  const headerFingerprint = extractReceiptHeaderFingerprint(entry.rawText);
+
+  const validCanonical = canonicalKey.length >= 3 && !GENERIC_MERCHANT_KEYS.has(canonicalKey);
+  const validAlias = rawAliasKey.length >= 3 && !GENERIC_MERCHANT_KEYS.has(rawAliasKey);
+
+  if (!validCanonical && !validAlias && !headerFingerprint) return;
 
   try {
     if (typeof window === 'undefined' || !window.localStorage) return;
     const map = loadMerchantMemoryMap();
-    const prev = map[key];
-    map[key] = {
-      key,
-      merchantName: entry.merchantName.trim(),
-      productName: entry.productName?.trim() || prev?.productName,
-      categoryId: entry.categoryId || prev?.categoryId,
-      accountId: entry.accountId || prev?.accountId,
-      count: (prev?.count || 0) + 1,
-      updatedAt: nowIso(),
+    const recordName = canonicalName || (entry.rawMerchantName || '').trim();
+    const payload = {
+      merchantName: recordName,
+      productName: entry.productName,
+      categoryId: entry.categoryId,
+      accountId: entry.accountId,
     };
+
+    if (validCanonical) {
+      upsertMemoryEntry(map, canonicalKey, payload);
+    }
+    if (validAlias && rawAliasKey !== canonicalKey) {
+      upsertMemoryEntry(map, rawAliasKey, payload);
+    }
+    if (headerFingerprint) {
+      upsertMemoryEntry(map, headerFingerprint, payload);
+    }
 
     const entries = Object.values(map);
     if (entries.length > 200) {
@@ -449,22 +513,31 @@ export function learnMerchantMemory(entry: {
   }
 }
 
-export function findMerchantMemory(merchantName: string): MerchantMemoryEntry | null {
-  const key = normalizeMerchantKey(merchantName || '');
-  if (key.length < 3 || GENERIC_MERCHANT_KEYS.has(key)) return null;
-
+export function findMerchantMemory(merchantName: string, rawText?: string): MerchantMemoryEntry | null {
   const map = loadMerchantMemoryMap();
-  if (map[key]) return map[key];
+  const key = normalizeMerchantKey(merchantName || '');
 
-  if (key.length < 4) return null;
-  const candidates = Object.values(map).filter((entry) => {
-    if (entry.key.length < 4) return false;
-    return key.startsWith(`${entry.key} `) || entry.key.startsWith(`${key} `);
-  });
-  if (candidates.length === 0) return null;
+  if (key.length >= 3 && !GENERIC_MERCHANT_KEYS.has(key)) {
+    if (map[key]) return map[key];
 
-  candidates.sort((a, b) => b.count - a.count || b.key.length - a.key.length);
-  return candidates[0];
+    if (key.length >= 4) {
+      const candidates = Object.values(map).filter((entry) => {
+        if (entry.key.startsWith('fp:') || entry.key.length < 4) return false;
+        return key.startsWith(`${entry.key} `) || entry.key.startsWith(`${key} `);
+      });
+      if (candidates.length > 0) {
+        candidates.sort((a, b) => b.count - a.count || b.key.length - a.key.length);
+        return candidates[0];
+      }
+    }
+  }
+
+  const headerFingerprint = extractReceiptHeaderFingerprint(rawText);
+  if (headerFingerprint && map[headerFingerprint]) {
+    return map[headerFingerprint];
+  }
+
+  return null;
 }
 
 function getDeveloperEnvAISettings(): Partial<LocalAISettings> {

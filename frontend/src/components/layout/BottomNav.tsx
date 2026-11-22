@@ -87,27 +87,43 @@ export const BottomNav: React.FC = () => {
     }
   };
 
-  const handleCameraScan = async () => {
+  const runReceiptScan = async (
+    source: 'camera' | 'photos',
+    fallbackClick: () => void,
+    errorTitle: string,
+    defaultError: string
+  ) => {
     setQuickActionOpen(false);
     if (isNativeMobile()) {
       try {
-        const captured = await captureReceiptPhoto('camera');
+        const captured = await captureReceiptPhoto(source);
         if (captured) {
           await dispatchFilesToQuickOcr([captured]);
         }
       } catch (err) {
-        const msg = err instanceof Error ? err.message : 'Gagal mengakses kamera.';
-        toast.error('Kamera gagal dibuka', msg);
+        const msg = err instanceof Error ? err.message : defaultError;
+        toast.error(errorTitle, msg);
       }
       return;
     }
-    cameraInputRef.current?.click();
+    fallbackClick();
   };
 
-  const handleGalleryScan = () => {
-    setQuickActionOpen(false);
-    galleryInputRef.current?.click();
-  };
+  const handleCameraScan = () =>
+    runReceiptScan(
+      'camera',
+      () => cameraInputRef.current?.click(),
+      'Kamera gagal dibuka',
+      'Gagal mengakses kamera.'
+    );
+
+  const handleGalleryScan = () =>
+    runReceiptScan(
+      'photos',
+      () => galleryInputRef.current?.click(),
+      'Galeri gagal dibuka',
+      'Gagal mengakses galeri foto.'
+    );
 
   const handleScanInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files ? Array.from(e.target.files) : [];

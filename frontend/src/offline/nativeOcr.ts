@@ -16,6 +16,7 @@ import { getTodayLocalDate } from '../utils/date';
 import {
   findMerchantMemory,
   getHybridAISettings,
+  normalizeMerchantKey,
   type LocalAISettings,
 } from './storage';
 
@@ -871,7 +872,7 @@ export function extractReceiptItemsAndProduct(
     if (FIELD_LABEL_ONLY_RE.test(line)) return true;
     if (PRODUCT_LABEL_RE.test(line)) return true;
     if (MERCHANT_LABEL_RE.test(line)) return true;
-    if (/\b(?:jl\.|jalan|kec\.|kel\.|kab\.|kota|rt\s*\d|rw\s*\d)\b/i.test(line)) return true;
+    if (/\b(?:jln?\.?(?:\s|$)|jalan\b|kav\.?\s*\d|kec\.?(?:\s|$)|kel\.?(?:\s|$)|kab\.?(?:\s|$)|kota\b|rt\s*\d|rw\s*\d)/i.test(line)) return true;
     if (/^\d{1,2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{2,4}/.test(line)) return true;
     if (/^(?:-\s*(?:level|less|extra|no|tanpa|catatan|note|topp?ing|sugar|ice|es)\b|(?:\(\s*)?@\s*(?:rp\.?\s*)?\d|\(?\d+\s*(?:strip|pcs|btl|tab|kap|box|pak|item)\s*@|(?:promo\s*)?diskon\b|hemat\b)/i.test(line)) {
       return true;
@@ -2153,10 +2154,19 @@ export async function analyzeSharedReceiptFile(
     parsedData?.total || 0
   );
 
-  // Layer 3: Check self-learning merchant memory
-  const memory = findMerchantMemory(merchantName);
-  let resolvedProductName = extractedItems.productName;
+  // Layer 3: Check self-learning merchant alias & header-fingerprint memory
+  const memory = findMerchantMemory(merchantName, combinedText);
+  let resolvedMerchantName = merchantName;
   let learnedFromMemory = false;
+  if (
+    memory?.merchantName &&
+    normalizeMerchantKey(memory.merchantName) !== normalizeMerchantKey(merchantName)
+  ) {
+    resolvedMerchantName = memory.merchantName;
+    learnedFromMemory = true;
+  }
+
+  let resolvedProductName = extractedItems.productName;
   if (!resolvedProductName && memory?.productName) {
     resolvedProductName = memory.productName;
     learnedFromMemory = true;
@@ -2169,11 +2179,14 @@ export async function analyzeSharedReceiptFile(
 
   let suggestedCategoryId = receipt.suggested_category_id;
   let suggestedCategoryName = receipt.suggested_category_name;
-  if ((receipt.suggested_category_confidence ?? 0) < 0.75 && memory?.categoryId) {
+  if (memory?.categoryId) {
     const memCat = options.categories.find((c) => c.id === memory.categoryId && c.type === 'expense');
     if (memCat) {
       suggestedCategoryId = memCat.id;
       suggestedCategoryName = memCat.name;
+      if (memCat.id !== receipt.suggested_category_id) {
+        learnedFromMemory = true;
+      }
     }
   }
 
@@ -2188,7 +2201,7 @@ export async function analyzeSharedReceiptFile(
     suggestedMode,
     amount: parsedData?.total || 0,
     date: parsedData?.date || getTodayLocalDate(),
-    merchantName,
+    merchantName: resolvedMerchantName,
     productName: resolvedProductName,
     items,
     paymentMethod,
@@ -2307,7 +2320,7 @@ export async function refineReceiptWithHybridAI(
     productName = parts.join(', ');
   }
 
-  const memory = findMerchantMemory(merchantName);
+  const memory = findMerchantMemory(merchantName, baseAnalysis.rawText);
   let learnedFromMemory = false;
   if (!productName) {
     if (memory?.productName) {

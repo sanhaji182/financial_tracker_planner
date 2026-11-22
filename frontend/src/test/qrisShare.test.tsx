@@ -1789,4 +1789,98 @@ describe('Android Share Sheet QRIS & Receipt Quick Flow', () => {
       }
     }
   });
+
+  it('self-learns user OCR merchant, product, and category corrections via alias & header fingerprint', async () => {
+    const auth = await authService.enterLocalOfflineMode('Fajar');
+    useAuthStore.getState().setAuth(auth.user, auth.access_token);
+    resetLocalDB();
+
+    const bca = await accountsService.createAccount({
+      name: 'BCA Utama',
+      type: 'bank',
+      bank_provider: 'BCA',
+      initial_balance: 3_000_000,
+    });
+
+    const db = loadLocalDB();
+    const noisyReceiptText = [
+      'CV. KULINER BERKAH MANDIRI',
+      'JL. SUDIRMAN KAV 10',
+      '22/11/2026 12:10',
+      'Total Bayar : Rp 35.000',
+    ].join('\n');
+
+    vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    vi.spyOn(localOcrBridge, 'consumePendingShares').mockResolvedValueOnce({
+      files: [
+        {
+          id: 'share-alias-learn-1',
+          base64: btoa('fake-receipt-1'),
+          mimeType: 'image/jpeg',
+          fileName: 'noisy-1.jpg',
+        },
+      ],
+    });
+    vi.spyOn(localOcrBridge, 'addShareListener').mockResolvedValue({
+      remove: () => {},
+    });
+    vi.spyOn(localOcrBridge, 'recognizeImage').mockResolvedValue({
+      text: noisyReceiptText,
+      pageCount: 1,
+      engine: 'mlkit',
+    });
+
+    const queryClient = createTestQueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <SharedReceiptQuickModal />
+      </QueryClientProvider>
+    );
+
+    await waitFor(() => {
+      expect((screen.getByLabelText(/Merchant \/ Nama Toko/i) as HTMLInputElement).value).toBe(
+        'CV. KULINER BERKAH MANDIRI'
+      );
+    });
+
+    // User corrects noisy OCR header merchant, adds product name, and picks Makan & Minuman
+    fireEvent.change(screen.getByLabelText(/Merchant \/ Nama Toko/i), {
+      target: { value: 'Warung Nasi Uduk Berkah' },
+    });
+    fireEvent.change(screen.getByLabelText(/Nama Produk \/ Item/i), {
+      target: { value: 'Paket Ayam Bakar Madu' },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: /Makan & Minuman/i }));
+    fireEvent.click(screen.getByRole('button', { name: /Simpan Pengeluaran/i }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    // Subsequent scan with the same raw legal/noisy header automatically recalls corrected Merchant, Product, and Category
+    const repeatFile = new File(
+      [
+        [
+          'CV. KULINER BERKAH MANDIRI',
+          'JL. SUDIRMAN KAV 10',
+          '23/11/2026 13:05',
+          'Total Bayar : Rp 42.000',
+        ].join('\n'),
+      ],
+      'repeat-noisy.txt',
+      { type: 'text/plain' }
+    );
+
+    const recalled = await analyzeSharedReceiptFile(repeatFile, {
+      accounts: [bca],
+      categories: db.categories,
+      debts: [],
+    });
+
+    expect(recalled.learnedFromMemory).toBe(true);
+    expect(recalled.merchantName).toBe('Warung Nasi Uduk Berkah');
+    expect(recalled.productName).toBe('Paket Ayam Bakar Madu');
+    expect(recalled.suggestedCategoryName).toBe('Makan & Minuman');
+    expect(recalled.matchedAccountId).toBe(bca.id);
+  });
 });

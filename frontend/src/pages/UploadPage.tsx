@@ -59,6 +59,7 @@ export const UploadPage: React.FC = () => {
   const [attachmentId, setAttachmentId] = useState<string | null>(null);
 
   const [merchantName, setMerchantName] = useState('');
+  const [rawMerchantName, setRawMerchantName] = useState('');
   const [productName, setProductName] = useState('');
   const [txDate, setTxDate] = useState('');
   const [amountStr, setAmountStr] = useState('');
@@ -262,8 +263,13 @@ export const UploadPage: React.FC = () => {
         const parsedTotal = ocr.parsed_data?.total ?? 0;
         const items = Array.isArray(ocr.parsed_data?.items) ? ocr.parsed_data.items : [];
 
+        const rawOcrMerchant = ocr.parsed_data?.merchant_name || '';
+        const ocrRawText = ocr.raw_text || '';
+        const memory = findMerchantMemory(rawOcrMerchant, ocrRawText);
+
         setCurrentDraftId(res.draft_transaction_id || null);
-        setMerchantName(ocr.parsed_data?.merchant_name || '');
+        setRawMerchantName(rawOcrMerchant);
+        setMerchantName(memory?.merchantName || rawOcrMerchant);
         setTxDate(ocr.parsed_data?.date || getTodayLocalDate());
         setAmountStr(parsedTotal > 0 ? String(parsedTotal) : '');
         setTxType('expense');
@@ -272,7 +278,7 @@ export const UploadPage: React.FC = () => {
         setOcrEngine(ocr.engine || 'tesseract');
         setDraftSource(ocr.engine?.startsWith('ai_vision') ? 'ai_suggested' : 'ocr');
         setOcrItems(items);
-        setRawText(ocr.raw_text || '');
+        setRawText(ocrRawText);
         setShowRawText(false);
 
         if (items.length > 0) {
@@ -288,14 +294,15 @@ export const UploadPage: React.FC = () => {
             : '';
           setNotes(`${payLabel}Item: ${itemLines.join(', ')}`);
         } else {
-          const memory = findMerchantMemory(ocr.parsed_data?.merchant_name || '');
           setProductName(memory?.productName || '');
           if (ocr.parsed_data?.payment_method) {
             setNotes(`Metode bayar: ${ocr.parsed_data.payment_method.toUpperCase()}`);
           }
         }
 
-        if (res.suggested_category_id && res.suggested_category_name) {
+        if (memory?.categoryId && categories?.some((c) => c.id === memory.categoryId)) {
+          setSelectedCategoryId(memory.categoryId);
+        } else if (res.suggested_category_id && res.suggested_category_name) {
           setAiCategorySuggestion({
             id: res.suggested_category_id,
             name: res.suggested_category_name,
@@ -421,6 +428,8 @@ export const UploadPage: React.FC = () => {
       if (txType === 'expense') {
         learnMerchantMemory({
           merchantName: merchantClean,
+          rawMerchantName: rawMerchantName || undefined,
+          rawText: rawText || undefined,
           productName: productClean,
           categoryId: selectedCategoryId || undefined,
           accountId: selectedAccountId,
