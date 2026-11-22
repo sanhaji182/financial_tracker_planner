@@ -146,6 +146,11 @@ export const SPOUSE_NAV_GROUPS: NavGroup[] = [
 
 export const EXTRA_SEARCHABLE_ROUTES: NavItem[] = [
   { name: 'Simulator Debt Avalanche', path: '/debts/avalanche', icon: Zap, tier: 'advanced', keywords: 'pelunasan cepat bunga utang' },
+  { name: 'Review Bulanan', path: '/review', icon: CalendarDays, tier: 'advanced', keywords: 'evaluasi performa bulanan rekomendasi tindakan' },
+  { name: 'Proteksi Keluarga', path: '/protection', icon: Shield, tier: 'advanced', keywords: 'asuransi jiwa kesehatan proteksi dana darurat' },
+  { name: 'Perencanaan Pensiun', path: '/retirement', icon: TrendingUp, tier: 'advanced', keywords: 'dana pensiun swr safe withdrawal rate' },
+  { name: 'Data Quality Center', path: '/data-quality', icon: Database, tier: 'advanced', keywords: 'kualitas data anomali kategorisasi integritas' },
+  { name: 'Privasi & Kontrol Data', path: '/settings/privacy', icon: Lock, tier: 'simple', keywords: 'privasi ekspor retensi data izin analitik' },
 ];
 
 export function getNavGroupsForRole(role?: string, mode: UIMode = 'advanced'): NavGroup[] {
@@ -204,7 +209,12 @@ const ROUTE_TITLES: Array<{ match: (pathname: string, search: string) => boolean
   { match: (p) => p.startsWith('/tasks'), title: 'Agenda Checklist' },
   { match: (p) => p.startsWith('/settings/categories'), title: 'Kategori Keuangan' },
   { match: (p) => p.startsWith('/settings/account'), title: 'Akun & Privasi' },
+  { match: (p) => p.startsWith('/settings/privacy'), title: 'Privasi & Kontrol Data' },
   { match: (p) => p.startsWith('/privacy'), title: 'Kebijakan Privasi' },
+  { match: (p) => p.startsWith('/review'), title: 'Review Bulanan' },
+  { match: (p) => p.startsWith('/protection'), title: 'Proteksi Rumah Tangga' },
+  { match: (p) => p.startsWith('/retirement'), title: 'Perencanaan Pensiun' },
+  { match: (p) => p.startsWith('/data-quality'), title: 'Data Quality Center' },
   { match: (p) => p.startsWith('/settings/automation'), title: 'Aturan Otomatis' },
   { match: (p) => p.startsWith('/settings/currencies'), title: 'Kurs Mata Uang' },
   { match: (p) => p.startsWith('/settings/ai'), title: 'Asisten AI' },

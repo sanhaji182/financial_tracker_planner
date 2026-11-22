@@ -7,6 +7,7 @@ import { getTodayLocalDate } from '../../utils/date';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Badge } from '../ui/Badge';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { DocumentScanBanner } from '../ui/DocumentScanBanner';
 import { ArrowRight, CheckCircle, AlertCircle } from 'lucide-react';
 
@@ -293,25 +294,17 @@ export const ReconciliationWizard: React.FC<ReconciliationWizardProps> = ({
             </p>
           </div>
 
-          <div className="space-y-1.5">
-            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-              Masukkan Saldo Nyata (per{' '}
-              {new Date(date).toLocaleDateString('id-ID', {
-                day: 'numeric',
-                month: 'short',
-                year: 'numeric',
-              })}
-              )
-            </label>
-            <input
-              type="number"
-              value={actualBalance}
-              onChange={(e) => setActualBalance(e.target.value)}
-              placeholder="Contoh: 12500000"
-              required
-              className="w-full h-10 text-sm px-3 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl font-money"
-            />
-          </div>
+          <CurrencyInput
+            label={`Masukkan Saldo Nyata (per ${new Date(date).toLocaleDateString('id-ID', {
+              day: 'numeric',
+              month: 'short',
+              year: 'numeric',
+            })})`}
+            value={actualBalance}
+            onValueChange={(val) => setActualBalance(val)}
+            placeholder="12.500.000"
+            required
+          />
 
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={() => setStep(1)}>

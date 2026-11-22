@@ -13,6 +13,8 @@ import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { CategoryIcon } from '../components/ui/CategoryIcon';
+import { CATEGORY_ICON_OPTIONS, getCategoryIconLabel } from '../utils/categoryIcons';
 import { toast } from '../stores/useToastStore';
 import {
   Trash2,
@@ -33,22 +35,6 @@ const PRESET_COLORS = [
   '#8B5CF6',
   '#4F46E5',
   '#14B8A6',
-];
-
-const PRESET_ICONS = [
-  'Utensils',
-  'Car',
-  'Zap',
-  'Gamepad2',
-  'HeartPulse',
-  'ShoppingBag',
-  'GraduationCap',
-  'Gift',
-  'Briefcase',
-  'TrendingUp',
-  'Store',
-  'DollarSign',
-  'HelpCircle',
 ];
 
 export const CategoriesPage: React.FC = () => {
@@ -150,9 +136,11 @@ export const CategoriesPage: React.FC = () => {
     >
       <div className="flex items-center gap-3 min-w-0">
         <span
-          className="w-3.5 h-3.5 rounded-full shrink-0"
+          className="w-8 h-8 rounded-xl flex items-center justify-center text-white shrink-0 shadow-xs"
           style={{ backgroundColor: c.color || '#4F46E5' }}
-        />
+        >
+          <CategoryIcon icon={c.icon} className="h-4 w-4" />
+        </span>
         <span className="font-semibold text-sm text-slate-900 dark:text-slate-100 truncate">
           {c.name}
         </span>
@@ -301,20 +289,37 @@ export const CategoriesPage: React.FC = () => {
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-              Pilih Ikon
-            </label>
-            <select
-              value={icon}
-              onChange={(e) => setIcon(e.target.value)}
-              className="h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
-            >
-              {PRESET_ICONS.map((i) => (
-                <option key={i} value={i}>
-                  {i}
-                </option>
-              ))}
-            </select>
+            <div className="flex items-center justify-between">
+              <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
+                Pilih Ikon
+              </label>
+              <span className="text-[11px] font-medium text-indigo-600 dark:text-indigo-400">
+                {getCategoryIconLabel(icon)}
+              </span>
+            </div>
+            <div className="grid grid-cols-6 gap-2 pt-0.5">
+              {CATEGORY_ICON_OPTIONS.map(({ value, label, Icon }) => {
+                const isSelected = icon.toLowerCase() === value.toLowerCase();
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setIcon(value)}
+                    title={label}
+                    aria-label={label}
+                    aria-pressed={isSelected}
+                    className={`h-10 rounded-xl flex items-center justify-center border transition-all ${
+                      isSelected
+                        ? 'text-white border-transparent shadow-sm scale-105'
+                        : 'border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:border-indigo-400 dark:hover:border-indigo-500'
+                    }`}
+                    style={isSelected ? { backgroundColor: color } : undefined}
+                  >
+                    <Icon className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </form>
       </Modal>

@@ -43,17 +43,26 @@ export const StatCard: React.FC<StatCardProps> = ({
   highlight,
   className = '',
 }) => {
-  const Tag = onClick ? 'button' : 'div';
-
   return (
-    <Tag
-      type={onClick ? 'button' : undefined}
+    <div
+      role={onClick ? 'button' : undefined}
+      tabIndex={onClick ? 0 : undefined}
       onClick={onClick}
+      onKeyDown={
+        onClick
+          ? (e) => {
+              if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+                e.preventDefault();
+                onClick();
+              }
+            }
+          : undefined
+      }
       className={`
         text-left w-full rounded-2xl border p-4 sm:p-5 flex flex-col justify-between gap-3
         shadow-[var(--shadow-card)] transition-all
         ${highlight ? highlightClasses[highlight] : 'bg-bg-base border-slate-200/80 dark:border-slate-800'}
-        ${onClick ? 'card-interactive cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 group' : ''}
+        ${onClick ? 'card-interactive cursor-pointer hover:border-indigo-300 dark:hover:border-indigo-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500/40 group' : ''}
         ${className}
       `}
     >
@@ -92,7 +101,7 @@ export const StatCard: React.FC<StatCardProps> = ({
           </div>
         )}
       </div>
-    </Tag>
+    </div>
   );
 };
 export default StatCard;

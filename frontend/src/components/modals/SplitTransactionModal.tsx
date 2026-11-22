@@ -1,7 +1,9 @@
 import React, { useEffect, useId, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { useCategories } from '../../hooks/useTransactions';
+import { invalidateFinancialData } from '../../hooks/invalidateFinancialQueries';
 import { transactionsService, type Transaction } from '../../services/transactions';
 import { toast } from '../../stores/useToastStore';
 import { AlertCircle, Plus, Trash2, CheckCircle2 } from 'lucide-react';
@@ -26,6 +28,7 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
   onSuccess,
 }) => {
   const formId = useId();
+  const queryClient = useQueryClient();
   const { data: categories } = useCategories();
 
   const [splits, setSplits] = useState<SplitItemInput[]>([
@@ -106,6 +109,7 @@ export const SplitTransactionModal: React.FC<SplitTransactionModalProps> = ({
       }));
 
       await transactionsService.splitTransaction(transaction.id, payload);
+      invalidateFinancialData(queryClient, [['transaction', transaction.id]]);
       toast.success('Transaksi berhasil dibagi per kategori');
       onSuccess();
       onClose();

@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react';
-import { Shield, Download, Trash2, AlertTriangle, Info, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
+import { Download, Trash2, AlertTriangle, Info, Loader2, ToggleLeft, ToggleRight } from 'lucide-react';
 import privacyService, { type PrivacyPolicy } from '../services/privacy';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuthStore } from '../stores/authStore';
 import { CardSkeleton } from '../components/ui/Skeleton';
 
@@ -85,24 +86,20 @@ export const PrivacyPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="space-y-6 p-6 max-w-5xl mx-auto">
+      <div className="space-y-6 animate-fade-in">
         <CardSkeleton />
       </div>
     );
   }
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
-      <header>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-          <Shield className="w-7 h-7 text-indigo-600" aria-hidden="true" />
-          Privasi & Kontrol Data
-        </h1>
-        <p className="text-sm text-slate-500 mt-1">
-          Retensi, consent AI, export/delete —{' '}
-          <span className="font-mono">{data?.formula_version || 'privacy-v1'}</span>
-        </p>
-      </header>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Privasi & Kontrol Data"
+        subtitle={`Retensi, consent AI, ekspor, dan penghapusan data — ${data?.formula_version || 'privacy-v1'}`}
+        backTo="/settings/account"
+        backLabel="Kembali ke Akun & Privasi"
+      />
 
       {errorMsg && (
         <div role="alert" className="flex items-start gap-2 p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300">

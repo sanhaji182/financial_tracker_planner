@@ -582,6 +582,22 @@ export const SubscriptionsPage: React.FC = () => {
           setIsCreateOpen(false);
         }}
         title={editingSubID ? 'Ubah Informasi Langganan' : 'Daftarkan Langganan Baru'}
+        footerActions={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                clearForm();
+                setIsCreateOpen(false);
+              }}
+            >
+              Batal
+            </Button>
+            <Button type="submit" form="subscription-form" isLoading={isSaving}>
+              Simpan Langganan
+            </Button>
+          </>
+        }
       >
         {formError && (
           <div className="mb-4 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200/80 text-rose-700 dark:text-rose-300 text-xs rounded-xl flex items-center gap-2">
@@ -590,7 +606,7 @@ export const SubscriptionsPage: React.FC = () => {
           </div>
         )}
 
-        <form onSubmit={handleSaveSubscription} className="space-y-4">
+        <form id="subscription-form" onSubmit={handleSaveSubscription} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 block">
@@ -729,21 +745,6 @@ export const SubscriptionsPage: React.FC = () => {
               rows={2}
               className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl p-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
             />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <Button
-              variant="ghost"
-              onClick={() => {
-                clearForm();
-                setIsCreateOpen(false);
-              }}
-            >
-              Batal
-            </Button>
-            <Button type="submit" isLoading={isSaving}>
-              Simpan Langganan
-            </Button>
           </div>
         </form>
       </Modal>

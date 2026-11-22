@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react';
-import { Shield, AlertTriangle, HeartPulse, Users, Info, Save, Loader2 } from 'lucide-react';
+import { AlertTriangle, HeartPulse, Users, Info, Save, Loader2 } from 'lucide-react';
 import protectionService, {
   type ProtectionAssessment,
   type UpdateProtectionProfilePayload,
 } from '../services/protection';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuthStore } from '../stores/authStore';
 import { MoneyDisplay } from '../components/ui/MoneyDisplay';
 import { CardSkeleton } from '../components/ui/Skeleton';
@@ -97,7 +98,7 @@ export const ProtectionPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="space-y-6 p-6 max-w-5xl mx-auto">
+      <div className="space-y-6 animate-fade-in">
         <CardSkeleton />
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <CardSkeleton />
@@ -109,16 +110,11 @@ export const ProtectionPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-          <Shield className="h-6 w-6 text-indigo-500" />
-          Proteksi Rumah Tangga
-        </h1>
-        <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-          Estimasi kebutuhan proteksi berbasis data — edukatif, bukan rekomendasi produk asuransi.
-        </p>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Proteksi Rumah Tangga"
+        subtitle="Estimasi kebutuhan proteksi berbasis data — edukatif, bukan rekomendasi produk asuransi."
+      />
 
       {errorMsg && (
         <Card className="p-4 border-rose-200 bg-rose-50 text-rose-800 text-sm flex items-center gap-2">
@@ -255,29 +251,29 @@ export const ProtectionPage: React.FC = () => {
                 Ada proteksi jiwa
               </label>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Jumlah pencari nafkah</label>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">Jumlah pencari nafkah</label>
                 <input
                   type="number"
                   min={1}
                   value={earners}
                   disabled={!isOwner}
                   onChange={(e) => setEarners(parseInt(e.target.value, 10) || 1)}
-                  className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900"
+                  className="w-full h-10 text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Jumlah tanggungan</label>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">Jumlah tanggungan</label>
                 <input
                   type="number"
                   min={0}
                   value={dependents}
                   disabled={!isOwner}
                   onChange={(e) => setDependents(parseInt(e.target.value, 10) || 0)}
-                  className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900"
+                  className="w-full h-10 text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Nilai pertanggungan jiwa existing (Rp)</label>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">Nilai pertanggungan jiwa existing (Rp)</label>
                 <input
                   type="number"
                   min={0}
@@ -285,11 +281,11 @@ export const ProtectionPage: React.FC = () => {
                   disabled={!isOwner}
                   onChange={(e) => setExistingCover(e.target.value)}
                   placeholder="0 jika belum ada / tidak tahu"
-                  className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900"
+                  className="w-full h-10 text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500"
                 />
               </div>
               <div>
-                <label className="block text-xs font-semibold text-slate-500 mb-1">Tahun hingga tanggungan mandiri (opsional)</label>
+                <label className="block text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1.5">Tahun hingga tanggungan mandiri (opsional)</label>
                 <input
                   type="number"
                   min={0}
@@ -297,7 +293,7 @@ export const ProtectionPage: React.FC = () => {
                   disabled={!isOwner}
                   onChange={(e) => setYearsIndep(e.target.value)}
                   placeholder="mis. 18"
-                  className="w-full text-sm border border-slate-200 dark:border-slate-800 rounded-lg p-2 bg-white dark:bg-slate-900"
+                  className="w-full h-10 text-sm border border-slate-200 dark:border-slate-700 rounded-xl px-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500"
                 />
               </div>
               {isOwner && (

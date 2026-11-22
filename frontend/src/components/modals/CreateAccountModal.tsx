@@ -11,6 +11,7 @@ import { toast } from '../../stores/useToastStore';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { DocumentScanBanner } from '../ui/DocumentScanBanner';
 import { Loader2, AlertCircle } from 'lucide-react';
 
@@ -187,7 +188,6 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
-  const parsedBalance = parseFloat(initialBalance);
 
   const footer = (
     <>
@@ -312,31 +312,17 @@ export const CreateAccountModal: React.FC<CreateAccountModalProps> = ({
         </div>
 
         {!isEditMode && (
-          <div>
-            <Input
-              label="Saldo Awal"
-              id="initial-balance"
-              type="number"
-              min="0"
-              step="any"
-              placeholder="Contoh: 5000000 (atau 0)"
-              value={initialBalance}
-              onChange={handleBalanceChange}
-              error={balanceError || undefined}
-              helperText={!balanceError ? lowConfidenceHint('balance') : undefined}
-              className="font-money"
-              required
-            />
-            {currency === 'IDR' && !isNaN(parsedBalance) && parsedBalance >= 0 && (
-              <span className="mt-1 block text-xs text-slate-400 font-money">
-                {new Intl.NumberFormat('id-ID', {
-                  style: 'currency',
-                  currency: 'IDR',
-                  maximumFractionDigits: 0,
-                }).format(parsedBalance)}
-              </span>
-            )}
-          </div>
+          <CurrencyInput
+            label="Saldo Awal"
+            id="initial-balance"
+            currencySymbol={currency === 'IDR' ? 'Rp' : currency}
+            placeholder="5.000.000 (atau 0)"
+            value={initialBalance}
+            onChange={handleBalanceChange}
+            error={balanceError || undefined}
+            helperText={!balanceError ? lowConfidenceHint('balance') : undefined}
+            required
+          />
         )}
 
         <div className="flex flex-col gap-1.5">

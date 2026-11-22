@@ -201,8 +201,8 @@ describe('Snapshot & Statement Scan Auto-Fill (Debts, Accounts, Reconciliation, 
 
     expect(await screen.findByDisplayValue('SPayLater')).toBeInTheDocument();
     expect(screen.getByDisplayValue('Shopee / SPayLater')).toBeInTheDocument();
-    expect(screen.getAllByDisplayValue('2450000')).toHaveLength(2);
-    expect(screen.getByDisplayValue('650000')).toBeInTheDocument();
+    expect(screen.getAllByDisplayValue('2.450.000')).toHaveLength(2);
+    expect(screen.getByDisplayValue('650.000')).toBeInTheDocument();
     expect(screen.getByDisplayValue('5')).toBeInTheDocument();
     expect(screen.getByText(/Total pinjaman awal tidak tercantum/i)).toBeInTheDocument();
     expect(screen.getByText('Periksa hasil scan')).toBeInTheDocument();
@@ -239,7 +239,7 @@ describe('Snapshot & Statement Scan Auto-Fill (Debts, Accounts, Reconciliation, 
     expect(await screen.findByDisplayValue('BCA ••••5678')).toBeInTheDocument();
     expect(screen.getByDisplayValue('BCA')).toBeInTheDocument();
     expect(screen.getByDisplayValue('8012345678')).toBeInTheDocument();
-    expect(screen.getByDisplayValue('15750000')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('15.750.000')).toBeInTheDocument();
   });
 
   it('auto-selects matched account and pre-fills balance in ReconciliationWizard', async () => {
@@ -278,7 +278,7 @@ describe('Snapshot & Statement Scan Auto-Fill (Debts, Accounts, Reconciliation, 
     });
 
     await user.click(screen.getByRole('button', { name: /Lanjutkan/i }));
-    expect(await screen.findByDisplayValue('15750000')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('15.750.000')).toBeInTheDocument();
   });
 
   it('auto-fills DebtDetailPage payment modal from payment proof screenshot', async () => {

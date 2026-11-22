@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from '../../hooks/invalidateFinancialQueries';
 import {
   AlertCircle,
   ArrowLeftRight,
@@ -19,6 +20,7 @@ import {
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { toast } from '../../stores/useToastStore';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useCategories } from '../../hooks/useTransactions';
@@ -384,7 +386,7 @@ export const SharedReceiptQuickModal: React.FC = () => {
         bank_provider: isCash ? undefined : provider,
         initial_balance: 0,
       });
-      await queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      invalidateFinancialData(queryClient);
       userTouchedAccountRef.current = true;
       setSourceAccountId(created.id);
       toast.success(`Rekening "${created.name}" berhasil dibuat`);
@@ -495,15 +497,7 @@ export const SharedReceiptQuickModal: React.FC = () => {
         toast.success('Pembayaran utang berhasil dicatat');
       }
 
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['transactions'] }),
-        queryClient.invalidateQueries({ queryKey: ['accounts'] }),
-        queryClient.invalidateQueries({ queryKey: ['debts'] }),
-        queryClient.invalidateQueries({ queryKey: ['dashboard'] }),
-        queryClient.invalidateQueries({ queryKey: ['budgets'] }),
-        queryClient.invalidateQueries({ queryKey: ['forecast'] }),
-        queryClient.invalidateQueries({ queryKey: ['transfers'] }),
-      ]);
+      invalidateFinancialData(queryClient, [['transfers']]);
 
       advanceQueue();
     } catch (err: unknown) {
@@ -518,16 +512,6 @@ export const SharedReceiptQuickModal: React.FC = () => {
   };
 
   if (!isOpen) return null;
-
-  const numericAmount = Number.parseFloat(amount);
-  const formattedRupiah =
-    Number.isFinite(numericAmount) && numericAmount > 0
-      ? new Intl.NumberFormat('id-ID', {
-          style: 'currency',
-          currency: 'IDR',
-          maximumFractionDigits: 0,
-        }).format(numericAmount)
-      : null;
 
   const footer = (
     <>
@@ -710,28 +694,18 @@ export const SharedReceiptQuickModal: React.FC = () => {
 
         <form id={formId} onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div>
-              <Input
-                label="Nominal (Rp)"
-                id={`${formId}-amount`}
-                type="number"
-                min="1"
-                step="any"
-                placeholder="Misal: 42000"
-                value={amount}
-                onChange={(e) => {
-                  userTouchedAmountRef.current = true;
-                  setAmount(e.target.value);
-                }}
-                required
-                className="text-base font-bold font-money"
-              />
-              {formattedRupiah && (
-                <span className="mt-1 block text-xs text-slate-400 font-money">
-                  {formattedRupiah}
-                </span>
-              )}
-            </div>
+            <CurrencyInput
+              label="Nominal (Rp)"
+              id={`${formId}-amount`}
+              placeholder="42.000"
+              value={amount}
+              onValueChange={(val) => {
+                userTouchedAmountRef.current = true;
+                setAmount(val);
+              }}
+              required
+              className="text-base font-bold"
+            />
 
             <Input
               label="Tanggal"

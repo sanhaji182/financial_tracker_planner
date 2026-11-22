@@ -6,6 +6,7 @@ import { toast } from '../../stores/useToastStore';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { Loader2, AlertCircle, HelpCircle } from 'lucide-react';
 
 interface AssetFormModalProps {
@@ -161,7 +162,6 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
 
   const isPending = createMutation.isPending || updateMutation.isPending;
   const isLinked = Boolean(linkedAccountId);
-  const numericCurrentValue = parseFloat(currentValue);
 
   const modalFooter = (
     <>
@@ -274,41 +274,26 @@ export const AssetFormModal: React.FC<AssetFormModalProps> = ({
           </div>
         )}
 
-        <div className="relative">
-          <Input
-            label={isLinked ? 'Nilai Saat Ini (Tersinkron Otomatis)' : 'Nilai Aset Saat Ini'}
-            id="asset-value"
-            type="number"
-            min="0"
-            step="any"
-            placeholder="Contoh: 500000000"
-            value={isLinked ? '' : currentValue}
-            onChange={(e) => setCurrentValue(e.target.value)}
-            disabled={isLinked}
-            required={!isLinked}
-            className="text-lg font-bold font-money"
-          />
-          {!isLinked && !isNaN(numericCurrentValue) && numericCurrentValue > 0 && (
-            <span className="mt-1 block text-xs text-slate-400 font-money">
-              {new Intl.NumberFormat('id-ID', {
-                style: 'currency',
-                currency: 'IDR',
-                maximumFractionDigits: 0,
-              }).format(numericCurrentValue)}
-            </span>
-          )}
-        </div>
+        <CurrencyInput
+          label={isLinked ? 'Nilai Saat Ini (Tersinkron Otomatis)' : 'Nilai Aset Saat Ini'}
+          id="asset-value"
+          currencySymbol={currency === 'IDR' ? 'Rp' : currency}
+          placeholder="500.000.000"
+          value={isLinked ? '' : currentValue}
+          onValueChange={(val) => setCurrentValue(val)}
+          disabled={isLinked}
+          required={!isLinked}
+          className="text-lg font-bold"
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
+          <CurrencyInput
             label="Nilai Beli Awal (Opsional)"
             id="asset-purchase"
-            type="number"
-            min="0"
-            step="any"
-            placeholder="Contoh: 450000000"
+            currencySymbol={currency === 'IDR' ? 'Rp' : currency}
+            placeholder="450.000.000"
             value={purchaseValue}
-            onChange={(e) => setPurchaseValue(e.target.value)}
+            onValueChange={(val) => setPurchaseValue(val)}
           />
           <Input
             label="Tanggal Pembelian (Opsional)"

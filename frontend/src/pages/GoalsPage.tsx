@@ -524,6 +524,22 @@ export const GoalsPage: React.FC = () => {
           setIsCreateOpen(false);
         }}
         title={editingGoalID ? 'Ubah Target Keuangan' : 'Buat Target Keuangan Baru'}
+        footerActions={
+          <>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                clearGoalForm();
+                setIsCreateOpen(false);
+              }}
+            >
+              Batal
+            </Button>
+            <Button type="submit" form="goal-form" isLoading={isSaving}>
+              Simpan Target
+            </Button>
+          </>
+        }
       >
         {formError && (
           <div className="mb-4 p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200/80 dark:border-rose-900/50 text-rose-700 dark:text-rose-300 text-xs rounded-xl flex items-center gap-2">
@@ -532,7 +548,7 @@ export const GoalsPage: React.FC = () => {
           </div>
         )}
 
-        <form onSubmit={handleSaveGoal} className="space-y-4">
+        <form id="goal-form" onSubmit={handleSaveGoal} className="space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
             <div className="space-y-1.5 sm:col-span-2">
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 block">
@@ -694,21 +710,6 @@ export const GoalsPage: React.FC = () => {
               className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl p-3 bg-white dark:bg-slate-800 text-slate-900 dark:text-white"
             />
           </div>
-
-          <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-            <Button
-              variant="ghost"
-              onClick={() => {
-                clearGoalForm();
-                setIsCreateOpen(false);
-              }}
-            >
-              Batal
-            </Button>
-            <Button type="submit" isLoading={isSaving}>
-              Simpan Target
-            </Button>
-          </div>
         </form>
       </Modal>
 
@@ -719,6 +720,11 @@ export const GoalsPage: React.FC = () => {
           onClose={() => setIsDetailOpen(false)}
           title="Detail Target Keuangan"
           size="lg"
+          footerActions={
+            <Button variant="secondary" onClick={() => setIsDetailOpen(false)}>
+              Tutup Detail
+            </Button>
+          }
         >
           <div className="space-y-6">
             <div className="flex flex-col md:flex-row items-center gap-5 bg-slate-50 dark:bg-slate-800/60 p-4 rounded-2xl border border-slate-100 dark:border-slate-800">
@@ -962,12 +968,6 @@ export const GoalsPage: React.FC = () => {
                   </div>
                 )}
               </div>
-            </div>
-
-            <div className="flex justify-end pt-3 border-t border-slate-100 dark:border-slate-800">
-              <Button variant="secondary" onClick={() => setIsDetailOpen(false)}>
-                Tutup Detail
-              </Button>
             </div>
           </div>
         </Modal>

@@ -66,6 +66,25 @@ export interface LocalAISettings extends AISettings {
   api_key?: string;
 }
 
+export interface LocalProtectionProfile {
+  has_health_insurance: boolean;
+  has_life_insurance: boolean;
+  income_earners_count: number;
+  dependents_count: number;
+  existing_life_cover: number;
+  years_to_independence?: number;
+}
+
+export interface LocalRetirementProfile {
+  current_age: number;
+  retirement_age: number;
+  current_savings: number;
+  monthly_contribution: number;
+  inflation_rate: number;
+  nominal_return_rate: number;
+  income_replace_ratio: number;
+}
+
 export interface LocalDatabase {
   version: number;
   profile: {
@@ -74,6 +93,9 @@ export interface LocalDatabase {
     monthly_living_cost_override: number | null;
     currency: string;
   };
+  protection_profile?: LocalProtectionProfile;
+  retirement_profile?: LocalRetirementProfile;
+  review_items?: Record<string, Record<string, string>>;
   accounts: Account[];
   categories: Category[];
   transactions: Transaction[];
@@ -195,6 +217,23 @@ export function createInitialLocalDB(): LocalDatabase {
       monthly_living_cost_override: null,
       currency: 'IDR',
     },
+    protection_profile: {
+      has_health_insurance: false,
+      has_life_insurance: false,
+      income_earners_count: 1,
+      dependents_count: 0,
+      existing_life_cover: 0,
+    },
+    retirement_profile: {
+      current_age: 35,
+      retirement_age: 60,
+      current_savings: 0,
+      monthly_contribution: 0,
+      inflation_rate: 0.04,
+      nominal_return_rate: 0.07,
+      income_replace_ratio: 0.7,
+    },
+    review_items: {},
     accounts: [],
     categories: buildDefaultCategories(ts),
     transactions: [],
@@ -265,6 +304,17 @@ export function loadLocalDB(): LocalDatabase {
       profile: {
         ...defaults.profile,
         ...(parsed.profile || {}),
+      },
+      protection_profile: {
+        ...defaults.protection_profile!,
+        ...(parsed.protection_profile || {}),
+      },
+      retirement_profile: {
+        ...defaults.retirement_profile!,
+        ...(parsed.retirement_profile || {}),
+      },
+      review_items: {
+        ...(parsed.review_items || {}),
       },
       categories:
         Array.isArray(parsed.categories) && parsed.categories.length > 0

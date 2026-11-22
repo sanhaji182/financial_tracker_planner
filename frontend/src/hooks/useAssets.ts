@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from './invalidateFinancialQueries';
 import { assetsService } from '../services/assets';
 import type { 
   AssetListFilters, 
@@ -34,8 +35,7 @@ export const useCreateAsset = () => {
   return useMutation({
     mutationFn: (req: CreateAssetRequest) => assetsService.createAsset(req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['assets'] });
-      queryClient.invalidateQueries({ queryKey: ['assets', 'summary'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -46,9 +46,7 @@ export const useUpdateAsset = () => {
     mutationFn: ({ id, req }: { id: string; req: UpdateAssetRequest }) =>
       assetsService.updateAsset(id, req),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['assets'] });
-      queryClient.invalidateQueries({ queryKey: ['asset', data.id] });
-      queryClient.invalidateQueries({ queryKey: ['assets', 'summary'] });
+      invalidateFinancialData(queryClient, [['asset', data.id]]);
     },
   });
 };
@@ -58,8 +56,7 @@ export const useDeleteAsset = () => {
   return useMutation({
     mutationFn: (id: string) => assetsService.deleteAsset(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['assets'] });
-      queryClient.invalidateQueries({ queryKey: ['assets', 'summary'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -70,9 +67,7 @@ export const useAddValuation = () => {
     mutationFn: ({ id, req }: { id: string; req: CreateValuationRequest }) =>
       assetsService.addValuation(id, req),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['assets'] });
-      queryClient.invalidateQueries({ queryKey: ['asset', variables.id] });
-      queryClient.invalidateQueries({ queryKey: ['assets', 'summary'] });
+      invalidateFinancialData(queryClient, [['asset', variables.id]]);
     },
   });
 };

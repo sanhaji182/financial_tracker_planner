@@ -694,8 +694,37 @@ export const BillsPage: React.FC = () => {
         isOpen={formModalOpen}
         onClose={() => setFormModalOpen(false)}
         title={selectedBill ? 'Edit Detail Tagihan' : 'Tambah Tagihan Baru'}
+        footerActions={
+          <div className="flex items-center justify-between w-full gap-2">
+            {selectedBill ? (
+              <Button
+                type="button"
+                variant="danger"
+                onClick={() => setDeleteConfirmOpen(true)}
+              >
+                <Trash2 className="h-4 w-4" />
+                Hapus
+              </Button>
+            ) : (
+              <div />
+            )}
+
+            <div className="flex gap-2">
+              <Button variant="ghost" onClick={() => setFormModalOpen(false)}>
+                Batal
+              </Button>
+              <Button
+                type="submit"
+                form="bill-form"
+                isLoading={createBillMut.isPending || updateBillMut.isPending}
+              >
+                Simpan
+              </Button>
+            </div>
+          </div>
+        }
       >
-        <form onSubmit={handleSaveBill} className="space-y-4">
+        <form id="bill-form" onSubmit={handleSaveBill} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
               Nama Tagihan
@@ -856,32 +885,6 @@ export const BillsPage: React.FC = () => {
               placeholder="Keterangan opsional..."
             />
           </div>
-
-          <div className="flex justify-between items-center pt-2">
-            {selectedBill ? (
-              <Button
-                variant="danger"
-                onClick={() => setDeleteConfirmOpen(true)}
-              >
-                <Trash2 className="h-4 w-4" />
-                Hapus
-              </Button>
-            ) : (
-              <div />
-            )}
-
-            <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setFormModalOpen(false)}>
-                Batal
-              </Button>
-              <Button
-                type="submit"
-                isLoading={createBillMut.isPending || updateBillMut.isPending}
-              >
-                Simpan
-              </Button>
-            </div>
-          </div>
         </form>
       </Modal>
 
@@ -890,8 +893,18 @@ export const BillsPage: React.FC = () => {
         isOpen={payModalOpen}
         onClose={() => setPayModalOpen(false)}
         title={`Bayar Tagihan: ${selectedBill?.name || ''}`}
+        footerActions={
+          <>
+            <Button variant="ghost" onClick={() => setPayModalOpen(false)}>
+              Batal
+            </Button>
+            <Button type="submit" form="bill-pay-form" isLoading={payBillMut.isPending}>
+              Konfirmasi Bayar
+            </Button>
+          </>
+        }
       >
-        <form onSubmit={handlePaySubmit} className="space-y-4">
+        <form id="bill-pay-form" onSubmit={handlePaySubmit} className="space-y-4">
           <div className="p-3.5 bg-slate-50 dark:bg-slate-800/60 rounded-xl flex justify-between items-center text-xs border border-slate-100 dark:border-slate-800">
             <span className="font-semibold text-slate-500">Total Tagihan:</span>
             <span className="font-bold text-slate-900 dark:text-white font-money text-sm">
@@ -956,15 +969,6 @@ export const BillsPage: React.FC = () => {
               className="w-full text-sm p-3 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl h-16 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
               placeholder="Nomor referensi transfer, dll."
             />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setPayModalOpen(false)}>
-              Batal
-            </Button>
-            <Button type="submit" isLoading={payBillMut.isPending}>
-              Konfirmasi Bayar
-            </Button>
           </div>
         </form>
       </Modal>

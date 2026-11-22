@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from './invalidateFinancialQueries';
 import { accountsService } from '../services/accounts';
 import type { CreateAccountRequest, UpdateAccountRequest } from '../services/accounts';
 import { useAuthStore } from '../stores/authStore';
@@ -26,7 +27,7 @@ export const useCreateAccount = () => {
   return useMutation({
     mutationFn: (req: CreateAccountRequest) => accountsService.createAccount(req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -37,8 +38,7 @@ export const useUpdateAccount = () => {
     mutationFn: ({ id, req }: { id: string; req: UpdateAccountRequest }) =>
       accountsService.updateAccount(id, req),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      queryClient.invalidateQueries({ queryKey: ['account', variables.id] });
+      invalidateFinancialData(queryClient, [['account', variables.id]]);
     },
   });
 };
@@ -48,7 +48,7 @@ export const useDeleteAccount = () => {
   return useMutation({
     mutationFn: (id: string) => accountsService.deleteAccount(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ShieldCheck, KeyRound, FileText, Trash2, AlertTriangle, ExternalLink, HardDrive, Cloud, Database } from 'lucide-react';
+import { KeyRound, FileText, Trash2, AlertTriangle, ExternalLink, HardDrive, Cloud, Database, Shield } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { authService } from '../services/auth';
 import { isLocalOfflineMode } from '../utils/appMode';
@@ -8,6 +8,7 @@ import { toast } from '../stores/useToastStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Modal } from '../components/ui/Modal';
+import { PageHeader } from '../components/ui/PageHeader';
 
 export const AccountSettingsPage: React.FC = () => {
   const navigate = useNavigate();
@@ -90,18 +91,11 @@ export const AccountSettingsPage: React.FC = () => {
     .toUpperCase();
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      <header className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-        <div>
-          <h1 className="font-display text-2xl font-bold text-slate-900 dark:text-white flex items-center gap-2.5">
-            <ShieldCheck className="w-6 h-6 text-indigo-600 dark:text-indigo-400" />
-            Akun &amp; Privasi
-          </h1>
-          <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-            Kelola profil pengguna, keamanan kata sandi, kebijakan privasi, dan penghapusan akun.
-          </p>
-        </div>
-      </header>
+    <div className="space-y-6 max-w-4xl mx-auto animate-fade-in">
+      <PageHeader
+        title="Akun & Privasi"
+        subtitle="Kelola profil pengguna, keamanan kata sandi, kebijakan privasi, dan penghapusan akun."
+      />
 
       {/* Profil Ringkas */}
       <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm">
@@ -223,13 +217,22 @@ export const AccountSettingsPage: React.FC = () => {
             <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 leading-relaxed">
               Pelajari jenis data yang dicatat oleh Keuangan Bersama, enkripsi penyimpanan, serta hak kontrol Anda atas akun keluarga.
             </p>
-            <Link
-              to="/privacy"
-              className="inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
-            >
-              Baca Kebijakan Privasi
-              <ExternalLink className="w-3.5 h-3.5" />
-            </Link>
+            <div className="flex flex-wrap items-center gap-4 pt-1">
+              <Link
+                to="/privacy"
+                className="inline-flex items-center gap-1.5 text-sm font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+              >
+                Baca Kebijakan Privasi
+                <ExternalLink className="w-3.5 h-3.5" />
+              </Link>
+              <Link
+                to="/settings/privacy"
+                className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-600 dark:text-slate-300 hover:text-indigo-600 dark:hover:text-indigo-400 hover:underline"
+              >
+                <Shield className="w-3.5 h-3.5" />
+                Kontrol Privasi &amp; Ekspor Data
+              </Link>
+            </div>
           </section>
 
           <section className="rounded-2xl border border-rose-200/90 dark:border-rose-900/60 bg-rose-50/40 dark:bg-rose-950/10 p-5 sm:p-6 space-y-3">
@@ -260,6 +263,27 @@ export const AccountSettingsPage: React.FC = () => {
         onClose={() => !isDeleting && setIsDeleteModalOpen(false)}
         title="Konfirmasi Hapus Akun Permanen"
         size="sm"
+        footerActions={
+          <>
+            <Button
+              type="button"
+              variant="secondary"
+              onClick={() => setIsDeleteModalOpen(false)}
+              disabled={isDeleting}
+            >
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              form="delete-account-form"
+              variant="danger"
+              isLoading={isDeleting}
+              disabled={confirmKeyword.trim().toUpperCase() !== 'HAPUS' || !deletePassword}
+            >
+              Ya, Hapus Akun Saya
+            </Button>
+          </>
+        }
       >
         <form id="delete-account-form" onSubmit={handleDeleteAccount} className="space-y-4">
           <div className="rounded-xl bg-rose-50 dark:bg-rose-950/30 border border-rose-200 dark:border-rose-900/50 p-3.5 text-xs text-rose-700 dark:text-rose-300 leading-relaxed">
@@ -285,25 +309,6 @@ export const AccountSettingsPage: React.FC = () => {
             placeholder="Masukkan password akun"
             required
           />
-
-          <div className="flex flex-col-reverse sm:flex-row sm:justify-end gap-2 pt-2">
-            <Button
-              type="button"
-              variant="secondary"
-              onClick={() => setIsDeleteModalOpen(false)}
-              disabled={isDeleting}
-            >
-              Batal
-            </Button>
-            <Button
-              type="submit"
-              variant="danger"
-              isLoading={isDeleting}
-              disabled={confirmKeyword.trim().toUpperCase() !== 'HAPUS' || !deletePassword}
-            >
-              Ya, Hapus Akun Saya
-            </Button>
-          </div>
         </form>
       </Modal>
     </div>

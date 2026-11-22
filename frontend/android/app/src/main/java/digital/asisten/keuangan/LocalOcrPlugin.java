@@ -23,6 +23,11 @@ import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
 import android.util.Base64;
+import android.view.Window;
+import android.view.WindowManager;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.view.WindowCompat;
+import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.Plugin;
@@ -746,6 +751,33 @@ public class LocalOcrPlugin extends Plugin {
             total += read;
         }
         return out.toByteArray();
+    }
+
+    @PluginMethod
+    public void setSystemBarColors(PluginCall call) {
+        String colorHex = call.getString("color", "#090D16");
+        boolean isDark = Boolean.TRUE.equals(call.getBoolean("dark", false));
+        AppCompatActivity activity = getActivity();
+        if (activity == null) {
+            call.resolve();
+            return;
+        }
+        activity.runOnUiThread(() -> {
+            try {
+                int parsedColor = Color.parseColor(colorHex);
+                Window window = activity.getWindow();
+                window.getDecorView().setBackgroundColor(parsedColor);
+                window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);
+                window.setStatusBarColor(parsedColor);
+                window.setNavigationBarColor(parsedColor);
+                WindowInsetsControllerCompat insetsController =
+                        WindowCompat.getInsetsController(window, window.getDecorView());
+                insetsController.setAppearanceLightStatusBars(!isDark);
+                insetsController.setAppearanceLightNavigationBars(!isDark);
+            } catch (Exception ignored) {
+            }
+            call.resolve();
+        });
     }
 
     private static String safeErrorMessage(Exception e) {

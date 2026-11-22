@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from './invalidateFinancialQueries';
 import { debtsService } from '../services/debts';
 import type { 
   CreateDebtRequest, 
@@ -41,8 +42,7 @@ export const useCreateDebt = () => {
   return useMutation({
     mutationFn: (req: CreateDebtRequest) => debtsService.createDebt(req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['debts'] });
-      queryClient.invalidateQueries({ queryKey: ['debts', 'summary'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -53,9 +53,7 @@ export const useUpdateDebt = () => {
     mutationFn: ({ id, req }: { id: string; req: UpdateDebtRequest }) =>
       debtsService.updateDebt(id, req),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['debts'] });
-      queryClient.invalidateQueries({ queryKey: ['debt', data.id] });
-      queryClient.invalidateQueries({ queryKey: ['debts', 'summary'] });
+      invalidateFinancialData(queryClient, [['debt', data.id]]);
     },
   });
 };
@@ -65,8 +63,7 @@ export const useDeleteDebt = () => {
   return useMutation({
     mutationFn: (id: string) => debtsService.deleteDebt(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['debts'] });
-      queryClient.invalidateQueries({ queryKey: ['debts', 'summary'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -77,11 +74,7 @@ export const useRecordPayment = () => {
     mutationFn: ({ id, req }: { id: string; req: RecordPaymentRequest }) =>
       debtsService.recordPayment(id, req),
     onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: ['debts'] });
-      queryClient.invalidateQueries({ queryKey: ['debt', variables.id] });
-      queryClient.invalidateQueries({ queryKey: ['debts', 'summary'] });
-      queryClient.invalidateQueries({ queryKey: ['accounts'] }); // balance updated
-      queryClient.invalidateQueries({ queryKey: ['transactions'] }); // expense created
+      invalidateFinancialData(queryClient, [['debt', variables.id]]);
     },
   });
 };

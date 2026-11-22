@@ -23,6 +23,9 @@ import type { CreateGoalPayload, Goal, GoalContributionPayload, UpdateGoalPayloa
 import type { MonthlyInsight } from '../services/insights';
 import type { CreateNotePayload, UpdateNotePayload } from '../services/journal';
 import type { ScenarioChange, ScenarioResponse, ScenarioResult } from '../services/scenarios';
+import type { MonthlyReview, ReviewChecklistItem, SuggestedAction } from '../services/review';
+import type { ProtectionAssessment, ProtectionGap, UpdateProtectionProfilePayload } from '../services/protection';
+import type { RetirementEducation, UpdateRetirementProfilePayload } from '../services/retirement';
 import type { CreateSubscriptionPayload, SubscriptionSummary, UpdateSubscriptionPayload } from '../services/subscriptions';
 import type { CreateTaskPayload, UpdateTaskPayload } from '../services/tasks';
 import type {
@@ -50,6 +53,7 @@ import {
   loadLocalDB,
   monthKeyOf,
   nowIso,
+  resetLocalDB,
   saveLocalDB,
   toMoneyValue,
   uid,
@@ -139,6 +143,56 @@ function enrichAccount(acc: Account): Account {
   return {
     ...acc,
     formatted_balance: formatRupiah(acc.balance),
+  };
+}
+
+function enrichAsset(db: LocalDatabase, asset: Asset): Asset {
+  if (!asset.linked_account_id) {
+    return {
+      ...asset,
+      formatted_value: formatRupiah(asset.current_value),
+      formatted_purchase:
+        asset.purchase_value !== undefined ? formatRupiah(asset.purchase_value) : asset.formatted_purchase,
+    };
+  }
+  const linked = db.accounts.find((a) => a.id === asset.linked_account_id);
+  const effectiveValue = linked ? linked.balance : asset.current_value;
+  return {
+    ...asset,
+    current_value: effectiveValue,
+    formatted_value: formatRupiah(effectiveValue),
+    linked_account_name: linked?.name ?? asset.linked_account_name,
+    formatted_purchase:
+      asset.purchase_value !== undefined ? formatRupiah(asset.purchase_value) : asset.formatted_purchase,
+  };
+}
+
+function enrichGoal(db: LocalDatabase, goal: Goal): Goal {
+  let effectiveCurrent = goal.current_amount;
+  if (goal.type === 'emergency_fund') {
+    effectiveCurrent = computeEmergencyFundSummary(db).total_emergency_fund.value;
+  } else if (goal.type === 'debt_payoff' && goal.linked_debt_id) {
+    const linkedDebt = db.debts.find((d) => d.id === goal.linked_debt_id);
+    if (linkedDebt) {
+      effectiveCurrent = Math.max(0, linkedDebt.original_amount - linkedDebt.outstanding_balance);
+    }
+  }
+  const progress =
+    goal.target_amount > 0
+      ? Math.min(100, Math.round((effectiveCurrent / goal.target_amount) * 100))
+      : 0;
+  const totalContributed = (goal.contribution_history || []).reduce((s, c) => s + c.amount, 0);
+  const avgMonthly =
+    goal.contribution_history && goal.contribution_history.length > 0
+      ? Math.round(totalContributed / Math.max(1, new Set(goal.contribution_history.map((c) => monthKeyOf(c.date))).size))
+      : goal.average_monthly_contribution;
+
+  return {
+    ...goal,
+    current_amount: effectiveCurrent,
+    progress,
+    status: goal.status === 'cancelled' || goal.status === 'paused' ? goal.status : effectiveCurrent >= goal.target_amount && goal.target_amount > 0 ? 'achieved' : 'active',
+    average_monthly_contribution: avgMonthly,
   };
 }
 
@@ -526,7 +580,7 @@ function computeDashboard(db: LocalDatabase): DashboardResponse {
           title: 'Backup Data Offline Secara Berkala',
           description: 'Simpan file cadangan JSON agar data keuangan offline tetap aman jika ganti HP.',
           action_label: 'Backup Sekarang',
-          action_url: '/backup',
+          action_url: '/settings/backup',
           priority: 2,
         };
 
@@ -1128,6 +1182,8 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
     const type = searchParams.get('type');
     const categoryId = searchParams.get('category_id');
     const accountId = searchParams.get('account_id');
+    const statusFilter = searchParams.get('status');
+    const sourceFilter = searchParams.get('source');
     const dateFrom = searchParams.get('date_from');
     const dateTo = searchParams.get('date_to');
     const amountMin = Number(searchParams.get('amount_min') || 0);
@@ -1140,14 +1196,23 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
 
     let rows = db.transactions.filter((t) => {
       if (type && t.type !== type) return false;
-      if (categoryId && t.category_id !== categoryId) return false;
+      if (
+        categoryId &&
+        t.category_id !== categoryId &&
+        !t.splits?.some((s) => s.category_id === categoryId)
+      ) {
+        return false;
+      }
       if (accountId && t.account_id !== accountId && t.target_account_id !== accountId) return false;
+      if (statusFilter && t.status !== statusFilter) return false;
+      if (sourceFilter && t.source !== sourceFilter) return false;
       if (dateFrom && t.date < dateFrom) return false;
       if (dateTo && t.date > dateTo) return false;
       if (amountMin > 0 && t.amount < amountMin) return false;
       if (amountMax > 0 && t.amount > amountMax) return false;
       if (search) {
-        const hay = `${t.description || ''} ${t.notes || ''} ${t.category_name || ''} ${t.account_name}`.toLowerCase();
+        const splitDesc = (t.splits || []).map((s) => `${s.category_name || ''} ${s.description || ''}`).join(' ');
+        const hay = `${t.description || ''} ${t.notes || ''} ${t.category_name || ''} ${t.account_name} ${splitDesc}`.toLowerCase();
         if (!hay.includes(search)) return false;
       }
       return true;
@@ -1227,14 +1292,15 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       applyTransactionBalanceEffect(db, oldTx, -1);
       const req = parseJsonBody<UpdateTransactionRequest>(config.data);
       const replacement = buildTransactionRecord(db, { ...req, source: oldTx.source });
+      const keepSplits = Boolean(oldTx.is_split && oldTx.splits && Math.round(req.amount) === Math.round(oldTx.amount));
       const updated: Transaction = {
         ...oldTx,
         ...replacement,
         id: oldTx.id,
         created_at: oldTx.created_at,
         attachments: oldTx.attachments,
-        splits: oldTx.splits,
-        is_split: oldTx.is_split,
+        splits: keepSplits ? oldTx.splits : undefined,
+        is_split: keepSplits,
       };
       db.transactions[idx] = updated;
       applyTransactionBalanceEffect(db, updated, 1);
@@ -1476,12 +1542,13 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
 
   // ---------------- ASSETS ----------------
   if (path === '/assets/summary' && method === 'GET') {
-    const total_assets = db.assets.reduce((s, a) => s + a.current_value, 0);
-    const total_liquid = db.assets.filter((a) => a.is_liquid).reduce((s, a) => s + a.current_value, 0);
-    const total_shared = db.assets.filter((a) => a.is_shared).reduce((s, a) => s + a.current_value, 0);
+    const syncedAssets = db.assets.map((a) => enrichAsset(db, a));
+    const total_assets = syncedAssets.reduce((s, a) => s + a.current_value, 0);
+    const total_liquid = syncedAssets.filter((a) => a.is_liquid).reduce((s, a) => s + a.current_value, 0);
+    const total_shared = syncedAssets.filter((a) => a.is_shared).reduce((s, a) => s + a.current_value, 0);
     const total_private = total_assets - total_shared;
     const typeMap = new Map<string, number>();
-    for (const a of db.assets) {
+    for (const a of syncedAssets) {
       typeMap.set(a.type, (typeMap.get(a.type) || 0) + a.current_value);
     }
     return makeOk(config, {
@@ -1505,18 +1572,20 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
   if (path === '/assets' && method === 'GET') {
     const typeFilter = searchParams.get('type');
     const sharedFilter = searchParams.get('is_shared');
-    const filtered = db.assets.filter((a) => {
-      if (typeFilter && a.type !== typeFilter) return false;
-      if (sharedFilter === 'true' && !a.is_shared) return false;
-      if (sharedFilter === 'false' && a.is_shared) return false;
-      return true;
-    });
+    const filtered = db.assets
+      .map((a) => enrichAsset(db, a))
+      .filter((a) => {
+        if (typeFilter && a.type !== typeFilter) return false;
+        if (sharedFilter === 'true' && !a.is_shared) return false;
+        if (sharedFilter === 'false' && a.is_shared) return false;
+        return true;
+      });
     return makeOk(config, { data: filtered });
   }
   if (path === '/assets' && method === 'POST') {
     const req = parseJsonBody<CreateAssetRequest>(config.data);
     const ts = nowIso();
-    const asset: Asset = {
+    const rawAsset: Asset = {
       id: uid('asset'),
       user_id: LOCAL_USER_ID,
       name: req.name,
@@ -1537,6 +1606,7 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       updated_at: ts,
       valuations: [],
     };
+    const asset = enrichAsset(db, rawAsset);
     db.assets.unshift(asset);
     saveLocalDB(db);
     return makeOk(config, { data: asset }, 201);
@@ -1567,21 +1637,17 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
   if (assetMatch) {
     const idx = db.assets.findIndex((a) => a.id === assetMatch[1]);
     if (idx < 0) makeError(config, 404, 'Aset tidak ditemukan.');
-    if (method === 'GET') return makeOk(config, { data: db.assets[idx] });
+    if (method === 'GET') return makeOk(config, { data: enrichAsset(db, db.assets[idx]) });
     if (method === 'PUT') {
       const req = parseJsonBody<UpdateAssetRequest>(config.data);
-      db.assets[idx] = {
+      const next = enrichAsset(db, {
         ...db.assets[idx],
         ...req,
-        formatted_value: formatRupiah(req.current_value ?? db.assets[idx].current_value),
-        formatted_purchase:
-          req.purchase_value !== undefined
-            ? formatRupiah(req.purchase_value)
-            : db.assets[idx].formatted_purchase,
         updated_at: nowIso(),
-      };
+      });
+      db.assets[idx] = next;
       saveLocalDB(db);
-      return makeOk(config, { data: db.assets[idx] });
+      return makeOk(config, { data: next });
     }
     if (method === 'DELETE') {
       db.assets.splice(idx, 1);
@@ -1679,7 +1745,8 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
     db.transactions.unshift(tx);
     applyTransactionBalanceEffect(db, tx, 1);
 
-    const remaining = Math.max(0, bill.amount - req.amount);
+    const alreadyPaid = (bill.payments || []).reduce((s, p) => s + p.amount, 0);
+    const remaining = Math.max(0, bill.amount - (alreadyPaid + req.amount));
     const payment: BillPayment = {
       id: uid('bpay'),
       bill_id: bill.id,
@@ -1792,7 +1859,9 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
   // ---------------- GOALS ----------------
   if (path === '/goals/plan' && method === 'GET') {
     const dash = computeDashboard(db);
-    const activeGoals = db.goals.filter((g) => g.status === 'active');
+    const activeGoals = db.goals
+      .map((g) => enrichGoal(db, g))
+      .filter((g) => g.status === 'active');
     const items = activeGoals.map((g, idx) => {
       const rem = Math.max(0, g.target_amount - g.current_amount);
       const monthsRem = g.target_date
@@ -1837,12 +1906,13 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       },
     });
   }
-  if (path === '/goals' && method === 'GET') return makeOk(config, { data: db.goals });
+  if (path === '/goals' && method === 'GET') {
+    return makeOk(config, { data: db.goals.map((g) => enrichGoal(db, g)) });
+  }
   if (path === '/goals' && method === 'POST') {
     const req = parseJsonBody<CreateGoalPayload>(config.data);
     const current = req.current_amount || 0;
-    const progress = req.target_amount > 0 ? Math.min(100, Math.round((current / req.target_amount) * 100)) : 0;
-    const goal: Goal = {
+    const rawGoal: Goal = {
       id: uid('goal'),
       user_id: LOCAL_USER_ID,
       name: req.name,
@@ -1856,13 +1926,14 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       linked_debt_name: db.debts.find((d) => d.id === req.linked_debt_id)?.name,
       icon: req.icon || 'Target',
       color: req.color || '#6366f1',
-      status: progress >= 100 ? 'achieved' : 'active',
+      status: 'active',
       notes: req.notes || '',
-      progress,
+      progress: 0,
       average_monthly_contribution: 0,
       created_at: nowIso(),
       contribution_history: [],
     };
+    const goal = enrichGoal(db, rawGoal);
     db.goals.unshift(goal);
     saveLocalDB(db);
     return makeOk(config, { data: goal }, 201);
@@ -1873,14 +1944,38 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
     if (!goal) makeError(config, 404, 'Target tidak ditemukan.');
     const req = parseJsonBody<GoalContributionPayload>(config.data);
     const src = db.accounts.find((a) => a.id === req.source_account_id);
-    if (src) {
-      src.balance -= req.amount;
-      src.formatted_balance = formatRupiah(src.balance);
+
+    if (goal.linked_account_id && goal.linked_account_id !== req.source_account_id) {
+      const tx = buildTransactionRecord(db, {
+        date: req.date || getTodayLocalDate(),
+        amount: req.amount,
+        type: 'transfer',
+        account_id: req.source_account_id,
+        target_account_id: goal.linked_account_id,
+        description: `Kontribusi Target ${goal.name}`,
+        notes: req.notes || undefined,
+        source: 'goal_contribution',
+      });
+      db.transactions.unshift(tx);
+      applyTransactionBalanceEffect(db, tx, 1);
+    } else if (!goal.linked_account_id) {
+      const tx = buildTransactionRecord(db, {
+        date: req.date || getTodayLocalDate(),
+        amount: req.amount,
+        type: 'expense',
+        account_id: req.source_account_id,
+        description: `Setoran Target ${goal.name}`,
+        notes: req.notes || undefined,
+        source: 'goal_contribution',
+      });
+      db.transactions.unshift(tx);
+      applyTransactionBalanceEffect(db, tx, 1);
     }
-    goal.current_amount += req.amount;
-    goal.progress =
-      goal.target_amount > 0 ? Math.min(100, Math.round((goal.current_amount / goal.target_amount) * 100)) : 100;
-    if (goal.current_amount >= goal.target_amount) goal.status = 'achieved';
+
+    if (goal.type !== 'emergency_fund' && goal.type !== 'debt_payoff') {
+      goal.current_amount += req.amount;
+    }
+
     const item = {
       id: uid('gcon'),
       amount: req.amount,
@@ -1890,19 +1985,20 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       notes: req.notes || '',
     };
     goal.contribution_history.unshift(item);
+
+    const enriched = enrichGoal(db, goal);
+    Object.assign(goal, enriched);
     saveLocalDB(db);
-    return makeOk(config, { data: goal });
+    return makeOk(config, { data: enriched });
   }
   const goalMatch = path.match(/^\/goals\/([^/]+)$/);
   if (goalMatch) {
     const idx = db.goals.findIndex((g) => g.id === goalMatch[1]);
     if (idx < 0) makeError(config, 404, 'Target tidak ditemukan.');
-    if (method === 'GET') return makeOk(config, { data: db.goals[idx] });
+    if (method === 'GET') return makeOk(config, { data: enrichGoal(db, db.goals[idx]) });
     if (method === 'PUT') {
       const req = parseJsonBody<UpdateGoalPayload>(config.data);
-      const next = { ...db.goals[idx], ...req } as Goal;
-      next.progress =
-        next.target_amount > 0 ? Math.min(100, Math.round((next.current_amount / next.target_amount) * 100)) : 0;
+      const next = enrichGoal(db, { ...db.goals[idx], ...req } as Goal);
       db.goals[idx] = next;
       saveLocalDB(db);
       return makeOk(config, { data: next });
@@ -2075,11 +2171,11 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
     if (advices.length === 0) {
       advices.push({
         priority: 1,
-        title: 'Alokasikan ke Investasi Jangka Panjang',
+        title: 'Perkuat Dana Darurat & Portofolio',
         amount_suggested: toMoneyValue(surplus),
         reason: 'Dana darurat terpenuhi dan bebas beban utang berisiko.',
         action_type: 'invest',
-        action_url: '/investment',
+        action_url: '/emergency-fund',
       });
     }
     const resp: AllocationAdviceResponse = { surplus: toMoneyValue(surplus), advices };
@@ -2218,9 +2314,14 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
   if (docLinkMatch && method === 'PUT') {
     const doc = db.documents.find((d) => d.id === docLinkMatch[1]);
     if (!doc) makeError(config, 404, 'Dokumen tidak ditemukan.');
-    const body = parseJsonBody<{ entity_type?: string; entity_id?: string }>(config.data);
-    doc.linked_entity_type = body.entity_type;
-    doc.linked_entity_id = body.entity_id;
+    const body = parseJsonBody<{
+      linked_entity_type?: string;
+      linked_entity_id?: string;
+      entity_type?: string;
+      entity_id?: string;
+    }>(config.data);
+    doc.linked_entity_type = body.linked_entity_type ?? body.entity_type;
+    doc.linked_entity_id = body.linked_entity_id ?? body.entity_id;
     doc.updated_at = nowIso();
     saveLocalDB(db);
     return makeOk(config, { data: doc });
@@ -2559,7 +2660,12 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       const parsed = JSON.parse(rawJson) as LocalDatabase;
       parsed.backups = db.backups;
       saveLocalDB(parsed);
-      return makeOk(config, { data: { restored: true } });
+      return makeOk(config, {
+        data: {
+          restored: true,
+          message: 'Cadangan data offline berhasil dipulihkan.',
+        },
+      });
     } catch {
       makeError(config, 400, 'Format JSON backup rusak.');
     }
@@ -2656,31 +2762,363 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
   }
   if (path === '/protection/assessment' && method === 'GET') {
     const ef = computeEmergencyFundSummary(db);
-    return makeOk(config, {
-      data: {
-        as_of: nowIso(),
-        formula_version: 'local-offline-v1',
-        has_health_insurance: false,
-        has_life_insurance: false,
-        has_emergency_fund: ef.coverage_months >= 3,
-        emergency_fund_months: ef.coverage_months,
-        income_earners_count: 1,
-        dependents_count: 0,
-        protection_score: ef.coverage_months >= 6 ? 75 : 45,
-        gaps: [],
-        recommendations: ['Lengkapi dana darurat minimal 6 bulan pengeluaran rutin.'],
-        life_cover_need: 0,
-        existing_life_cover: 0,
-        life_cover_gap: 0,
-        income_replacement: 0,
-        debt_clearance: db.debts.filter((d) => d.status === 'active').reduce((s, d) => s + d.outstanding_balance, 0),
-        dependent_education_buffer: 0,
-        funeral_buffer: 0,
-        liquid_offset: ef.total_emergency_fund.value,
-        is_sufficient: true,
-        is_product_advice: false,
+    const prof = db.protection_profile || {
+      has_health_insurance: false,
+      has_life_insurance: false,
+      income_earners_count: 1,
+      dependents_count: 0,
+      existing_life_cover: 0,
+    };
+    const monthlyExpense = Math.max(0, computeMonthlyExpenseEstimate(db));
+    const debtClearance = db.debts
+      .filter((d) => d.status === 'active')
+      .reduce((s, d) => s + d.outstanding_balance, 0);
+    const incomeReplacementYears = prof.dependents_count > 0 ? Math.min(10, prof.years_to_independence || 5) : 0;
+    const incomeReplacement = monthlyExpense * 12 * incomeReplacementYears;
+    const dependentEducationBuffer = prof.dependents_count * 25_000_000;
+    const funeralBuffer = 25_000_000;
+    const liquidOffset = ef.total_emergency_fund.value;
+    const grossNeed =
+      incomeReplacement + debtClearance + dependentEducationBuffer + funeralBuffer;
+    const lifeCoverNeed = prof.dependents_count > 0 || debtClearance > 0 ? Math.max(0, grossNeed - liquidOffset) : 0;
+    const existingCover = prof.has_life_insurance ? prof.existing_life_cover || 0 : 0;
+    const lifeCoverGap = Math.max(0, lifeCoverNeed - existingCover);
+
+    let score = 20;
+    if (ef.coverage_months >= 6) score += 35;
+    else if (ef.coverage_months >= 3) score += 20;
+    else if (ef.coverage_months >= 1) score += 10;
+    if (prof.has_health_insurance) score += 25;
+    if (prof.dependents_count === 0 || prof.has_life_insurance || lifeCoverGap === 0) score += 20;
+    else if (existingCover > 0) score += 10;
+    score = Math.min(100, Math.max(10, score));
+
+    const scoreLabel =
+      score >= 85 ? 'Strong' : score >= 65 ? 'Adequate' : score >= 40 ? 'Thin' : 'Critical';
+
+    const gaps: ProtectionGap[] = [];
+    if (!prof.has_health_insurance) {
+      gaps.push({
+        category: 'health',
+        severity: 'high',
+        description: 'Belum tercatat proteksi kesehatan aktif untuk anggota rumah tangga.',
+      });
+    }
+    if (ef.coverage_months < 6) {
+      gaps.push({
+        category: 'emergency_fund',
+        severity: ef.coverage_months < 3 ? 'high' : 'medium',
+        description: `Dana darurat baru mencakup ${ef.coverage_months} bulan pengeluaran (ideal 6+ bulan).`,
+        amount: Math.max(0, ef.target_amount.value - ef.total_emergency_fund.value),
+      });
+    }
+    if (lifeCoverGap > 0) {
+      gaps.push({
+        category: 'life',
+        severity: prof.dependents_count > 0 ? 'high' : 'medium',
+        description: 'Terdapat celah perlindungan jiwa dibandingkan kewajiban dan tanggungan keluarga.',
+        amount: lifeCoverGap,
+      });
+    }
+
+    const recommendations: string[] = [];
+    if (!prof.has_health_insurance) {
+      recommendations.push('Pastikan kepesertaan JKN/BPJS atau asuransi kesehatan keluarga tetap aktif.');
+    }
+    if (ef.coverage_months < 6) {
+      recommendations.push('Lengkapi dana darurat minimal 6 bulan pengeluaran rutin sebelum komitmen berisiko.');
+    }
+    if (lifeCoverGap > 0) {
+      recommendations.push('Pertimbangkan tinjauan berkala kecukupan uang pertanggungan jiwa keluarga.');
+    }
+    if (recommendations.length === 0) {
+      recommendations.push('Lapisan proteksi dasar rumah tangga sudah memadai. Tinjau ulang tiap 6 bulan.');
+    }
+
+    const payload: ProtectionAssessment = {
+      as_of: nowIso(),
+      formula_version: 'local-offline-v1',
+      has_health_insurance: prof.has_health_insurance,
+      has_life_insurance: prof.has_life_insurance,
+      has_emergency_fund: ef.coverage_months >= 3,
+      emergency_fund_months: ef.coverage_months,
+      income_earners_count: prof.income_earners_count || 1,
+      dependents_count: prof.dependents_count || 0,
+      protection_score: score,
+      score_label: scoreLabel,
+      data_confidence: db.transactions.length > 0 || db.accounts.length > 0 ? 'medium' : 'low',
+      gaps,
+      recommendations,
+      guidance: recommendations,
+      life_cover_need: lifeCoverNeed,
+      existing_life_cover: existingCover,
+      life_cover_gap: lifeCoverGap,
+      income_replacement: incomeReplacement,
+      debt_clearance: debtClearance,
+      dependent_education_buffer: dependentEducationBuffer,
+      funeral_buffer: funeralBuffer,
+      liquid_offset: liquidOffset,
+      is_sufficient: gaps.length === 0,
+      is_product_advice: false,
+      disclaimer:
+        'Estimasi edukatif berbasis data lokal perangkat — bukan rekomendasi produk asuransi tertentu.',
+    };
+    return makeOk(config, { data: payload });
+  }
+  if (path === '/protection/profile' && method === 'PUT') {
+    const req = parseJsonBody<UpdateProtectionProfilePayload>(config.data);
+    db.protection_profile = {
+      has_health_insurance: req.has_health_insurance ?? db.protection_profile?.has_health_insurance ?? false,
+      has_life_insurance: req.has_life_insurance ?? db.protection_profile?.has_life_insurance ?? false,
+      income_earners_count: Math.max(1, Number(req.income_earners_count ?? db.protection_profile?.income_earners_count ?? 1)),
+      dependents_count: Math.max(0, Number(req.dependents_count ?? db.protection_profile?.dependents_count ?? 0)),
+      existing_life_cover: Math.max(0, Number(req.existing_life_cover ?? db.protection_profile?.existing_life_cover ?? 0)),
+      years_to_independence: req.years_to_independence ?? db.protection_profile?.years_to_independence,
+    };
+    saveLocalDB(db);
+    return makeOk(config, { data: { updated: true } });
+  }
+  if (path === '/retirement/education' && method === 'GET') {
+    const prof = db.retirement_profile || {
+      current_age: 35,
+      retirement_age: 60,
+      current_savings: 0,
+      monthly_contribution: 0,
+      inflation_rate: 0.04,
+      nominal_return_rate: 0.07,
+      income_replace_ratio: 0.7,
+    };
+    const yearsToRetire = Math.max(1, prof.retirement_age - prof.current_age);
+    const monthsToRetire = yearsToRetire * 12;
+    const monthlyExpenses = Math.max(2_000_000, computeMonthlyExpenseEstimate(db));
+    const inf = prof.inflation_rate;
+    const nom = prof.nominal_return_rate;
+    const realReturn = (1 + nom) / Math.max(0.01, 1 + inf) - 1;
+    const monthlyRate = nom / 12;
+
+    const targetMonthlyAtRetire = Math.round(
+      monthlyExpenses * prof.income_replace_ratio * Math.pow(1 + inf, yearsToRetire)
+    );
+    const fvSavings = prof.current_savings * Math.pow(1 + monthlyRate, monthsToRetire);
+    const fvContrib =
+      monthlyRate > 0
+        ? prof.monthly_contribution * ((Math.pow(1 + monthlyRate, monthsToRetire) - 1) / monthlyRate)
+        : prof.monthly_contribution * monthsToRetire;
+    const projectedCorpus = Math.round(fvSavings + fvContrib);
+
+    const buildScenario = (label: string, longevityAge: number) => {
+      const yearsInRetirement = Math.max(5, longevityAge - prof.retirement_age);
+      const swr = Math.max(0.03, 1 / yearsInRetirement + Math.max(0, realReturn) * 0.35);
+      const corpusNeeded = Math.round((targetMonthlyAtRetire * 12) / swr);
+      const gap = Math.max(0, corpusNeeded - projectedCorpus);
+      const annuityFactor =
+        monthlyRate > 0 ? (Math.pow(1 + monthlyRate, monthsToRetire) - 1) / monthlyRate : monthsToRetire;
+      const monthlyShortfall = annuityFactor > 0 ? Math.round(gap / annuityFactor) : 0;
+      return {
+        label,
+        longevity_age: longevityAge,
+        years_in_retirement: yearsInRetirement,
+        corpus_needed: corpusNeeded,
+        projected_corpus: projectedCorpus,
+        funding_gap: gap,
+        monthly_shortfall: monthlyShortfall,
+        is_funded: gap === 0,
+        note: `Asumsi hingga usia ${longevityAge} tahun`,
+      };
+    };
+
+    const scenarios = [
+      buildScenario('longevity_low', 75),
+      buildScenario('longevity_mid', 85),
+      buildScenario('longevity_high', 95),
+    ];
+    const primary = scenarios[1];
+    const annuityFactor =
+      monthlyRate > 0 ? (Math.pow(1 + monthlyRate, monthsToRetire) - 1) / monthlyRate : monthsToRetire;
+    const requiredMonthly =
+      annuityFactor > 0
+        ? Math.max(0, Math.round((primary.corpus_needed - fvSavings) / annuityFactor))
+        : 0;
+    const contributionGap = Math.max(0, requiredMonthly - prof.monthly_contribution);
+
+    const payload: RetirementEducation = {
+      as_of: nowIso(),
+      formula_version: 'local-offline-v1',
+      current_age: prof.current_age,
+      retirement_age: prof.retirement_age,
+      years_to_retire: yearsToRetire,
+      current_savings: prof.current_savings,
+      monthly_contribution: prof.monthly_contribution,
+      monthly_expenses: monthlyExpenses,
+      inflation_rate: inf,
+      nominal_return_rate: nom,
+      real_return_rate: Number(realReturn.toFixed(4)),
+      income_replace_ratio: prof.income_replace_ratio,
+      target_monthly_at_retire: targetMonthlyAtRetire,
+      primary_corpus_needed: primary.corpus_needed,
+      projected_corpus: projectedCorpus,
+      primary_funding_gap: primary.funding_gap,
+      required_monthly_contribution: requiredMonthly,
+      contribution_gap: contributionGap,
+      scenarios,
+      data_confidence: db.transactions.length > 0 ? 'medium' : 'low',
+      is_sufficient: db.accounts.length > 0,
+      guidance: [
+        `Target dana pensiun (usia harapan hidup ${primary.longevity_age} thn) diperkirakan ${formatRupiah(primary.corpus_needed)}.`,
+        contributionGap > 0
+          ? `Pertimbangkan peningkatan kontribusi bulanan sekitar ${formatRupiah(contributionGap)} untuk menutup gap secara bertahap.`
+          : 'Laju tabungan saat ini berada di jalur sehat untuk menutup target mid-longevity.',
+      ],
+      disclaimer:
+        'Estimasi edukatif. Bukan jaminan return, bukan rekomendasi produk, bukan nasihat investasi berizin.',
+      is_guaranteed_return: false,
+      is_product_advice: false,
+    };
+    return makeOk(config, { data: payload });
+  }
+  if (path === '/retirement/profile' && method === 'PUT') {
+    const req = parseJsonBody<UpdateRetirementProfilePayload>(config.data);
+    db.retirement_profile = {
+      current_age: Number(req.current_age ?? db.retirement_profile?.current_age ?? 35),
+      retirement_age: Number(req.retirement_age ?? db.retirement_profile?.retirement_age ?? 60),
+      current_savings: Number(req.current_savings ?? db.retirement_profile?.current_savings ?? 0),
+      monthly_contribution: Number(req.monthly_contribution ?? db.retirement_profile?.monthly_contribution ?? 0),
+      inflation_rate: Number(req.inflation_rate ?? db.retirement_profile?.inflation_rate ?? 0.04),
+      nominal_return_rate: Number(req.nominal_return_rate ?? db.retirement_profile?.nominal_return_rate ?? 0.07),
+      income_replace_ratio: Number(req.income_replace_ratio ?? db.retirement_profile?.income_replace_ratio ?? 0.7),
+    };
+    saveLocalDB(db);
+    return makeOk(config, { data: { updated: true } });
+  }
+  if (path === '/review/monthly' && method === 'GET') {
+    const month = searchParams.get('month') || getCurrentLocalMonth();
+    const savedStatuses = (db.review_items && db.review_items[month]) || {};
+    const dash = computeDashboard(db);
+    const hasAccount = db.accounts.length > 0;
+    const monthTxs = db.transactions.filter((t) => monthKeyOf(t.date) === month);
+    const hasReconciled = monthTxs.some((t) => t.reconciled);
+    const monthBudgets = db.budgets.filter((b) => b.month === month).map((b) => computeBudgetRow(db, b));
+    const overBudgets = monthBudgets.filter((b) => b.status === 'over');
+    const unpaidBills = db.bills.filter((b) => b.status === 'unpaid' || b.status === 'overdue');
+    const hasClosing = db.closings.some((c) => c.month === month);
+
+    const resolveStatus = (id: string, autoDone: boolean) => savedStatuses[id] || (autoDone ? 'done' : 'pending');
+
+    const checklist: ReviewChecklistItem[] = [
+      {
+        id: 'review-accounts',
+        title: 'Verifikasi saldo rekening & e-wallet',
+        description: hasAccount
+          ? `${db.accounts.length} rekening aktif terdaftar dengan total kas ${dash.cash_available.formatted_value}.`
+          : 'Tambahkan rekening utama agar pencatatan akurat.',
+        category: 'Rekonsiliasi',
+        status: resolveStatus('review-accounts', hasAccount && hasReconciled),
+        priority: 1,
+        action_url: '/accounts',
+        required: true,
       },
-    });
+      {
+        id: 'review-bills',
+        title: 'Periksa tagihan jatuh tempo bulan ini',
+        description:
+          unpaidBills.length > 0
+            ? `${unpaidBills.length} tagihan belum dibayar.`
+            : 'Seluruh tagihan bulan ini sudah terpantau.',
+        category: 'Tagihan',
+        status: resolveStatus('review-bills', db.bills.length > 0 && unpaidBills.length === 0),
+        priority: 2,
+        action_url: '/bills',
+        required: true,
+      },
+      {
+        id: 'review-budgets',
+        title: 'Evaluasi batas anggaran kategori',
+        description:
+          overBudgets.length > 0
+            ? `${overBudgets.length} kategori melebihi anggaran bulan ini.`
+            : monthBudgets.length > 0
+              ? 'Seluruh anggaran berada dalam batas aman.'
+              : 'Tetapkan anggaran minimal untuk kategori pengeluaran utama.',
+        category: 'Anggaran',
+        status: resolveStatus('review-budgets', monthBudgets.length > 0 && overBudgets.length === 0),
+        priority: 3,
+        action_url: '/budgets',
+        required: true,
+      },
+      {
+        id: 'review-closing',
+        title: 'Kunci laporan tutup buku bulanan',
+        description: hasClosing ? 'Laporan bulanan sudah dikunci.' : 'Buat snapshot laporan akhir bulan.',
+        category: 'Tutup Buku',
+        status: resolveStatus('review-closing', hasClosing),
+        priority: 4,
+        action_url: '/closing',
+        required: false,
+      },
+    ];
+
+    const suggestedActions: SuggestedAction[] = [];
+    if (unpaidBills.length > 0) {
+      suggestedActions.push({
+        id: 'act-pay-bills',
+        kind: 'bill',
+        title: `Lunasi ${unpaidBills[0].name}`,
+        rationale: 'Menghindari denda keterlambatan tagihan rutin.',
+        target_id: unpaidBills[0].id,
+        target_label: unpaidBills[0].name,
+        amount: unpaidBills[0].amount,
+        is_reversible: true,
+        confirm_label: 'Buka Tagihan',
+        dismiss_label: 'Nanti',
+        action_url: '/bills',
+        severity: 'high',
+      });
+    }
+    if (dash.safe_to_spend.value > 0 && db.goals.length > 0) {
+      const topGoal = db.goals[0];
+      suggestedActions.push({
+        id: 'act-goal-contrib',
+        kind: 'goal',
+        title: `Alokasikan surplus ke ${topGoal.name}`,
+        rationale: 'Mempercepat pencapaian target keluarga dari kas aman bulan ini.',
+        target_id: topGoal.id,
+        target_label: topGoal.name,
+        amount: Math.round(dash.safe_to_spend.value * 0.25),
+        is_reversible: true,
+        confirm_label: 'Buka Target',
+        dismiss_label: 'Lewati',
+        action_url: '/goals',
+        severity: 'medium',
+      });
+    }
+
+    const requiredItems = checklist.filter((i) => i.required);
+    const completedCount = requiredItems.filter((i) => i.status === 'done' || i.status === 'skipped').length;
+    const progressPct =
+      requiredItems.length > 0 ? Math.round((completedCount / requiredItems.length) * 100) : 100;
+
+    const payload: MonthlyReview = {
+      as_of: nowIso(),
+      month,
+      formula_version: 'local-offline-v1',
+      checklist,
+      suggested_actions: suggestedActions,
+      completed_count: completedCount,
+      total_required: requiredItems.length,
+      progress_pct: progressPct,
+      summary: `${completedCount} dari ${requiredItems.length} item wajib review bulan ${month} selesai.`,
+      disclaimer: 'Checklist dihitung secara lokal dari data perangkat.',
+    };
+    return makeOk(config, { data: payload });
+  }
+  if (path === '/review/monthly/item' && method === 'PUT') {
+    const month = searchParams.get('month') || getCurrentLocalMonth();
+    const body = parseJsonBody<{ item_id: string; status: string }>(config.data);
+    db.review_items = db.review_items || {};
+    db.review_items[month] = db.review_items[month] || {};
+    db.review_items[month][body.item_id] = body.status;
+    saveLocalDB(db);
+    return makeOk(config, { data: { updated: true } });
   }
   if (path === '/privacy/policy' && method === 'GET') {
     return makeOk(config, {
@@ -2704,9 +3142,23 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
       },
     });
   }
+  if (path === '/privacy/ai-consent' && method === 'PUT') {
+    const body = parseJsonBody<{ granted: boolean }>(config.data);
+    db.ai_settings.ai_enabled = Boolean(body.granted);
+    saveLocalDB(db);
+    return makeOk(config, { data: { ai_consent_granted: db.ai_settings.ai_enabled } });
+  }
   if (path === '/privacy/export' && method === 'GET') {
     const snapshot = JSON.stringify({ ...db, backups: [] }, null, 2);
     return makeOk(config, new Blob([snapshot], { type: 'application/json' }));
+  }
+  if (path === '/privacy/delete' && method === 'POST') {
+    const body = parseJsonBody<{ confirmation_phrase?: string }>(config.data);
+    if ((body.confirmation_phrase || '').trim().toUpperCase() !== 'HAPUS DATA SAYA') {
+      makeError(config, 400, 'Ketik frasa HAPUS DATA SAYA dengan tepat untuk mengonfirmasi.');
+    }
+    resetLocalDB();
+    return makeOk(config, { data: { message: 'Seluruh data lokal perangkat telah dibersihkan.' } });
   }
 
   // ---------------- SHARED VIEW (Read-only fallback in local mode) ----------------

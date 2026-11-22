@@ -289,6 +289,16 @@ export const JournalPage: React.FC = () => {
         isOpen={modalOpen}
         onClose={() => setModalOpen(false)}
         title={editingNote ? 'Edit Catatan Jurnal' : 'Tambah Catatan Jurnal Baru'}
+        footerActions={
+          <>
+            <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={isSaving}>
+              Batal
+            </Button>
+            <Button type="submit" form="journal-form" isLoading={isSaving}>
+              Simpan Catatan
+            </Button>
+          </>
+        }
       >
         <div className="space-y-4">
           {formError && (
@@ -298,7 +308,7 @@ export const JournalPage: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleSave} className="space-y-4">
+          <form id="journal-form" onSubmit={handleSave} className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-xs font-semibold text-slate-600 dark:text-slate-300 block">
                 Judul Keputusan
@@ -352,15 +362,6 @@ export const JournalPage: React.FC = () => {
                 rows={5}
                 className="w-full text-sm border border-slate-200 dark:border-slate-700 rounded-xl p-3 bg-white dark:bg-slate-800 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 text-slate-900 dark:text-white"
               />
-            </div>
-
-            <div className="flex justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
-              <Button variant="ghost" onClick={() => setModalOpen(false)} disabled={isSaving}>
-                Batal
-              </Button>
-              <Button type="submit" isLoading={isSaving}>
-                Simpan Catatan
-              </Button>
             </div>
           </form>
         </div>

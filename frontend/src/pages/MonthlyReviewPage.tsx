@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ClipboardCheck, AlertTriangle, CheckCircle2, Circle, SkipForward, Loader2 } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Circle, SkipForward, Loader2 } from 'lucide-react';
 import reviewService, { type MonthlyReview, type SuggestedAction } from '../services/review';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuthStore } from '../stores/authStore';
 import { MoneyDisplay } from '../components/ui/MoneyDisplay';
 import { CardSkeleton } from '../components/ui/Skeleton';
@@ -57,7 +58,7 @@ export const MonthlyReviewPage: React.FC = () => {
 
   if (isLoading && !data) {
     return (
-      <div className="space-y-6 p-6 max-w-5xl mx-auto">
+      <div className="space-y-6 animate-fade-in">
         <CardSkeleton />
         <CardSkeleton />
       </div>
@@ -65,28 +66,22 @@ export const MonthlyReviewPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
-      <header className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <ClipboardCheck className="w-7 h-7 text-indigo-600" aria-hidden="true" />
-            Review Bulanan
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Checklist + aksi reversibel —{' '}
-            <span className="font-mono">{data?.formula_version || 'behavioral-v1'}</span>
-          </p>
-        </div>
-        <label className="text-sm">
-          <span className="sr-only">Pilih bulan</span>
-          <input
-            type="month"
-            value={month}
-            onChange={(e) => setMonth(e.target.value)}
-            className="rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2"
-          />
-        </label>
-      </header>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Review Bulanan"
+        subtitle={`Checklist & aksi reversibel — ${data?.formula_version || 'behavioral-v1'}`}
+        actions={
+          <label className="text-sm w-full sm:w-auto">
+            <span className="sr-only">Pilih bulan</span>
+            <input
+              type="month"
+              value={month}
+              onChange={(e) => setMonth(e.target.value)}
+              className="w-full sm:w-auto h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500"
+            />
+          </label>
+        }
+      />
 
       {errorMsg && (
         <div role="alert" className="flex items-start gap-2 p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300">
@@ -186,28 +181,36 @@ export const MonthlyReviewPage: React.FC = () => {
           </Card>
 
           <Card className="p-5">
-            <h2 className="text-lg font-semibold mb-3">Suggested actions</h2>
+            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mb-3">
+              Rekomendasi Tindakan
+            </h2>
             {data.suggested_actions.length === 0 ? (
-              <p className="text-sm text-slate-500">Tidak ada aksi tertunda — bagus.</p>
+              <p className="text-sm text-slate-500 dark:text-slate-400">
+                Tidak ada aksi tertunda — bagus.
+              </p>
             ) : (
               <ul className="space-y-3" aria-label="Usulan aksi">
                 {data.suggested_actions.map((a) => (
                   <li
                     key={a.id}
-                    className="p-3 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center gap-3"
+                    className="p-3.5 rounded-xl border border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center gap-3"
                   >
                     <div className="flex-1 min-w-0">
-                      <p className="font-medium">
+                      <p className="font-medium text-slate-900 dark:text-white">
                         {a.title}{' '}
-                        <span className="text-[10px] uppercase tracking-wide text-slate-400">{a.severity}</span>
+                        <span className="text-[10px] uppercase tracking-wide text-slate-400">
+                          {a.severity}
+                        </span>
                         {a.is_reversible ? (
-                          <span className="ml-2 text-[10px] uppercase tracking-wide text-sky-600">reversible</span>
+                          <span className="ml-2 text-[10px] uppercase tracking-wide text-sky-600 dark:text-sky-400">
+                            Dapat Dibatalkan
+                          </span>
                         ) : null}
                       </p>
-                      <p className="text-sm text-slate-500">{a.rationale}</p>
+                      <p className="text-sm text-slate-500 dark:text-slate-400">{a.rationale}</p>
                       {a.amount ? (
-                        <p className="text-xs mt-1">
-                          Amount: <MoneyDisplay value={a.amount} />
+                        <p className="text-xs mt-1 font-money">
+                          Nominal: <MoneyDisplay value={a.amount} />
                         </p>
                       ) : null}
                     </div>

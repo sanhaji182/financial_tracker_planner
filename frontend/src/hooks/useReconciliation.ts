@@ -1,4 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from './invalidateFinancialQueries';
 import { reconciliationService, type ReconciliationStartRequest, type ReconciliationConfirmRequest } from '../services/reconciliation';
 
 export const useStartReconciliation = () => {
@@ -12,8 +13,7 @@ export const useConfirmReconciliation = () => {
   return useMutation({
     mutationFn: (data: ReconciliationConfirmRequest) => reconciliationService.confirmReconciliation(data),
     onSuccess: () => {
-      // Invalidate transactions list (reconciled flags modified)
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };

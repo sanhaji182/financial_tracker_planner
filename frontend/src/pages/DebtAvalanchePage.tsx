@@ -230,16 +230,16 @@ export const DebtAvalanchePage: React.FC = () => {
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-default)" />
                   <XAxis dataKey="name" stroke="#94A3B8" fontSize={11} tickLine={false} />
                   <YAxis stroke="#94A3B8" fontSize={11} tickLine={false} />
                   <Tooltip
                     contentStyle={{
-                      backgroundColor: '#FFFFFF',
+                      backgroundColor: 'var(--bg-base)',
                       borderRadius: '12px',
-                      border: '1px solid #E2E8F0',
-                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                      color: '#0F172A',
+                      border: '1px solid var(--border-default)',
+                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                      color: 'var(--text-primary)',
                       fontSize: '12px',
                     }}
                   />

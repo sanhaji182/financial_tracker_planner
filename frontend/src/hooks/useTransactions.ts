@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from './invalidateFinancialQueries';
 import { transactionsService } from '../services/transactions';
 import { categoriesService } from '../services/categories';
 import type { 
@@ -38,8 +39,7 @@ export const useCreateTransaction = () => {
   return useMutation({
     mutationFn: (req: CreateTransactionRequest) => transactionsService.createTransaction(req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['accounts'] }); // balance changes
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -50,9 +50,7 @@ export const useUpdateTransaction = () => {
     mutationFn: ({ id, req }: { id: string; req: UpdateTransactionRequest }) =>
       transactionsService.updateTransaction(id, req),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['transaction', data.id] });
-      queryClient.invalidateQueries({ queryKey: ['accounts'] }); // balance updates
+      invalidateFinancialData(queryClient, [['transaction', data.id]]);
     },
   });
 };
@@ -62,8 +60,7 @@ export const useDeleteTransaction = () => {
   return useMutation({
     mutationFn: (id: string) => transactionsService.deleteTransaction(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
-      queryClient.invalidateQueries({ queryKey: ['accounts'] }); // balance reverts
+      invalidateFinancialData(queryClient);
     },
   });
 };

@@ -12,6 +12,7 @@ import { toast } from '../../stores/useToastStore';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { DocumentScanBanner } from '../ui/DocumentScanBanner';
 import { Loader2, AlertCircle } from 'lucide-react';
 
@@ -268,9 +269,6 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending;
-  const numericOriginal = parseFloat(originalAmount);
-  const numericOutstanding = parseFloat(outstanding);
-  const numericMinPayment = parseFloat(minimumPayment);
 
   const modalFooter = (
     <>
@@ -377,55 +375,29 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
         />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="relative">
-            <Input
-              label="Total Pinjaman Awal"
-              id="debt-original"
-              type="number"
-              min="1"
-              step="any"
-              placeholder="Contoh: 500000000"
-              value={originalAmount}
-              onChange={(e) => setOriginalAmount(e.target.value)}
-              disabled={isEditMode}
-              required={!isEditMode}
-              className="font-money text-sm"
-            />
-            {!isNaN(numericOriginal) && numericOriginal > 0 && (
-              <span className="mt-1 block text-[11px] text-slate-400 font-money">
-                {new Intl.NumberFormat('id-ID', {
-                  style: 'currency',
-                  currency: 'IDR',
-                  maximumFractionDigits: 0,
-                }).format(numericOriginal)}
-              </span>
-            )}
-          </div>
+          <CurrencyInput
+            label="Total Pinjaman Awal"
+            id="debt-original"
+            currencySymbol={currency === 'IDR' ? 'Rp' : currency}
+            placeholder="500.000.000"
+            value={originalAmount}
+            onValueChange={(val) => setOriginalAmount(val)}
+            disabled={isEditMode}
+            required={!isEditMode}
+            className="text-sm"
+          />
 
-          <div className="relative">
-            <Input
-              label="Sisa Utang (Outstanding)"
-              id="debt-outstanding"
-              type="number"
-              min="0"
-              step="any"
-              placeholder="Contoh: 350000000"
-              value={outstanding}
-              onChange={(e) => setOutstanding(e.target.value)}
-              helperText={lowConfidenceHint('outstanding_balance')}
-              required
-              className="font-money text-sm"
-            />
-            {!isNaN(numericOutstanding) && numericOutstanding > 0 && (
-              <span className="mt-1 block text-[11px] text-slate-400 font-money">
-                {new Intl.NumberFormat('id-ID', {
-                  style: 'currency',
-                  currency: 'IDR',
-                  maximumFractionDigits: 0,
-                }).format(numericOutstanding)}
-              </span>
-            )}
-          </div>
+          <CurrencyInput
+            label="Sisa Utang (Outstanding)"
+            id="debt-outstanding"
+            currencySymbol={currency === 'IDR' ? 'Rp' : currency}
+            placeholder="350.000.000"
+            value={outstanding}
+            onValueChange={(val) => setOutstanding(val)}
+            helperText={lowConfidenceHint('outstanding_balance')}
+            required
+            className="text-sm"
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -439,29 +411,16 @@ export const DebtFormModal: React.FC<DebtFormModalProps> = ({
             value={interestRate}
             onChange={(e) => setInterestRate(e.target.value)}
           />
-          <div className="relative">
-            <Input
-              label="Pembayaran Minimum / Bln"
-              id="debt-min-payment"
-              type="number"
-              min="0"
-              step="any"
-              placeholder="Contoh: 5000000"
-              value={minimumPayment}
-              onChange={(e) => setMinimumPayment(e.target.value)}
-              helperText={lowConfidenceHint('minimum_payment')}
-              className="font-money text-sm"
-            />
-            {!isNaN(numericMinPayment) && numericMinPayment > 0 && (
-              <span className="mt-1 block text-[11px] text-slate-400 font-money">
-                {new Intl.NumberFormat('id-ID', {
-                  style: 'currency',
-                  currency: 'IDR',
-                  maximumFractionDigits: 0,
-                }).format(numericMinPayment)}
-              </span>
-            )}
-          </div>
+          <CurrencyInput
+            label="Pembayaran Minimum / Bln"
+            id="debt-min-payment"
+            currencySymbol={currency === 'IDR' ? 'Rp' : currency}
+            placeholder="5.000.000"
+            value={minimumPayment}
+            onValueChange={(val) => setMinimumPayment(val)}
+            helperText={lowConfidenceHint('minimum_payment')}
+            className="text-sm"
+          />
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">

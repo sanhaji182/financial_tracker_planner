@@ -327,12 +327,15 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
         <div className="h-5 w-px bg-slate-200 dark:bg-slate-800 mx-0.5 hidden sm:block" />
 
         {/* User Initial Badge */}
-        <div
-          className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-xs border border-indigo-200/80 dark:border-indigo-800 shrink-0"
-          title={user?.name || 'User'}
+        <button
+          type="button"
+          onClick={() => navigate('/settings/account')}
+          className="w-8 h-8 rounded-full bg-indigo-50 dark:bg-indigo-950/60 flex items-center justify-center text-indigo-700 dark:text-indigo-300 font-bold text-xs border border-indigo-200/80 dark:border-indigo-800 shrink-0 hover:ring-2 hover:ring-indigo-500/30 transition-all cursor-pointer"
+          title={user?.name ? `${user.name} — Akun & Privasi` : 'Akun & Privasi'}
+          aria-label="Buka pengaturan akun"
         >
           {user?.name ? user.name[0].toUpperCase() : 'U'}
-        </div>
+        </button>
       </div>
       </div>
     </header>

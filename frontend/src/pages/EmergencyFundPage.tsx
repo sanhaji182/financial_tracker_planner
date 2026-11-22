@@ -387,11 +387,11 @@ export const EmergencyFundPage: React.FC = () => {
                   <Tooltip
                     formatter={(value) => formatValueToRupiah(Number(value || 0))}
                     contentStyle={{
-                      backgroundColor: '#FFFFFF',
+                      backgroundColor: 'var(--bg-base)',
                       borderRadius: '12px',
-                      border: '1px solid #E2E8F0',
-                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                      color: '#0F172A',
+                      border: '1px solid var(--border-default)',
+                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                      color: 'var(--text-primary)',
                       fontSize: '12px',
                     }}
                   />
@@ -419,7 +419,7 @@ export const EmergencyFundPage: React.FC = () => {
             <div className="h-[240px]">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={trend} margin={{ top: 10, right: 12, left: 10, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-default)" />
                 <XAxis dataKey="month" tickLine={false} stroke="#94A3B8" tick={{ fontSize: 11 }} />
                 <YAxis
                   tickLine={false}
@@ -430,11 +430,11 @@ export const EmergencyFundPage: React.FC = () => {
                 <Tooltip
                   formatter={(value) => formatValueToRupiah(Number(value || 0))}
                   contentStyle={{
-                    backgroundColor: '#FFFFFF',
+                    backgroundColor: 'var(--bg-base)',
                     borderRadius: '12px',
-                    border: '1px solid #E2E8F0',
-                    boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                    color: '#0F172A',
+                    border: '1px solid var(--border-default)',
+                    boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                    color: 'var(--text-primary)',
                     fontSize: '12px',
                   }}
                 />
@@ -444,7 +444,7 @@ export const EmergencyFundPage: React.FC = () => {
                   name="Valuasi"
                   stroke="#10B981"
                   strokeWidth={2.5}
-                  dot={{ r: 4, stroke: '#ffffff', strokeWidth: 2 }}
+                  dot={{ r: 4, fill: 'var(--bg-base)', stroke: '#10B981', strokeWidth: 2 }}
                 />
                 </LineChart>
               </ResponsiveContainer>

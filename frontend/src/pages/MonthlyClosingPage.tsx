@@ -457,8 +457,18 @@ export const MonthlyClosingPage: React.FC = () => {
         isOpen={isGenerateOpen}
         onClose={() => setIsGenerateOpen(false)}
         title="Tutup Buku Bulanan"
+        footerActions={
+          <>
+            <Button variant="ghost" onClick={() => setIsGenerateOpen(false)}>
+              Batal
+            </Button>
+            <Button type="submit" form="closing-generate-form" isLoading={generateClosingMut.isPending}>
+              Kunci Laporan
+            </Button>
+          </>
+        }
       >
-        <form onSubmit={handleGenerate} className="space-y-4">
+        <form id="closing-generate-form" onSubmit={handleGenerate} className="space-y-4">
           {errorMsg && (
             <div className="p-3 bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 rounded-xl flex items-start gap-2 text-xs font-medium">
               <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -497,15 +507,6 @@ export const MonthlyClosingPage: React.FC = () => {
               placeholder="Contoh: Pos keuangan stabil, surplus dialokasikan ke investasi."
               className="w-full text-sm p-3 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl h-24 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
             />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setIsGenerateOpen(false)}>
-              Batal
-            </Button>
-            <Button type="submit" isLoading={generateClosingMut.isPending}>
-              Kunci Laporan
-            </Button>
           </div>
         </form>
       </Modal>

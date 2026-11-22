@@ -332,7 +332,7 @@ export const ForecastPage: React.FC = () => {
                   <stop offset="95%" stopColor="#818cf8" stopOpacity={0.05}/>
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-default)" />
               <XAxis
                 dataKey="name"
                 tickLine={false}
@@ -405,9 +405,8 @@ export const ForecastPage: React.FC = () => {
                 type="monotone"
                 dataKey="bandLow"
                 stroke="none"
-                fill="#ffffff"
-                fillOpacity={0.85}
-                className="dark:fill-slate-950"
+                fill="var(--bg-base)"
+                fillOpacity={0.9}
                 isAnimationActive={false}
               />
               <Area

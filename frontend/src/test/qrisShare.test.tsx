@@ -238,7 +238,7 @@ describe('Android Share Sheet QRIS & Receipt Quick Flow', () => {
 
     await waitFor(() => {
       const amountInput = screen.getByLabelText(/Nominal \(Rp\)/i) as HTMLInputElement;
-      expect(amountInput.value).toBe('42000');
+      expect(amountInput.value).toBe('42.000');
     });
 
     const descInput = screen.getByLabelText(/Merchant \/ Nama Toko/i) as HTMLInputElement;
@@ -473,7 +473,7 @@ describe('Android Share Sheet QRIS & Receipt Quick Flow', () => {
     });
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect((screen.getByLabelText(/Nominal \(Rp\)/i) as HTMLInputElement).value).toBe('78500');
+    expect((screen.getByLabelText(/Nominal \(Rp\)/i) as HTMLInputElement).value).toBe('78.500');
     expect((screen.getByLabelText(/Merchant \/ Nama Toko/i) as HTMLInputElement).value).toBe(
       'RM Sederhana Nusantara'
     );
@@ -538,7 +538,7 @@ describe('Android Share Sheet QRIS & Receipt Quick Flow', () => {
     });
 
     await waitFor(() => {
-      expect((screen.getByLabelText(/Nominal \(Rp\)/i) as HTMLInputElement).value).toBe('22000');
+      expect((screen.getByLabelText(/Nominal \(Rp\)/i) as HTMLInputElement).value).toBe('22.000');
       expect((screen.getByLabelText(/Merchant \/ Nama Toko/i) as HTMLInputElement).value).toBe(
         'KENANGAN COFFEE'
       );
@@ -579,7 +579,7 @@ describe('Android Share Sheet QRIS & Receipt Quick Flow', () => {
     fireEvent.change(scanInput, { target: { files: [receiptFile] } });
 
     await waitFor(() => {
-      expect((screen.getByLabelText(/Nominal Transaksi/i) as HTMLInputElement).value).toBe('25000');
+      expect((screen.getByLabelText(/Nominal Transaksi/i) as HTMLInputElement).value).toBe('25.000');
     });
     expect((screen.getByLabelText(/Deskripsi Transaksi/i) as HTMLInputElement).value).toBe(
       'Soto Kudus Ayam — WARUNG SOTO KUDUS'

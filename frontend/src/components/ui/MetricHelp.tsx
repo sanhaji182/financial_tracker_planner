@@ -55,7 +55,10 @@ export const MetricHelp: React.FC<MetricHelpProps> = ({ metric, className = '' }
         aria-label={`Metodologi: ${copy.title}`}
         aria-expanded={open}
         aria-controls={panelId}
-        onClick={() => setOpen((v) => !v)}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen((v) => !v);
+        }}
         onBlur={(e) => {
           if (!e.currentTarget.parentElement?.contains(e.relatedTarget as Node)) {
             setOpen(false);

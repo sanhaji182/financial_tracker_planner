@@ -47,12 +47,32 @@ export async function clearStoredRefreshToken(): Promise<void> {
 
 export async function syncStatusBarWithTheme(theme: 'light' | 'dark'): Promise<void> {
   if (!isNativeMobile()) return;
+  const isDark = theme === 'dark';
+  const barColor = isDark ? '#090D16' : '#F8FAFC';
+
+  try {
+    const localOcrPlugin = (
+      Capacitor as unknown as {
+        Plugins?: {
+          LocalOcr?: {
+            setSystemBarColors?: (opts: { color: string; dark: boolean }) => Promise<void>;
+          };
+        };
+      }
+    ).Plugins?.LocalOcr;
+    if (localOcrPlugin?.setSystemBarColors) {
+      await localOcrPlugin.setSystemBarColors({ color: barColor, dark: isDark });
+    }
+  } catch {
+    // Native bar override optional
+  }
+
   try {
     await StatusBar.setStyle({
-      style: theme === 'dark' ? Style.Dark : Style.Light,
+      style: isDark ? Style.Dark : Style.Light,
     });
     await StatusBar.setBackgroundColor({
-      color: theme === 'dark' ? '#0B1120' : '#F8FAFC',
+      color: barColor,
     });
   } catch {
     // StatusBar may be unsupported on some platforms

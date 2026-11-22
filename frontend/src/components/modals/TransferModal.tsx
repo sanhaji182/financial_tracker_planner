@@ -5,6 +5,7 @@ import { toast } from '../../stores/useToastStore';
 import { getTodayLocalDate } from '../../utils/date';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { AlertCircle } from 'lucide-react';
 
 interface TransferModalProps {
@@ -105,8 +106,22 @@ export const TransferModal: React.FC<TransferModalProps> = ({
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title="Transfer Antar Rekening">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title="Transfer Antar Rekening"
+      footerActions={
+        <>
+          <Button variant="ghost" onClick={onClose}>
+            Batal
+          </Button>
+          <Button type="submit" form="transfer-form" isLoading={createTransferMut.isPending}>
+            Transfer Dana
+          </Button>
+        </>
+      }
+    >
+      <form id="transfer-form" onSubmit={handleSubmit} className="space-y-4">
         {errorMsg && (
           <div className="p-3 bg-rose-50 dark:bg-rose-950/30 border border-rose-200/80 text-rose-700 dark:text-rose-300 rounded-xl flex items-start gap-2 text-xs font-medium">
             <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" />
@@ -154,20 +169,17 @@ export const TransferModal: React.FC<TransferModalProps> = ({
           </select>
         </div>
 
-        <div className="space-y-1.5">
-          <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
-            Jumlah Transfer (Rupiah)
-          </label>
-          <input
-            type="number"
+        <div>
+          <CurrencyInput
+            label="Jumlah Transfer (Rupiah)"
             value={amount}
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder="Contoh: 500000"
+            onValueChange={(val) => setAmount(val)}
+            placeholder="500.000"
             required
-            className="w-full h-10 text-sm px-3 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl font-money"
+            className="text-base font-bold"
           />
           {selectedSourceAccount && amount && (
-            <p className="text-xs text-slate-500 font-money mt-1">
+            <p className="text-xs text-slate-500 font-money mt-1.5">
               Sisa Saldo Estimasi:{' '}
               {formatValueToRupiah(selectedSourceAccount.balance - (parseFloat(amount) || 0))}
             </p>
@@ -197,15 +209,6 @@ export const TransferModal: React.FC<TransferModalProps> = ({
             placeholder="Contoh: Pindah dana operasional mingguan"
             className="w-full text-sm p-3 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl h-20 resize-none"
           />
-        </div>
-
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="ghost" onClick={onClose}>
-            Batal
-          </Button>
-          <Button type="submit" isLoading={createTransferMut.isPending}>
-            Transfer Dana
-          </Button>
         </div>
       </form>
     </Modal>

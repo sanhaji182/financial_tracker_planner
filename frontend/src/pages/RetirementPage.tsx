@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { PiggyBank, AlertTriangle, Info, Save, Loader2, TrendingUp } from 'lucide-react';
+import { AlertTriangle, Info, Save, Loader2, TrendingUp } from 'lucide-react';
 import retirementService, {
   type RetirementEducation,
   type UpdateRetirementProfilePayload,
 } from '../services/retirement';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
+import { Badge } from '../components/ui/Badge';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useAuthStore } from '../stores/authStore';
 import { MoneyDisplay } from '../components/ui/MoneyDisplay';
 import { CardSkeleton } from '../components/ui/Skeleton';
@@ -77,7 +79,7 @@ export const RetirementPage: React.FC = () => {
 
   if (isLoading) {
     return (
-      <div className="space-y-6 p-6 max-w-5xl mx-auto">
+      <div className="space-y-6 animate-fade-in">
         <CardSkeleton />
         <CardSkeleton />
       </div>
@@ -85,24 +87,16 @@ export const RetirementPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6 p-6 max-w-5xl mx-auto">
-      <header className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
-            <PiggyBank className="w-7 h-7 text-indigo-600" aria-hidden="true" />
-            Edukasi Pensiun
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Estimasi inflasi-adjusted + band longevity —{' '}
-            <span className="font-mono">{data?.formula_version || 'retirement-v1'}</span>
-          </p>
-        </div>
-        {data?.data_confidence && (
-          <span className="text-xs px-3 py-1 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300">
-            Confidence: {data.data_confidence}
-          </span>
-        )}
-      </header>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Perencanaan & Edukasi Pensiun"
+        subtitle={`Estimasi inflasi-adjusted & band longevity — ${data?.formula_version || 'retirement-v1'}`}
+        badge={
+          data?.data_confidence ? (
+            <Badge variant="neutral">Keyakinan: {data.data_confidence}</Badge>
+          ) : undefined
+        }
+      />
 
       {errorMsg && (
         <div role="alert" className="flex items-start gap-2 p-4 rounded-xl bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300">
@@ -185,42 +179,44 @@ export const RetirementPage: React.FC = () => {
 
       {isOwner && (
         <Card className="p-5">
-          <h2 className="text-lg font-semibold mb-4">Profil asumsi (owner)</h2>
+          <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mb-4">
+            Profil Asumsi Pensiun (Owner)
+          </h2>
           <form onSubmit={handleSave} className="grid grid-cols-1 sm:grid-cols-2 gap-4" aria-label="Form profil pensiun">
             <label className="text-sm">
-              <span className="text-slate-600 dark:text-slate-300">Usia saat ini</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Usia saat ini</span>
               <input type="number" min={18} max={90} value={currentAge} onChange={(e) => setCurrentAge(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <label className="text-sm">
-              <span className="text-slate-600 dark:text-slate-300">Usia pensiun target</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Usia pensiun target</span>
               <input type="number" min={40} max={90} value={retireAge} onChange={(e) => setRetireAge(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <label className="text-sm">
-              <span className="text-slate-600 dark:text-slate-300">Tabungan saat ini (IDR)</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Tabungan saat ini (IDR)</span>
               <input type="number" min={0} value={savings} onChange={(e) => setSavings(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <label className="text-sm">
-              <span className="text-slate-600 dark:text-slate-300">Kontribusi / bln (IDR)</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Kontribusi / bln (IDR)</span>
               <input type="number" min={0} value={contrib} onChange={(e) => setContrib(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <label className="text-sm">
-              <span className="text-slate-600 dark:text-slate-300">Inflasi % / thn (edukatif)</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Inflasi % / thn (edukatif)</span>
               <input type="number" step="0.1" min={0} max={20} value={inflation} onChange={(e) => setInflation(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <label className="text-sm">
-              <span className="text-slate-600 dark:text-slate-300">Return nominal % / thn (ilustratif)</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Return nominal % / thn (ilustratif)</span>
               <input type="number" step="0.1" min={0} max={30} value={nominal} onChange={(e) => setNominal(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <label className="text-sm sm:col-span-2">
-              <span className="text-slate-600 dark:text-slate-300">Rasio pengganti belanja di pensiun (%)</span>
+              <span className="text-xs font-semibold text-slate-600 dark:text-slate-300">Rasio pengganti belanja di pensiun (%)</span>
               <input type="number" min={30} max={100} value={replace} onChange={(e) => setReplace(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2" />
+                className="mt-1.5 w-full h-10 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 text-sm text-slate-900 dark:text-white font-money focus:outline-none focus:border-indigo-500" />
             </label>
             <div className="sm:col-span-2">
               <Button type="submit" disabled={isSaving} className="inline-flex items-center gap-2">
@@ -234,7 +230,9 @@ export const RetirementPage: React.FC = () => {
 
       {data?.guidance && data.guidance.length > 0 && (
         <Card className="p-5">
-          <h2 className="text-lg font-semibold mb-2">Guidance</h2>
+          <h2 className="font-display text-base font-bold text-slate-900 dark:text-white mb-2">
+            Panduan Edukatif
+          </h2>
           <ul className="list-disc pl-5 space-y-1 text-sm text-slate-600 dark:text-slate-300">
             {data.guidance.map((g, i) => (
               <li key={i}>{g}</li>

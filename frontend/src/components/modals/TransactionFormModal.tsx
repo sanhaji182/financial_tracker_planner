@@ -11,6 +11,7 @@ import type { Transaction, CreateTransactionRequest } from '../../services/trans
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
 import { Input } from '../ui/Input';
+import { CurrencyInput } from '../ui/CurrencyInput';
 import { toast } from '../../stores/useToastStore';
 import { formatLocalDate, getTodayLocalDate } from '../../utils/date';
 import {
@@ -337,7 +338,6 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   };
 
   const isPending = createMutation.isPending || updateMutation.isPending || uploadProgress;
-  const numericAmount = parseFloat(amount);
 
   const footer = (
     <>
@@ -463,30 +463,16 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       )}
 
       <form id={formId} onSubmit={handleSubmit} className="space-y-4">
-        <div className="relative">
-          <Input
-            label="Nominal Transaksi"
-            id={`${formId}-amount`}
-            type="number"
-            min="1"
-            step="any"
-            placeholder="Misal: 50000"
-            value={amount}
-            onChange={handleAmountChange}
-            error={amountError || undefined}
-            required
-            className="text-lg font-bold font-money"
-          />
-          {!isNaN(numericAmount) && numericAmount > 0 && (
-            <span className="mt-1 block text-xs text-slate-400 font-money">
-              {new Intl.NumberFormat('id-ID', {
-                style: 'currency',
-                currency: 'IDR',
-                maximumFractionDigits: 0,
-              }).format(numericAmount)}
-            </span>
-          )}
-        </div>
+        <CurrencyInput
+          label="Nominal Transaksi"
+          id={`${formId}-amount`}
+          placeholder="50.000"
+          value={amount}
+          onChange={handleAmountChange}
+          error={amountError || undefined}
+          required
+          className="text-lg font-bold"
+        />
 
         <Input
           label="Tanggal Transaksi"

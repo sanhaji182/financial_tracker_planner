@@ -162,6 +162,15 @@ export const BottomNav: React.FC = () => {
     return location.pathname === path || location.pathname.startsWith(`${path}/`);
   };
 
+  const isMoreRouteActive = isSpouse
+    ? !(
+        isPathMatch('/spouse') ||
+        isPathMatch('/spouse?tab=assets') ||
+        isPathMatch('/spouse?tab=debts') ||
+        isPathMatch('/goals')
+      )
+    : !(isPathMatch('/') || isPathMatch('/transactions') || isPathMatch('/bills'));
+
   return (
     <>
       {/* Bottom Bar Container */}
@@ -254,13 +263,13 @@ export const BottomNav: React.FC = () => {
           <button
             type="button"
             onClick={() => setMenuOpen(true)}
-            className="flex flex-col items-center justify-center flex-1 py-1 text-slate-500 dark:text-slate-400 active:text-slate-800"
+            className={menuOpen || isMoreRouteActive ? activeStyle : inactiveStyle}
             aria-label="Buka menu lainnya"
             aria-haspopup="dialog"
             aria-expanded={menuOpen}
           >
             <Menu className="w-5 h-5" aria-hidden="true" />
-            <span className="text-[10px] mt-0.5 font-medium">Lainnya</span>
+            <span className="text-[10px] mt-0.5">Lainnya</span>
           </button>
         </div>
       </nav>

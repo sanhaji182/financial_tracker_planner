@@ -207,11 +207,11 @@ function InsightCard({ insight }: { insight: MonthlyInsight }) {
                   <Tooltip
                     formatter={(value: unknown) => [formatRupiah(Number(value)), 'Pengeluaran']}
                     contentStyle={{
-                      backgroundColor: '#FFFFFF',
+                      backgroundColor: 'var(--bg-base)',
                       borderRadius: '12px',
-                      border: '1px solid #E2E8F0',
-                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                      color: '#0F172A',
+                      border: '1px solid var(--border-default)',
+                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                      color: 'var(--text-primary)',
                       fontSize: '12px',
                     }}
                   />

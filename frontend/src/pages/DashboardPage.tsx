@@ -271,7 +271,7 @@ export const DashboardPage: React.FC = () => {
                   <stop offset="95%" stopColor="#4F46E5" stopOpacity={0} />
                 </linearGradient>
               </defs>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-default)" />
               <XAxis dataKey="month" stroke="#94A3B8" fontSize={11} tickLine={false} axisLine={false} />
               <YAxis
                 stroke="#94A3B8"
@@ -287,11 +287,11 @@ export const DashboardPage: React.FC = () => {
               <Tooltip
                 formatter={(value: unknown) => [formatRupiah(Number(value)), 'Net Worth']}
                 contentStyle={{
-                  backgroundColor: '#FFFFFF',
+                  backgroundColor: 'var(--bg-base)',
                   borderRadius: '12px',
-                  border: '1px solid #E2E8F0',
-                  boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.1)',
-                  color: '#0F172A',
+                  border: '1px solid var(--border-default)',
+                  boxShadow: '0 10px 25px -5px rgba(15, 23, 42, 0.14)',
+                  color: 'var(--text-primary)',
                   fontSize: '12px',
                 }}
               />
@@ -302,8 +302,8 @@ export const DashboardPage: React.FC = () => {
                 strokeWidth={2.5}
                 fillOpacity={1}
                 fill="url(#netWorthGradient)"
-                dot={{ r: 3.5, strokeWidth: 2, fill: '#FFFFFF', stroke: '#4F46E5' }}
-                activeDot={{ r: 5.5, fill: '#4F46E5', stroke: '#FFFFFF', strokeWidth: 2 }}
+                dot={{ r: 3.5, strokeWidth: 2, fill: 'var(--bg-base)', stroke: '#4F46E5' }}
+                activeDot={{ r: 5.5, fill: '#4F46E5', stroke: 'var(--bg-base)', strokeWidth: 2 }}
               />
             </AreaChart>
           </ResponsiveContainer>

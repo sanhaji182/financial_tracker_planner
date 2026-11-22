@@ -12,6 +12,7 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { Modal } from '../components/ui/Modal';
 import { Input } from '../components/ui/Input';
+import { CurrencyInput } from '../components/ui/CurrencyInput';
 import { PageHeader } from '../components/ui/PageHeader';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
 import { CardSkeleton } from '../components/ui/Skeleton';
@@ -315,7 +316,7 @@ export const DebtDetailPage: React.FC = () => {
               <div className="h-56 w-full">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={chartData} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-default)" />
                     <XAxis dataKey="date" stroke="#94A3B8" fontSize={11} tickLine={false} />
                     <YAxis
                       stroke="#94A3B8"
@@ -337,11 +338,11 @@ export const DebtDetailPage: React.FC = () => {
                         'Sisa Saldo',
                       ]}
                       contentStyle={{
-                        backgroundColor: '#FFFFFF',
+                        backgroundColor: 'var(--bg-base)',
                         borderRadius: '12px',
-                        border: '1px solid #E2E8F0',
-                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                        color: '#0F172A',
+                        border: '1px solid var(--border-default)',
+                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                        color: 'var(--text-primary)',
                         fontSize: '12px',
                       }}
                     />
@@ -450,28 +451,15 @@ export const DebtDetailPage: React.FC = () => {
         )}
 
         <form id={formId} onSubmit={handleRecordPaymentSubmit} className="space-y-4">
-          <div className="relative">
-            <Input
-              label={isExtra ? 'Nominal Pembayaran Ekstra' : 'Nominal Pembayaran'}
-              id="pay-amount"
-              type="number"
-              min="1"
-              step="any"
-              value={payAmount}
-              onChange={(e) => setPayAmount(e.target.value)}
-              required
-              className="text-lg font-bold font-money"
-            />
-            {parseFloat(payAmount) > 0 && (
-              <span className="mt-1 block text-xs text-slate-500 font-money">
-                {new Intl.NumberFormat('id-ID', {
-                  style: 'currency',
-                  currency: 'IDR',
-                  maximumFractionDigits: 0,
-                }).format(parseFloat(payAmount))}
-              </span>
-            )}
-          </div>
+          <CurrencyInput
+            label={isExtra ? 'Nominal Pembayaran Ekstra' : 'Nominal Pembayaran'}
+            id="pay-amount"
+            placeholder="650.000"
+            value={payAmount}
+            onValueChange={(val) => setPayAmount(val)}
+            required
+            className="text-lg font-bold"
+          />
 
           <Input
             label="Tanggal Pembayaran"

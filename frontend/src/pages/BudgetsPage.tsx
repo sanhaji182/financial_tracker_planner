@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { CardSkeleton, ChartSkeleton } from '../components/ui/Skeleton';
+import { CategoryIcon } from '../components/ui/CategoryIcon';
+import { formatCategorySelectLabel } from '../utils/categoryIcons';
 import {
   useBudgets,
   useBudgetSummary,
@@ -327,7 +329,7 @@ export const BudgetsPage: React.FC = () => {
                       className="h-9 w-9 rounded-xl flex items-center justify-center text-sm font-bold shrink-0 text-white shadow-sm"
                       style={{ backgroundColor: b.category_color || '#4F46E5' }}
                     >
-                      {b.category_icon || '•'}
+                      <CategoryIcon icon={b.category_icon} className="h-4 w-4" />
                     </span>
                     <div className="min-w-0">
                       <h4 className="font-display text-sm font-bold text-slate-900 dark:text-white truncate">
@@ -449,7 +451,11 @@ export const BudgetsPage: React.FC = () => {
                     layout="vertical"
                     margin={{ top: 10, right: 12, left: 10, bottom: 0 }}
                   >
-                    <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#E2E8F0" />
+                    <CartesianGrid
+                      strokeDasharray="3 3"
+                      horizontal={false}
+                      stroke="var(--border-default)"
+                    />
                     <XAxis type="number" stroke="#94A3B8" tick={{ fontSize: 10 }} />
                     <YAxis
                       dataKey="name"
@@ -461,11 +467,11 @@ export const BudgetsPage: React.FC = () => {
                     <Tooltip
                       formatter={(value) => formatValueToRupiah(Number(value || 0))}
                       contentStyle={{
-                        backgroundColor: '#FFFFFF',
+                        backgroundColor: 'var(--bg-base)',
                         borderRadius: '12px',
-                        border: '1px solid #E2E8F0',
-                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                        color: '#0F172A',
+                        border: '1px solid var(--border-default)',
+                        boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                        color: 'var(--text-primary)',
                         fontSize: '12px',
                       }}
                     />
@@ -485,8 +491,23 @@ export const BudgetsPage: React.FC = () => {
         isOpen={isCreateOpen}
         onClose={() => setIsCreateOpen(false)}
         title="Set Anggaran Baru"
+        footerActions={
+          <>
+            <Button variant="ghost" onClick={() => setIsCreateOpen(false)}>
+              Batal
+            </Button>
+            <Button
+              type="submit"
+              form="budget-create-form"
+              isLoading={setBudgetMut.isPending}
+              disabled={availableCategories.length === 0}
+            >
+              Simpan Anggaran
+            </Button>
+          </>
+        }
       >
-        <form onSubmit={handleCreateBudget} className="space-y-4">
+        <form id="budget-create-form" onSubmit={handleCreateBudget} className="space-y-4">
           <div className="space-y-1.5">
             <label className="text-xs font-semibold text-slate-600 dark:text-slate-300">
               Pilih Kategori Pengeluaran
@@ -500,7 +521,7 @@ export const BudgetsPage: React.FC = () => {
               <option value="">-- Pilih Kategori --</option>
               {availableCategories.map((c) => (
                 <option key={c.id} value={c.id}>
-                  {c.icon} {c.name}
+                  {formatCategorySelectLabel(c.name, c.icon)}
                 </option>
               ))}
             </select>
@@ -523,19 +544,6 @@ export const BudgetsPage: React.FC = () => {
               required
               className="w-full h-10 text-sm px-3 border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-900 dark:text-white rounded-xl font-money"
             />
-          </div>
-
-          <div className="flex justify-end gap-2 pt-2">
-            <Button variant="ghost" onClick={() => setIsCreateOpen(false)}>
-              Batal
-            </Button>
-            <Button
-              type="submit"
-              isLoading={setBudgetMut.isPending}
-              disabled={availableCategories.length === 0}
-            >
-              Simpan Anggaran
-            </Button>
           </div>
         </form>
       </Modal>

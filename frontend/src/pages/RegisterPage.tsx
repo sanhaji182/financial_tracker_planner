@@ -1,14 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Wallet, ArrowRight } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Moon, Sun, ArrowRight } from 'lucide-react';
 import { authService } from '../services/auth';
 import { useAuthStore } from '../stores/authStore';
+import { useThemeStore } from '../stores/useThemeStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 
 export const RegisterPage: React.FC = () => {
   const navigate = useNavigate();
   const { setAuth, isAuthenticated } = useAuthStore();
+  const { theme, toggleTheme } = useThemeStore();
 
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -142,16 +144,34 @@ export const RegisterPage: React.FC = () => {
   };
 
   return (
-    <div className="relative flex min-h-[100dvh] items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 pt-safe pb-safe overflow-hidden">
+    <div className="relative flex min-h-[100dvh] items-center justify-center bg-slate-50 dark:bg-slate-950 p-4 pt-safe pb-safe overflow-hidden transition-colors duration-200">
       <div className="pointer-events-none absolute -top-40 -left-40 h-96 w-96 rounded-full bg-indigo-100/70 dark:bg-indigo-950/30 blur-3xl" />
       <div className="pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-sky-100/70 dark:bg-sky-950/30 blur-3xl" />
 
+      {/* Top right theme toggle */}
+      <div className="absolute right-4 top-4 z-10">
+        <button
+          type="button"
+          onClick={toggleTheme}
+          aria-label={theme === 'dark' ? 'Aktifkan Light Mode' : 'Aktifkan Dark Mode'}
+          className="p-2.5 rounded-full bg-white/90 dark:bg-slate-900/90 border border-slate-200/80 dark:border-slate-800 shadow-sm hover:shadow transition-all text-slate-600 dark:text-slate-300"
+        >
+          {theme === 'dark' ? (
+            <Sun className="h-4 w-4 text-amber-400" />
+          ) : (
+            <Moon className="h-4 w-4 text-slate-600" />
+          )}
+        </button>
+      </div>
+
       <div className="relative z-10 w-full max-w-[440px] animate-fade-in">
         <div className="mb-6 text-center">
-          <div className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-indigo-600 text-white shadow-lg shadow-indigo-600/25">
-            <Wallet className="h-5 w-5" />
-          </div>
-          <h2 className="mt-3 font-display text-2xl font-extrabold text-slate-900 dark:text-white">
+          <img
+            src="/icons/icon-192.png"
+            alt="Logo Keuangan Bersama"
+            className="mx-auto h-14 w-14 rounded-2xl shadow-lg shadow-indigo-600/25 object-cover"
+          />
+          <h2 className="mt-4 font-display text-2xl font-extrabold text-slate-900 dark:text-white">
             Buat Akun Keluarga
           </h2>
           <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">

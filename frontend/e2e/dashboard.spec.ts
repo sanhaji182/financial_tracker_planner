@@ -18,15 +18,18 @@ test.describe('Dashboard E2E Page', () => {
       'button:has(svg.lucide-sun), button:has(svg.lucide-moon), button[aria-label*="tema" i], button[aria-label*="theme" i]'
     );
     if ((await toggleButton.count()) > 0) {
-      const initialTheme = await page.evaluate(() =>
-        document.documentElement.getAttribute('data-theme')
+      const initialTheme = await page.evaluate(
+        () =>
+          document.documentElement.getAttribute('data-theme') ??
+          (document.documentElement.classList.contains('dark') ? 'dark' : 'light')
       );
       await toggleButton.first().click();
-      const nextTheme = await page.evaluate(() =>
-        document.documentElement.getAttribute('data-theme')
+      const nextTheme = await page.evaluate(
+        () =>
+          document.documentElement.getAttribute('data-theme') ??
+          (document.documentElement.classList.contains('dark') ? 'dark' : 'light')
       );
-      // Theme may use class "dark" instead of data-theme — accept either change or no-op.
-      expect(nextTheme === initialTheme || nextTheme !== initialTheme).toBeTruthy();
+      expect(nextTheme).not.toBe(initialTheme);
     }
   });
 

@@ -321,7 +321,7 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
                           <stop offset="95%" stopColor="#4F46E5" stopOpacity={0} />
                         </linearGradient>
                       </defs>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#E2E8F0" />
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--border-default)" />
                       <XAxis dataKey="name" stroke="#94A3B8" fontSize={10} tickLine={false} />
                       <YAxis
                         stroke="#94A3B8"
@@ -343,11 +343,11 @@ export const AssetDetailDrawer: React.FC<AssetDetailDrawerProps> = ({
                           'Nilai',
                         ]}
                         contentStyle={{
-                          backgroundColor: '#FFFFFF',
+                          backgroundColor: 'var(--bg-base)',
                           borderRadius: '12px',
-                          border: '1px solid #E2E8F0',
-                          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.08)',
-                          color: '#0F172A',
+                          border: '1px solid var(--border-default)',
+                          boxShadow: '0 8px 24px rgba(15, 23, 42, 0.14)',
+                          color: 'var(--text-primary)',
                           fontSize: '12px',
                         }}
                       />

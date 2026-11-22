@@ -1,4 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { invalidateFinancialData } from './invalidateFinancialQueries';
 import { billService } from '../services/bills';
 import type { CreateBillRequest, UpdateBillRequest, PayBillRequest } from '../services/bills';
 
@@ -22,9 +23,7 @@ export const useCreateBill = () => {
   return useMutation({
     mutationFn: (req: CreateBillRequest) => billService.createBill(req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bills'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      queryClient.invalidateQueries({ queryKey: ['shared'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -34,9 +33,7 @@ export const useUpdateBill = (id: string) => {
   return useMutation({
     mutationFn: (req: UpdateBillRequest) => billService.updateBill(id, req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bills'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      queryClient.invalidateQueries({ queryKey: ['shared'] });
+      invalidateFinancialData(queryClient, [['bills', 'detail', id]]);
     },
   });
 };
@@ -46,9 +43,7 @@ export const useDeleteBill = () => {
   return useMutation({
     mutationFn: (id: string) => billService.deleteBill(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bills'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      queryClient.invalidateQueries({ queryKey: ['shared'] });
+      invalidateFinancialData(queryClient);
     },
   });
 };
@@ -58,11 +53,7 @@ export const usePayBill = (id: string) => {
   return useMutation({
     mutationFn: (req: PayBillRequest) => billService.payBill(id, req),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['bills'] });
-      queryClient.invalidateQueries({ queryKey: ['dashboard'] });
-      queryClient.invalidateQueries({ queryKey: ['shared'] });
-      queryClient.invalidateQueries({ queryKey: ['accounts'] });
-      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      invalidateFinancialData(queryClient, [['bills', 'detail', id]]);
     },
   });
 };

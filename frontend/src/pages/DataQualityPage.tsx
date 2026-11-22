@@ -1,11 +1,12 @@
 import React from 'react';
 import { Link } from 'react-router-dom';
 import { Card } from '../components/ui/Card';
+import { Badge } from '../components/ui/Badge';
+import { PageHeader } from '../components/ui/PageHeader';
 import { useDataQuality } from '../hooks/useDataQuality';
 import {
   AlertTriangle,
   CheckCircle2,
-  Database,
   ShieldAlert,
   Info,
   ArrowRight,
@@ -67,21 +68,12 @@ export const DataQualityPage: React.FC = () => {
   }
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-black tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
-          <Database className="h-6 w-6 text-indigo-500" />
-          Data Quality Center
-        </h1>
-        <p className="text-xs text-text-secondary mt-1">
-          Kelengkapan, kesegaran, dan kebersihan data sebelum angka decision-support dipercaya.
-        </p>
-        <p className="mt-1 text-[11px] font-semibold text-slate-400">
-          Data hingga {dq.as_of ? new Date(dq.as_of).toLocaleString('id-ID') : '—'}
-          {dq.formula_version ? ` · formula ${dq.formula_version}` : ''}
-          {` · keyakinan ${dq.overall_confidence}`}.
-        </p>
-      </div>
+    <div className="space-y-6 animate-fade-in">
+      <PageHeader
+        title="Data Quality Center"
+        subtitle={`Kelengkapan, kesegaran, dan kebersihan data sebelum angka decision-support dipercaya. Data hingga ${dq.as_of ? new Date(dq.as_of).toLocaleString('id-ID') : '—'}${dq.formula_version ? ` · formula ${dq.formula_version}` : ''}.`}
+        badge={<Badge variant="neutral">Keyakinan: {dq.overall_confidence}</Badge>}
+      />
 
       {/* Score cards */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
