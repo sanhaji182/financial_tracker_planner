@@ -319,14 +319,20 @@ def parse_receipt_text(text: str, data_df: Dict[str, List[Any]]) -> Dict[str, An
 
     exclude_total_line = (
         r"\b(sub\s*total|subtotal|kembali(?:an)?|change|diskon|discount|hemat|potongan|"
-        r"ppn|tax|pajak|npwp|n\.?p\.?w\.?p|nmid|nik|telp|telepon|phone|"
+        r"ppn|pb\s*1|pb1|ppj|bkp|dpp|tax|pajak|materai|pembulatan|"
+        r"harga\s*\/?\s*liter|harga\s*(?:total|pulsa|satuan)|rp\.?\s*token|tarif\s*(?:\d+\s*jam|jam\s*berikutnya)|"
+        r"biaya\s*(?:pengiriman|pemesanan|layanan|jasa|admin|perjalanan|administrasi|transaksi)|"
+        r"convenience\s*fee|asuransi\s*(?:pengiriman|perjalanan)|jasa\s*\/\s*sparepart|"
+        r"ongkos\s*kirim|ongkir|tagihan\s*(?:air|utama)|iuran\s*bpjs|"
+        r"total\s*(?:harga\s*(?:makanan|barang)|ongkos\s*kirim(?:\s*bersih)?|sebelum\s*pembulatan|sistem)|"
+        r"npwp|n\.?p\.?w\.?p|nmid|nik|telp|telepon|phone|"
         r"total\s*(?:item|qty|kuantitas|barang|pcs))\b"
     )
     primary_total_kw = (
-        r"grand\s*total|total\s*(?:bayar|belanja|tagihan|pembayaran|transaksi)|"
+        r"grand\s*total|total\s*(?:bayar|dibayar|belanja|tagihan|pembayaran|transaksi|harga|akhir|debet|idr)|"
         r"jumlah\s*bayar|jml\s*(?:bayar|tagihan|belanja)|harga\s*jual|"
         r"nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran))?|bayar\s*qris|"
-        r"net\s*amount|netto|total"
+        r"amounts?|net\s*amount|netto|total"
     )
     fallback_total_kw = r"jumlah|bayar|tunai|cash|qris"
 
@@ -402,7 +408,12 @@ def parse_receipt_text(text: str, data_df: Dict[str, List[Any]]) -> Dict[str, An
     items: List[Dict[str, Any]] = []
     skip_item_line = (
         r"\b(total|grand\s*total|subtotal|sub\s*total|kembali(?:an)?|change|"
-        r"diskon|discount|ppn|tax|pajak|tunai|cash|qris|debit|kredit|transfer)\b"
+        r"diskon|discount|hemat|potongan|ppn|pb\s*1|pb1|ppj|bkp|dpp|tax|pajak|materai|pembulatan|"
+        r"harga\s*\/?\s*liter|harga\s*(?:total|pulsa|satuan)|rp\.?\s*token|tarif\s*(?:\d+\s*jam|jam\s*berikutnya)|"
+        r"biaya\s*(?:pengiriman|pemesanan|layanan|jasa|admin|perjalanan|administrasi|transaksi)|"
+        r"convenience\s*fee|asuransi\s*(?:pengiriman|perjalanan)|jasa\s*\/\s*sparepart|"
+        r"ongkos\s*kirim|ongkir|tagihan\s*(?:air|utama)|iuran\s*bpjs|"
+        r"tunai|cash|qris|debit|kredit|transfer)\b"
     )
     qty_item_pattern = r"^(.*?)\s+(\d+)\s*[xX\*]\s*(?:[Rr]p\.?\s*)?([\d.,\s]+)$"
     for line in lines:

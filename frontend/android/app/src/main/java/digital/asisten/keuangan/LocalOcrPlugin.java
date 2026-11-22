@@ -9,7 +9,10 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.ColorMatrix;
+import android.graphics.ColorMatrixColorFilter;
 import android.graphics.Matrix;
+import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.pdf.PdfRenderer;
 import android.media.ExifInterface;
@@ -231,6 +234,7 @@ public class LocalOcrPlugin extends Plugin {
 
         executor.execute(() -> {
             Bitmap bitmap = null;
+            Bitmap enhancedBitmap = null;
             TextRecognizer recognizer = null;
             try {
                 byte[] bytes = decodeBase64Payload(base64);
@@ -245,6 +249,24 @@ public class LocalOcrPlugin extends Plugin {
                 Text result = Tasks.await(recognizer.process(image));
                 String text = extractRowOrderedText(result);
 
+                String compactText = text.replaceAll("\\s+", "");
+                if (compactText.length() < 20 || !compactText.matches(".*\\d.*")) {
+                    try {
+                        enhancedBitmap = createHighContrastGrayscaleBitmap(bitmap);
+                        InputImage enhancedImage = InputImage.fromBitmap(enhancedBitmap, 0);
+                        Text retryResult = Tasks.await(recognizer.process(enhancedImage));
+                        String retryText = extractRowOrderedText(retryResult);
+                        String compactRetry = retryText.replaceAll("\\s+", "");
+                        boolean firstHasDigits = compactText.matches(".*\\d.*");
+                        boolean retryHasDigits = compactRetry.matches(".*\\d.*");
+                        if ((!firstHasDigits && retryHasDigits)
+                                || (compactRetry.length() > compactText.length() && (retryHasDigits || !firstHasDigits))) {
+                            text = retryText;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                }
+
                 JSObject ret = new JSObject();
                 ret.put("text", text);
                 ret.put("pageCount", 1);
@@ -258,6 +280,9 @@ public class LocalOcrPlugin extends Plugin {
                         recognizer.close();
                     } catch (Exception ignored) {
                     }
+                }
+                if (enhancedBitmap != null && !enhancedBitmap.isRecycled()) {
+                    enhancedBitmap.recycle();
                 }
                 if (bitmap != null && !bitmap.isRecycled()) {
                     bitmap.recycle();
@@ -471,6 +496,31 @@ public class LocalOcrPlugin extends Plugin {
         } catch (Exception ignored) {
             return bitmap;
         }
+    }
+
+    private static Bitmap createHighContrastGrayscaleBitmap(Bitmap src) {
+        int width = Math.max(1, src.getWidth());
+        int height = Math.max(1, src.getHeight());
+        Bitmap out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(out);
+
+        ColorMatrix grayMatrix = new ColorMatrix();
+        grayMatrix.setSaturation(0f);
+
+        float contrast = 1.45f;
+        float translate = -35f;
+        ColorMatrix contrastMatrix = new ColorMatrix(new float[] {
+                contrast, 0f, 0f, 0f, translate,
+                0f, contrast, 0f, 0f, translate,
+                0f, 0f, contrast, 0f, translate,
+                0f, 0f, 0f, 1f, 0f
+        });
+        grayMatrix.postConcat(contrastMatrix);
+
+        Paint paint = new Paint();
+        paint.setColorFilter(new ColorMatrixColorFilter(grayMatrix));
+        canvas.drawBitmap(src, 0f, 0f, paint);
+        return out;
     }
 
     /**

@@ -312,7 +312,48 @@ export async function extractRawTextFromFile(
 }
 
 const NON_MONEY_LINE_RE =
-  /\b(?:n\s*p\s*w\s*p|n\.?p\.?w\.?p|npwf|mpwp|nfwp|nmid|nik|pkp|wajib\s*pajak|telp|telepon|phone|tlp|fax|whatsapp|kode\s*pos|no\.?\s*(?:seri|urut|anggota|member|kartu|rek(?:ening)?|va|virtual|meter|pelanggan|tlp|hp|struk|nota|bon|faktur|kasir|meja|transaksi|ref(?:erensi)?)|id\s*(?:pelanggan|transaksi|merchant|agen)|mid|tid|stan|appr(?:oval)?|batch|trace|rrn|ref\s*id|kode\s*referensi)\b/i;
+  /\b(?:n\s*p\s*w\s*p|n\.?p\.?w\.?p|npwf|mpwp|nfwp|nmid|nik|pkp|wajib\s*pajak|telp|telepon|phone|tlp|fax|whatsapp|kode\s*pos|no\.?\s*(?:seri|urut|anggota|member|kartu|rek(?:ening)?|va|virtual|meter|pelanggan|tlp|hp|struk|nota|bon|faktur|kasir|meja|transaksi|trans|pesanan|antrian|invoice|service|tujuan|ref(?:erensi)?|resi(?:\s*\/\s*rrn)?|plat|kendaraan|selang|polisi|booking|rekam\s*medis|rm|identitas|ktp|kursi)|nomor\s*kursi|nox?a\s*transaksi|id\s*(?:pelanggan|transaksi|merchant|agen|pesanan)|store\s*id|mid|tid|stan|appr(?:oval)?|batch(?:\s*no)?|trace(?:\s*no)?|auth\s*code|rrn(?:\s*qris)?|reff?\s*(?:id|no\.?|number)|ref\.?\s*(?:no\.?|number|id)|kode\s*(?:referensi|booking|validasi)|term(?:inal)?\s*id|merchant\s*(?:id|pan)|card\s*(?:no\.?|number|type)|pulau\s*\/\s*pompa|kode\s*token|sn\s*\/?\s*token|tarif\s*\/?\s*daya|jumlah\s*kwh|stand\s*meter|jml\s*peserta|durasi\s*parkir|jam\s*(?:masuk|keluar)|tanggal\s*(?:pengukuhan|berangkat)|estimasi\s*selesai|kilometer|odometer|plat\s*nomor|mekanik|studio|jadwal|rute|kereta|nama\s*(?:pasien|dokter|pengirim)|pengemudi|jemput|jarak|perjalananmu|app\s*card\s*points)\b/i;
+
+function healOcrMoneyTokenBody(token: string): string {
+  return token
+    .replace(/[Oo]/g, '0')
+    .replace(/[Il]/g, '1')
+    .replace(/S/g, '5')
+    .replace(/B/g, '8');
+}
+
+export function healOcrMoneyTokens(line: string): string {
+  return (
+    line
+      // Prefixed currency tokens like "Rp 25.OOO", "IDR l5.S00,00", "Rp B.000"
+      .replace(
+        /\b(rp|idr)(\.?\s*)([0-9OIlSB][0-9OIlSB.,]*[0-9OIlOo])(?![A-Za-z])/gi,
+        (full, curr: string, sep: string, body: string) => {
+          if (!/\d/.test(body) && !/[.,][0-9OIlOo]{2,3}$/.test(body)) {
+            return full;
+          }
+          const healed = healOcrMoneyTokenBody(body);
+          return /\d/.test(healed) ? `${curr}${sep}${healed}` : full;
+        }
+      )
+      // Dotted/comma money groups with OCR lookalikes like "25.OOO", "l5.S00", "4O.5OO"
+      .replace(
+        /(?<![A-Za-z.,\d-])([0-9OIlSB]{1,3}(?:[.,][0-9OIlOoS]{3})+(?:[.,][0-9OIlOo]{2})?)(?![A-Za-z.,\d])/g,
+        (full, body: string) => {
+          if (!/\d/.test(body)) return full;
+          return healOcrMoneyTokenBody(body);
+        }
+      )
+      // Plain OCR-corrupted numbers right after ":" or "=" like "TOTAL : l5000"
+      .replace(
+        /([:=]\s*)([0-9OIlSB]{4,9})(?![A-Za-z.,\d])/g,
+        (full, prefix: string, body: string) => {
+          if (!/\d/.test(body)) return full;
+          return `${prefix}${healOcrMoneyTokenBody(body)}`;
+        }
+      )
+  );
+}
 
 function stripNonMoneyIdentifiers(line: string): string {
   return line
@@ -326,12 +367,20 @@ function stripNonMoneyIdentifiers(line: string): string {
       /(?<![.,\d])[0-9OIl][0-9OIl.,]{3,}\s*(?:-|–)\s*[0-9OIl.,]*\d[0-9OIl.,]*/g,
       ' '
     )
+    // 20-digit PLN token codes like "1234 - 5678 - 9012 - 3456 - 7890"
+    .replace(/\b\d{4}\s*-\s*\d{4}\s*-\s*\d{4}\s*-\s*\d{4}(?:\s*-\s*\d{4})?\b/g, ' ')
+    // Masked debit/credit card numbers like "5224 43XX XXXX 8812"
+    .replace(/\b\d{4}[\s-]+[0-9X*•]{4}[\s-]+[0-9X*•]{4}[\s-]+\d{2,4}\b/gi, ' ')
+    // SPBU station codes like "SPBU 34.128.05" or "SPBU 44.592.18"
+    .replace(/\bspbu\s+\d{2}[.,]\d{3}[.,]\d{2}\b/gi, ' ')
+    // Vehicle odometer distances like "24.500 KM"
+    .replace(/\b\d{1,3}(?:[.,]\d{3})+\s*km\b/gi, ' ')
     // Multi-dot IDs ending in a single check digit like 1.308.524.8
     .replace(/(?<![.,\d])\d{1,3}(?:[.,]\d{3})+[.,]\d(?!\d)(?:\s*(?:-|–|[.,])\s*\d+)*/g, ' ')
     // Dotted number sequences starting with zero like 01.308.524 or 092.000
     .replace(/(?<![.,\d])0\d{1,2}(?:[.,]\d{1,3})+(?![.,\d])/g, ' ')
-    // Unprefixed long contiguous numbers (barcodes, NIK, Virtual Accounts)
-    .replace(/(?<!(?:rp|idr)\.?\s*)\b\d{10,16}\b/gi, ' ')
+    // Unprefixed long contiguous numbers (barcodes, NIK, Virtual Accounts, 20-digit SN/Tokens)
+    .replace(/(?<!(?:rp|idr)\.?\s*)\b\d{10,24}\b/gi, ' ')
     // Dates and timestamps so numbers inside dates/times are not picked as money
     .replace(/(?<![.,\d])20\d{2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{1,2}(?![.,\d])/g, ' ')
     .replace(/(?<![.,\d])\d{1,2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{2,4}(?![.,\d])/g, ' ')
@@ -349,6 +398,10 @@ export function parseIndonesianMoney(raw: string): number {
     .trim();
 
   if (!clean) return 0;
+
+  if (/^[0-9OIlSB.,]+$/.test(clean) && /\d/.test(clean)) {
+    clean = healOcrMoneyTokenBody(clean);
+  }
 
   // Reject dotted codes that have irregular group sizes (e.g. 01.308.524.8)
   if (/^\d{1,3}(?:[.,]\d{3})+[.,]\d$/.test(clean)) {
@@ -377,7 +430,7 @@ function extractMoneyCandidates(
   line: string,
   options?: { allowPlainInteger?: boolean }
 ): number[] {
-  const sanitized = stripNonMoneyIdentifiers(line);
+  const sanitized = healOcrMoneyTokens(stripNonMoneyIdentifiers(line));
   const hasNonMoneyKeyword = NON_MONEY_LINE_RE.test(line);
 
   const candidates: number[] = [];
@@ -423,7 +476,7 @@ function extractMoneyCandidates(
   return candidates;
 }
 
-export function parseIndonesianDate(text: string): string | null {
+function parseDateCandidate(text: string): string | null {
   const todayYear = new Date().getFullYear();
 
   const isoMatch = text.match(/\b(20\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/);
@@ -431,25 +484,37 @@ export function parseIndonesianDate(text: string): string | null {
     return `${isoMatch[1]}-${isoMatch[2].padStart(2, '0')}-${isoMatch[3].padStart(2, '0')}`;
   }
 
-  const dmyMatch = text.match(/\b([0-3]?\d)[-/]([01]?\d)[-/](20\d{2}|\d{2})\b/);
+  const dmyMatch = text.match(/\b([0-3]?\d)[-/]([01]?\d)[-/](20\d{2}|19\d{2}|\d{2})\b/);
   if (dmyMatch) {
     const day = dmyMatch[1].padStart(2, '0');
     const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3].length === 2 ? `20${dmyMatch[3]}` : dmyMatch[3];
+    let year = dmyMatch[3];
+    if (year.length === 2) {
+      const yy = Number(year);
+      year = yy > (todayYear % 100) + 5 ? `19${year}` : `20${year}`;
+    }
     if (Number(month) >= 1 && Number(month) <= 12 && Number(day) >= 1 && Number(day) <= 31) {
       return `${year}-${month}-${day}`;
     }
   }
 
   const namedMatch = text.match(
-    /\b([0-3]?\d)\s+(jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:et|ch)?|apr(?:il)?|mei|may|jun(?:i|e)?|jul(?:i|y)?|agu(?:stus)?|ags|aug(?:ust)?|sep(?:t|tember)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|des(?:ember)?|dec(?:ember)?)\s+(20\d{2}|\d{2})?\b/i
+    /\b([0-3]?\d)\s+(jan(?:uari|uary)?|feb(?:ruari|ruary)?|mar(?:et|ch)?|apr(?:il)?|mei|may|jun(?:i|e)?|jul(?:i|y)?|agu(?:stus)?|ags|aug(?:ust)?|sep(?:t|tember)?|okt(?:ober)?|oct(?:ober)?|nov(?:ember)?|des(?:ember)?|dec(?:ember)?)\s+(20\d{2}|19\d{2}|\d{2})?\b/i
   );
   if (namedMatch) {
     const day = namedMatch[1].padStart(2, '0');
     const monthKey = namedMatch[2].toLowerCase();
     const month = MONTH_MAP[monthKey];
     const yearRaw = namedMatch[3];
-    const year = yearRaw ? (yearRaw.length === 2 ? `20${yearRaw}` : yearRaw) : String(todayYear);
+    let year = String(todayYear);
+    if (yearRaw) {
+      if (yearRaw.length === 2) {
+        const yy = Number(yearRaw);
+        year = yy > (todayYear % 100) + 5 ? `19${yearRaw}` : `20${yearRaw}`;
+      } else {
+        year = yearRaw;
+      }
+    }
     if (month) {
       return `${year}-${month}-${day}`;
     }
@@ -465,6 +530,14 @@ export function parseIndonesianDate(text: string): string | null {
   }
 
   return null;
+}
+
+export function parseIndonesianDate(text: string): string | null {
+  const withoutSecondaryDates = text.replace(
+    /[^\r\n]*\b(?:tanggal\s*(?:pengukuhan|berangkat)|tgl\.?\s*(?:pengukuhan|berangkat)|pengukuhan\s*pkp|estimasi\s*selesai|jatuh\s*tempo)\b[^\r\n]*/gi,
+    ' '
+  );
+  return parseDateCandidate(withoutSecondaryDates) || parseDateCandidate(text);
 }
 
 function detectProviderKeyword(text: string): {
@@ -557,49 +630,55 @@ function suggestCategoryForText(
 
   const findByKeyword = (kw: RegExp) => pool.find((c) => kw.test(c.name.toLowerCase()));
 
+  const cleanedLower = lower.replace(/\bpt\.?\s*goto\s+gojek\s+tokopedia(?:\s+tbk)?\b/g, ' ');
+
   if (txType === 'expense') {
     if (
-      /indomaret|alfamart|superindo|hypermart|minimarket|familymart|lawson|circle\s*k|guardian|watsons|grocery|belanja|tokopedia|shopee|lazada|blibli/.test(
-        lower
+      /indomaret|alfamart|alfamidi|super\s*indo|superindo|hypermart|minimarket|familymart|lawson|circle\s*k|guardian|watsons|grocery|belanja|\btoo?kopedia\b|\bshopee\b|\blazada\b|\bblibli\b|indomarco|alfaria|lion\s*super\s*indo|midi\s*utama|laundry|cuci\s*(?:\+|dan)?\s*setrika/.test(
+        cleanedLower
       )
     ) {
       const cat = findByKeyword(/belanja/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.8 };
     }
     if (
-      /kopi|cafe|resto|warung|makan|gofood|grabfood|shopeefood|kfc|mcd|starbucks|kenangan|janji\s*jiwa|fore|mixue|chatime|bakery|roti|nasi|bakso|ayam|soto|kedai/.test(
-        lower
+      /kopi|cafe|resto|restoran|warung|makan|gofood|grabfood|shopeefood|kfc|mcdonald(?:'?s)?|\bmcd\b|fast\s*food|starbucks|coca\s*cola|burger|latte|croissant|sundae|boba|kenangan|janji\s*jiwa|fore|mixue|chatime|bakery|roti|nasi|bakso|ayam|soto|kedai|solaria|crispy|mie|sate|geprek|seblak|dimsum/.test(
+        cleanedLower
       )
     ) {
       const cat = findByKeyword(/makan/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.84 };
     }
-    if (/pertamina|shell|spbu|bensin|parkir|tol|grab|gojek|kereta|mrt|busway|transjakarta|kai/.test(lower)) {
+    if (
+      /pertamina|shell|spbu|bensin|parkir|parking|secure\s*parking|tol|goride|gocar|grabbike|grabcar|bluebird|grab(?!food)|gojek|kereta|whoosh|kcic|\bkai\b|mrt|busway|transjakarta|pertalite|pertamax|dexlite|ahass|bengkel|servis\s*(?:ringan|motor|mobil)|oli\s*(?:mesin|gardan)|ganti\s*oli|sparepart|busi/.test(
+        cleanedLower
+      )
+    ) {
       const cat = findByKeyword(/transport/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.8 };
     }
-    if (/pln|listrik|pdam|wifi|indihome|biznet|telkomsel|indosat|xl\b|pulsa|paket\s*data|bpjs/.test(lower)) {
+    if (/pln|listrik|token\s*pln|kwh|prabayar|pdam|wifi|indihome|biznet|telkomsel|indosat|xl\b|pulsa|paket\s*data|bpjs/.test(cleanedLower)) {
       const cat = findByKeyword(/tagihan|utilitas/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.84 };
     }
-    if (/cicilan|spaylater|kredivo|akulaku|angsuran|kartu\s*kredit|kpr/.test(lower)) {
+    if (/cicilan|spaylater|kredivo|akulaku|angsuran|kartu\s*kredit|kpr/.test(cleanedLower)) {
       const cat = findByKeyword(/cicilan|utang/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.82 };
     }
-    if (/apotek|kimia\s*farma|k24|klinik|rumah\s*sakit|dokter|halodoc/.test(lower)) {
+    if (/apotek|kimia\s*farma|k-?24|klinik|rumah\s*sakit|dokter|konsultasi\s*dokter|tindakan\s*medis|rekam\s*medis|resep|antasida|halodoc|paracetamol|vitamin|betadine|obat|farma/.test(cleanedLower)) {
       const cat = findByKeyword(/kesehatan/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.8 };
     }
-    if (/netflix|spotify|youtube|bioskop|xxi|cgv|game|steam/.test(lower)) {
+    if (/netflix|spotify|youtube|bioskop|cinema\s*xxi|tix\s*id|cgv|cinepolis|tiket\s*(?:bioskop|regular)|avatar|jadwal[\s:]+.*studio|xxi|game|steam/.test(cleanedLower)) {
       const cat = findByKeyword(/hiburan|langganan/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.78 };
     }
   } else {
-    if (/gaji|payroll|salary/.test(lower)) {
+    if (/gaji|payroll|salary/.test(cleanedLower)) {
       const cat = findByKeyword(/gaji/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.82 };
     }
-    if (/bonus|thr|insentif/.test(lower)) {
+    if (/bonus|thr|insentif/.test(cleanedLower)) {
       const cat = findByKeyword(/bonus/);
       if (cat) return { id: cat.id, name: cat.name, confidence: 0.78 };
     }
@@ -609,28 +688,87 @@ function suggestCategoryForText(
 }
 
 const GENERIC_RECEIPT_HEADER_RE =
-  /^(?:struk|receipt|nota|invoice|mybca|bca\s*mobile|livin(?:'|\s+by\s+mandiri)?|brimo|wondr|bni\s*mobile|octo\s*mobile|seabank|bank\s*jago|gopay|ovo|dana|shopeepay|linkaja|qris|bi-?fast|rincian\s*transaksi|detail\s*transaksi|bukti\s*(?:transaksi|pembayaran|transfer)|(?:status\s*)?(?:transaksi|pembayaran(?:\s+\w+){0,2}|transfer(?:\s+\w+){0,2}|top\s*up)\s*(?:berhasil|sukses|selesai|diproses)|berhasil|sukses|selesai|terima\s*kasih)\b/i;
+  /^(?:struk|receipt|nota|invoice|mybca|bca\s*mobile|livin(?:'|\s+by\s+mandiri)?|brimo|wondr|bni\s*mobile|octo\s*mobile|seabank|bank\s*jago|gopay|ovo|dana|shopeepay|gofood|grabfood|shopeefood|your\s+grab\s+e-?receipt|linkaja|qris|bi-?fast|rincian\s*(?:transaksi|pesanan|produk|pembayaran|biaya|harga|layanan(?:\s*&\s*tindakan)?)|detail\s*(?:transaksi|perjalanan|penumpang)|produk\s*yang\s*dipesan|bukti\s*(?:transaksi|pembayaran|transfer)|(?:status\s*)?(?:transaksi|pembayaran(?:\s+\w+){0,2}|transfer(?:\s+\w+){0,2}|top\s*up(?:\s+\w+){0,2})\s*(?:berhasil|sukses|selesai|diproses)|berhasil|sukses|selesai|terima\s*kasih)\b/i;
 
 const FIELD_LABEL_ONLY_RE =
-  /^(?:tanggal|waktu|date|time|nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran))?|total(?:\s*(?:bayar|tagihan|belanja|pembayaran|transaksi))?|subtotal|jumlah(?:\s*(?:bayar|transfer|transaksi))?|qty|harga|biaya\s*admin|sumber\s*dana|dari\s*rekening|rekening\s*sumber|metode\s*pembayaran|no\.?\s*ref(?:erensi)?|kode\s*referensi|id\s*transaksi|no\.?\s*transaksi|rrn|catatan|keterangan)\b(?:\s*(?::|=))?\s*$/i;
+  /^(?:tanggal|waktu|date|time|nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran|top\s*up))?|total(?:\s*(?:bayar|dibayar|tagihan|belanja|pembayaran|transaksi|debet))?|subtotal|jumlah(?:\s*(?:bayar|dibayar|transfer|transaksi))?|qty|harga|biaya\s*(?:admin|transaksi)|sumber\s*dana|dari\s*rekening|rekening\s*sumber|metode\s*(?:pembayaran|bayar)|no\.?\s*ref(?:erensi)?|kode\s*referensi|reff?\s*(?:id|no\.?|number)|no\.?\s*resi(?:\s*\/\s*rrn)?|id\s*transaksi|no\.?\s*transaksi|rrn|catatan|keterangan)\b(?:\s*(?::|=))?\s*$/i;
 
 const MERCHANT_LABEL_RE =
-  /^(?:nama\s*merchant|merchant\s*name|merchant|nama\s*toko|toko|outlet|nama\s*penerima|penerima|bayar\s*ke|pembayaran\s*ke|rekening\s*tujuan|tujuan|kepada|ke)\b(?:\s*(?::|=)\s*|\s{2,})?(.*)$/i;
+  /^(?:[-•*]\s*)?(?:ke\s*merchant|nama\s*merchant|merchant\s*name|merchant(?!\s*(?:(?:id|pan|copy)\b|\/))|nama\s*toko|nama\s*penjual|penjual|restoran|resto|warung|toko|outlet|nama\s*pemilik\s*rekening\s*tujuan|nama\s*penerima|penerima|dibayar\s*(?:ke|kepada)|pembayaran\s*(?:ke|kepada)|bayar\s*(?:ke|kepada)|transfer\s*(?:ke|kepada)|diterima\s*oleh|rekening\s*tujuan|tujuan|kepada|ke)\b(?:\s*(?::|=)\s*|\s{2,}|$)(.*)$/i;
 
 const PRODUCT_LABEL_RE =
-  /^(?:nama\s*produk|produk|nama\s*barang|barang|item|detail\s*pesanan|rincian\s*pesanan|pesanan|menu|paket|layanan|deskripsi\s*produk|untuk\s*pembelian|berita|catatan|keterangan)\b(?:\s*(?::|=)\s*|\s{2,})?(.*)$/i;
+  /^(?:nama\s*produk|produk|nama\s*barang|deskripsi\s*produk|untuk\s*pembelian|berita|catatan|keterangan)\b(?:\s*(?::|=)\s*|\s{2,}|$)(.*)$/i;
 
 const EXCLUDE_TOTAL_LINE_RE =
-  /\b(?:total\s*(?:item|qty|kuantitas|barang|pcs|diskon|discount|hemat|potongan|saving|ppn|pajak)|kembali(?:an)?|change|diskon|discount|hemat|potongan|saving|ppn|pajak|tax|dpp|biaya\s*admin|admin\s*bank|saldo)\b/i;
+  /\b(?:total\s*(?:item|qty|kuantitas|barang|pcs|diskon|discount|hemat|potongan|saving|ppn|pajak|harga\s*(?:makanan|barang)|ongkos\s*kirim(?:\s*bersih)?|sebelum\s*pembulatan|sistem)|harga\s*(?:total|pulsa|satuan)|kembali(?:an)?|change|diskon|discount|hemat|potongan|saving|ppn|pb\s*1|pb1|ppj|bkp|pajak|tax|dpp|materai|service\s*charge|svc\s*chg|biaya\s*(?:admin|pengiriman|pemesanan|perjalanan|administrasi(?:\s*klinik)?|transaksi|layanan(?:\s*&\s*lainnya)?|jasa(?:\s*aplikasi)?|penanganan|kemasan|bungkus|jasa)|tarif\s*\/?\s*biaya\s*perjalanan|convenience\s*fee|asuransi\s*(?:pengiriman|perjalanan)|jasa\s*\/\s*sparepart|uang\s*tunai|ongkos\s*kirim|ongkir|tagihan\s*(?:air|utama)|iuran\s*bpjs|admin\s*bank|saldo|pembulatan|rounding|rp\.?\s*token|harga\s*\/?\s*liter|denda|tarif\s*(?:\d+\s*jam|jam\s*berikutnya))\b/i;
 
-const PRIMARY_TOTAL_LINE_RE =
-  /(?:grand\s*total|total\s*(?:bayar|tagihan|belanja|pembayaran|transaksi|harga|akhir)|jumlah\s*(?:bayar|tagihan|pembayaran|transfer|transaksi)|jml\s*(?:bayar|tagihan|belanja)|harga\s*jual|nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran|tagihan))?|bayar\s*qris)\b|^(?:total|nominal|jumlah)\b(?:\s*(?::|=|$))/i;
+const TIER1_TOTAL_LINE_RE =
+  /(?:grand\s*total|total\s*(?:bayar|dibayar|tagihan|belanja|pembayaran|transaksi|harga|akhir|debet|idr|rp)|jumlah\s*(?:bayar|dibayar|tagihan|pembayaran)|jml\s*(?:bayar|tagihan|belanja)|harga\s*jual|amounts?|net\s*amount|sale\s*amount)\b/i;
+
+const TIER2_TOTAL_LINE_RE =
+  /(?:nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran|tagihan|top\s*up))?|jumlah\s*(?:transfer|transaksi)|bayar\s*qris)\b|^(?:total|nominal|jumlah)\b(?:\s*(?::|=|$|\d|\(|(?:rp|idr)\b))/i;
+
+const PRIMARY_TOTAL_LINE_RE = new RegExp(
+  `${TIER1_TOTAL_LINE_RE.source}|${TIER2_TOTAL_LINE_RE.source}`,
+  'i'
+);
 
 const SECONDARY_TOTAL_LINE_RE =
   /\b(?:sub\s*total|subtotal|tagihan|pembayaran|qris|debit|kredit)\b/i;
 
 const SUMMARY_STOP_LINE_RE =
-  /^(?:sub\s*total|subtotal|harga\s*jual|grand\s*total|total(?:\s*(?:bayar|belanja|tagihan|pembayaran|transaksi|item|qty|diskon))?|jml\s*(?:bayar|tagihan|belanja)|tunai|cash|kembali|kembalian|diskon|anda\s*hemat|ppn|dpp|npwp|nmid|sumber\s*dana|no\.?\s*ref)\b/i;
+  /^(?:sub\s*total|subtotal|harga\s*(?:jual|total|pulsa)|grand\s*total|total(?:\s*(?:bayar|dibayar|belanja|tagihan|pembayaran|transaksi|harga(?:\s*makanan)?|ongkos\s*kirim(?:\s*bersih)?|sebelum\s*pembulatan|sistem|debet|idr|rp|item|qty|diskon))?|jml\s*(?:bayar|tagihan|belanja)|amounts?|tunai|uang\s*tunai|cash|kembali|kembalian|diskon|anda\s*hemat|ppn|pb\s*1|pb1|ppj|bkp|dpp|materai|pembulatan|biaya\s*(?:pengiriman|pemesanan|perjalanan|administrasi(?:\s*klinik)?|transaksi|layanan|jasa|admin)|tarif\s*\/?\s*biaya\s*perjalanan|convenience\s*fee|asuransi\s*(?:pengiriman|perjalanan)|jasa\s*\/\s*sparepart|ongkos\s*kirim|tagihan\s*(?:air|utama)|iuran\s*bpjs|admin\s*bank|rp\.?\s*token|npwp|nmid|sumber\s*dana|no\.?\s*ref)\b/i;
+
+const LEADING_EXCLUDED_LABEL_RE =
+  /^(?:[-•*]\s*)?(?:sub\s*total|subtotal|kembali(?:an)?|change|diskon|discount|hemat|potongan|saving|ppn|pb\s*1|pb1|ppj|bkp|pajak|tax|dpp|materai|service\s*charge|svc\s*chg|biaya|admin\s*bank|saldo|pembulatan|rounding|ongkos\s*kirim|ongkir|asuransi|convenience\s*fee|jasa\s*\/\s*sparepart|uang\s*tunai|tarif\s*\/?\s*biaya\s*perjalanan|tagihan\s*(?:air|utama)|iuran|rp\.?\s*token|harga\s*(?:\/?\s*liter|total|pulsa|satuan)|denda|tarif|total\s*(?:item|qty|kuantitas|barang|pcs|diskon|discount|hemat|potongan|saving|ppn|pajak|harga\s*(?:makanan|barang)|ongkos\s*kirim|sebelum\s*pembulatan|sistem))\b/i;
+
+const STRONG_PRIMARY_TOTAL_START_RE =
+  /^(?:grand\s*total|total\s*(?:bayar|dibayar|tagihan|belanja|pembayaran|transaksi|harga|akhir|debet|idr|rp)|jumlah\s*(?:bayar|dibayar|tagihan|pembayaran|transfer|transaksi)|jml\s*(?:bayar|tagihan|belanja)|harga\s*jual|nominal(?:\s*(?:bayar|transfer|transaksi|pembayaran|tagihan|top\s*up))?|amounts?)\b/i;
+
+const TOP_UP_TARGET_LABELS: Record<string, string> = {
+  shopeepay: 'ShopeePay',
+  gopay: 'GoPay',
+  ovo: 'OVO',
+  dana: 'DANA',
+  linkaja: 'LinkAja',
+  flazz: 'Flazz',
+  'e-money': 'e-Money',
+  emoney: 'e-Money',
+  brizzi: 'BRIZZI',
+  tapcash: 'TapCash',
+};
+
+function formatTopUpTarget(rawText: string): string {
+  const m = rawText.match(
+    /\btop\s*up\s+(gopay|ovo|dana|shopeepay|linkaja|flazz|e-?money|emoney|brizzi|tapcash)\b/i
+  );
+  if (!m) return '';
+  const key = m[1].toLowerCase();
+  return TOP_UP_TARGET_LABELS[key] || m[1];
+}
+
+function isRideHailingReceipt(rawText: string): boolean {
+  return (
+    /\b(?:goride|gocar|grabbike|grabcar)\b/i.test(rawText) ||
+    (/\bpengemudi\b/i.test(rawText) && /\b(?:jemput|biaya\s*perjalanan|tarif\s*\/?\s*biaya\s*perjalanan)\b/i.test(rawText))
+  );
+}
+
+function isExcludedTotalLine(line: string): boolean {
+  if (LEADING_EXCLUDED_LABEL_RE.test(line)) {
+    return true;
+  }
+  if (STRONG_PRIMARY_TOTAL_START_RE.test(line)) {
+    return false;
+  }
+  if (
+    /\b(?:termasuk|incl(?:ude|uding)?)\s*(?:ppn|pajak|pb\s*1|pb1)\b/i.test(line) &&
+    PRIMARY_TOTAL_LINE_RE.test(line)
+  ) {
+    return false;
+  }
+  return EXCLUDE_TOTAL_LINE_RE.test(line);
+}
 
 function isNoiseMerchantCandidate(line: string): boolean {
   const clean = line.trim();
@@ -641,7 +779,17 @@ function isNoiseMerchantCandidate(line: string): boolean {
   if (FIELD_LABEL_ONLY_RE.test(clean)) return true;
   if (NON_MONEY_LINE_RE.test(clean)) return true;
   if (/\d{1,2}\s*(?::|\.)\d{2}\s*(?:wib|wita|wit)\b/i.test(clean)) return true;
-  if (/^(?:struk|receipt|tanggal|date|nota|invoice|total|qty|harga)/i.test(clean)) return true;
+  if (/^(?:struk|receipt|tanggal|tgl|date|nota|invoice|total|qty|harga)\b/i.test(clean)) return true;
+  if (/^(?:id\s*merchant|merchant\s*(?:id|pan|copy)|edc\s+[a-z0-9\s]+-\s*merchant|customer\s*copy|merchant\s*\/?\s*customer\s*copy)\b/i.test(clean)) {
+    return true;
+  }
+  if (
+    /^(?:shift|kasir|operator|barista|mekanik|driver|pengemudi|jemput|jarak|perjalananmu|kurir(?:\s*pengiriman)?|jasa\s*kirim|diterbitkan\s*atas\s*nama|pembeli|nama(?:\s*(?:pelanggan|pasien|dokter|pengirim|bank\s*tujuan))?|bank\s*tujuan|periode|stand\s*meter|keluarga|pasien(?:\/pelanggan)?|pelanggan|member\s*name|tipe\s*pesanan|pulau\s*\/\s*pompa|no\.?\s*(?:trans|transaksi|pesanan|antrian|invoice|service|tujuan|va|plat|kendaraan|meter|struk|bon|booking|rekam\s*medis|rm|identitas|ktp|kursi)|nomor\s*kursi|nox?a\s*transaksi|kode\s*(?:booking|validasi)|jenis\s*kendaraan|plat\s*nomor|kilometer|odometer|jam\s*(?:masuk|keluar)|durasi\s*parkir|estimasi\s*selesai|tanggal\s*(?:kunjungan|pembelian|berangkat)|studio|jadwal|kursi|rute|kereta|tarif\s*\/?\s*daya|jumlah\s*kwh|term(?:inal)?\s*id|card\s*(?:type|no|number)|trans\.?\s*(?:type|date)|transaction|status|location|lokasi(?:\s*merchant)?|kota\s*merchant|variasi|layanan)\b/i.test(
+      clean
+    )
+  ) {
+    return true;
+  }
   return false;
 }
 
@@ -665,6 +813,8 @@ function buildWrappedNonMoneyIndexes(lines: string[]): Set<number> {
 
 function cleanPosItemName(rawName: string): string {
   return rawName
+    // Strip leading numbered list prefixes like "1. Paracetamol" or "2) Vitamin C"
+    .replace(/^\d{1,2}[.)]\s+(?=[A-Za-z])/, '')
     // Strip leading numeric SKU / PLU barcode prefix (4-13 digits followed by letter or space)
     .replace(/^\d{4,13}\s*(?=[A-Za-z])/, '')
     .replace(/^[-*#.\s]+|[-*#.\s]+$/g, '')
@@ -712,39 +862,63 @@ export function extractReceiptItemsAndProduct(
   const lowerMerchant = merchantName.trim().toLowerCase();
 
   const shouldSkipItemLine = (line: string, idx: number): boolean => {
+    const unnumbered = line.replace(/^\d{1,2}[.)]\s+/, '').trim();
     if (nonMoneyLineIndexes.has(idx)) return true;
     if (!line || !/[A-Za-z]{2,}/.test(line)) return true;
     if (NON_MONEY_LINE_RE.test(line)) return true;
-    if (EXCLUDE_TOTAL_LINE_RE.test(line)) return true;
+    if (isExcludedTotalLine(line) || isExcludedTotalLine(unnumbered)) return true;
     if (GENERIC_RECEIPT_HEADER_RE.test(line)) return true;
     if (FIELD_LABEL_ONLY_RE.test(line)) return true;
     if (PRODUCT_LABEL_RE.test(line)) return true;
     if (MERCHANT_LABEL_RE.test(line)) return true;
     if (/\b(?:jl\.|jalan|kec\.|kel\.|kab\.|kota|rt\s*\d|rw\s*\d)\b/i.test(line)) return true;
     if (/^\d{1,2}(?:-|\/|\.)\d{1,2}(?:-|\/|\.)\d{2,4}/.test(line)) return true;
+    if (/^(?:-\s*(?:level|less|extra|no|tanpa|catatan|note|topp?ing|sugar|ice|es)\b|(?:\(\s*)?@\s*(?:rp\.?\s*)?\d|\(?\d+\s*(?:strip|pcs|btl|tab|kap|box|pak|item)\s*@|(?:promo\s*)?diskon\b|hemat\b)/i.test(line)) {
+      return true;
+    }
+    if (
+      /^(?:tanggal|tgl|jam|waktu|status|location|lokasi(?:\s*merchant)?|kota\s*merchant|term(?:inal)?\s*id|store\s*id|merchant\s*(?:id|pan|copy)|id\s*merchant|id\s*pesanan|no\.?\s*(?:pesanan|antrian|invoice|service|tujuan|va|resi(?:\s*\/\s*rrn)?|booking|rekam\s*medis|rm|identitas|ktp|kursi)|nomor\s*kursi|kode\s*(?:booking|validasi)|card\s*(?:type|no|number)|trans\.?\s*(?:type|date)|transaction|trace\s*no|auth\s*code|batch\s*no|tanggal\s*(?:pengukuhan|kunjungan|pembelian|berangkat)|estimasi\s*selesai|sumber\s*dana|metode\s*(?:pembayaran|bayar)|dibayar\s*dengan|kurir(?:\s*pengiriman)?|jasa\s*kirim|driver\b|pengemudi\b|jemput\b|jarak\b|perjalananmu\b|barista\b|mekanik\b|plat\s*nomor\b|kilometer\b|odometer\b|diterbitkan\s*atas\s*nama|pembeli\b|nama\b|bank\s*tujuan\b|periode\b|stand\s*meter\b|jml\s*peserta\b|keluarga\b|variasi\b|film\b|studio\b|jadwal\b|kursi\b|rute\b|kereta\b|layanan\b|rincian\s*(?:pesanan|produk|pembayaran|biaya|harga|layanan(?:\s*&\s*tindakan)?)|detail\s*(?:perjalanan|penumpang)|produk\s*yang\s*dipesan|edc\b|customer\s*copy|merchant\s*\/?\s*customer\s*copy)\b/i.test(
+        unnumbered
+      )
+    ) {
+      return true;
+    }
+    if (
+      /^(?:nominal(?:\s*(?:transfer|top\s*up|bayar|transaksi))?|harga\s*(?:barang|satuan|pulsa|\/?\s*liter)|subtotal\s*produk|volume\b|pulau\s*\/\s*pompa|operator\b|no\.?\s*plat|no\.?\s*kendaraan|jenis\s*kendaraan|jam\s*(?:masuk|keluar)|durasi\s*parkir|tarif\s*(?:1\s*jam|\d+\s*jam|jam\s*berikutnya|\/?\s*daya|\/?\s*biaya\s*perjalanan)|denda\b|jumlah\s*kwh|rp\.?\s*token|ppj\b|materai\b|admin\s*bank|tagihan\s*(?:air|utama)|iuran\s*bpjs|biaya\s*(?:pengiriman|pemesanan|perjalanan|administrasi(?:\s*klinik)?|transaksi|layanan|jasa|admin)|convenience\s*fee|asuransi\s*(?:pengiriman|perjalanan)|jasa\s*\/\s*sparepart|ongkos\s*kirim|nama\s*pelanggan|pasien(?:\/pelanggan)?|kasir\b|shift\b|member\s*name|tipe\s*pesanan|pembulatan\b|bkp\b|dpp\b|pb\s*1\b|pb1\b|amounts?\b|total\s*(?:idr|rp|debet)\b)/i.test(
+        unnumbered
+      )
+    ) {
+      return true;
+    }
+    if (/^(?:deskripsi|uraian|nama\s*barang|item)\b.*\b(?:harga|qty|total|subtotal)\b/i.test(line)) {
+      return true;
+    }
     if (lowerMerchant && line.toLowerCase() === lowerMerchant) return true;
     return false;
   };
 
-  // Price group supports dotted Indonesian prices (10.500) OR plain integers (10500) on faded thermal receipts
-  const POS_PRICE = '(?:[1-9]\\d{0,2}(?:[.,]\\d{3})+|[1-9]\\d{3,6}|[5-9]\\d{2})';
+  // Price group supports dotted Indonesian prices (10.500), decimals (6.000,00), OR plain integers (10500)
+  const POS_PRICE = '(?:(?:[1-9]\\d{0,2}(?:[.,]\\d{3})+|[1-9]\\d{3,6}|[5-9]\\d{2})(?:,\\d{2})?)';
+  const ITEM_CHAR = `[A-Za-z0-9\\s./&()+,':-]`;
   const leadQtyRe = new RegExp(
-    `^(\\d{1,3})\\s*[xX*]\\s+([A-Za-z0-9][A-Za-z0-9\\s./&()-]{1,55}?)\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
+    `^(?:[-•*]\\s*)?(?:(\\d{1,3})\\s*[xX*]|(\\d{1,2}))\\s+([A-Za-z]${ITEM_CHAR}{1,65}?)(?:\\s*@?\\s*(?:rp|idr)\\.?\\s*|\\s+)(${POS_PRICE})(?:(?:\\s*=\\s*|\\s+)(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
     'i'
   );
   const inlineQtyRe = new RegExp(
-    `^([A-Za-z0-9][A-Za-z0-9\\s./&()-]{2,55}?)\\s+(\\d{1,3})\\s*(?:pcs|btl|cup|porsi|x)?\\s*[xX*@]\\s*(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
+    `^(?:[-•*]\\s*)?([A-Za-z0-9]${ITEM_CHAR}{2,65}?)\\s+(\\d{1,3}(?:[.,]\\d{1,2})?)\\s*(?:pcs|btl|cup|porsi|ltr|lt|kg|gr|gram|ons|x)?\\s*[xX*@]\\s*(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:(?:\\s*=\\s*|\\s+)(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
     'i'
   );
   const colQtyRe = new RegExp(
-    `^([A-Za-z0-9][A-Za-z0-9\\s./&()-]{2,55}?)\\s+(\\d{1,3})\\s+(${POS_PRICE})\\s+(${POS_PRICE})$`
+    `^(?:[-•*]\\s*)?([A-Za-z0-9]${ITEM_CHAR}{2,65}?)\\s+(\\d{1,3})\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})$`,
+    'i'
   );
   const nextQtyRe = new RegExp(
-    `^(\\d{1,3})\\s*(?:pcs|btl|cup|porsi|item|ltr|kg)?\\s*[xX*@]?\\s*(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
+    `^\\(?(\\d{1,3}(?:[.,]\\d{1,2})?)\\s*(?:pcs|btl|cup|porsi|item|ltr|lt|kg|gr|gram|ons|paket)?\\s*[xX*@]\\s*(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})\\)?(?:(?:\\s*=\\s*|\\s+)(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$` +
+      `|^(\\d{1,3})\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE}))?$`,
     'i'
   );
   const singleLineRe = new RegExp(
-    `^([A-Za-z0-9][A-Za-z0-9\\s./&()-]{2,55}?)\\s+(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s*[A-Z])?$`,
+    `^(?:[-•*]\\s*)?([A-Za-z0-9]${ITEM_CHAR}{2,70}?)(?:\\s*[:=@]\\s*|\\s+)(?:(?:rp|idr)\\.?\\s*)?(${POS_PRICE})(?:\\s*[A-Z])?$`,
     'i'
   );
 
@@ -756,13 +930,15 @@ export function extractReceiptItemsAndProduct(
     }
     if (shouldSkipItemLine(line, i)) continue;
 
-    // Pattern A1: leading qty e.g. "2x Es Kopi Susu 36.000" or "2x Es Kopi 36000"
-    const leadQty = line.match(leadQtyRe);
+    const workLine = healOcrMoneyTokens(line);
+
+    // Pattern A1: leading qty e.g. "2x Es Kopi Susu 36.000", "1 Paket Ayam Krispy Reg Rp 45.455", "2x Tiket @Rp 40.000 = Rp 80.000"
+    const leadQty = workLine.match(leadQtyRe);
     if (leadQty) {
-      const qty = Number.parseInt(leadQty[1], 10);
-      const name = cleanPosItemName(leadQty[2]);
-      const firstPrice = parseIndonesianMoney(leadQty[3]);
-      const secondPrice = leadQty[4] ? parseIndonesianMoney(leadQty[4]) : 0;
+      const qty = Number.parseInt(leadQty[1] || leadQty[2], 10);
+      const name = cleanPosItemName(leadQty[3]);
+      const firstPrice = parseIndonesianMoney(leadQty[4]);
+      const secondPrice = leadQty[5] ? parseIndonesianMoney(leadQty[5]) : 0;
       const lineTotal = secondPrice > 0 ? secondPrice : firstPrice;
       const unitPrice = secondPrice > 0 ? firstPrice : Math.round(lineTotal / Math.max(1, qty));
       if (qty > 0 && lineTotal >= 500 && /[A-Za-z]{2,}/.test(name) && !SUMMARY_STOP_LINE_RE.test(name)) {
@@ -772,21 +948,21 @@ export function extractReceiptItemsAndProduct(
     }
 
     // Pattern A2: inline qty e.g. "200451INDOMIE GORENG 2 X 3100 6200" or "BEAR BRAND 2 X 10.500 21.000"
-    const inlineQty = line.match(inlineQtyRe);
+    const inlineQty = workLine.match(inlineQtyRe);
     if (inlineQty) {
       const name = cleanPosItemName(inlineQty[1]);
-      const qty = Number.parseInt(inlineQty[2], 10);
+      const qty = Number.parseFloat(inlineQty[2].replace(',', '.'));
       const unitPrice = parseIndonesianMoney(inlineQty[3]);
       const explicitTotal = inlineQty[4] ? parseIndonesianMoney(inlineQty[4]) : 0;
-      const lineTotal = explicitTotal > 0 ? explicitTotal : qty * unitPrice;
+      const lineTotal = explicitTotal > 0 ? explicitTotal : Math.round(qty * unitPrice);
       if (qty > 0 && unitPrice >= 500 && /[A-Za-z]{2,}/.test(name) && !SUMMARY_STOP_LINE_RE.test(name)) {
         items.push({ name, quantity: qty, price: unitPrice, total: lineTotal });
         continue;
       }
     }
 
-    // Pattern A3: POS columnar row e.g. "INDOMIE GORENG 2 3100 6200"
-    const colQty = line.match(colQtyRe);
+    // Pattern A3: POS columnar row e.g. "INDOMIE GORENG 2 3100 6200" or "ULTRA CKT 1L 2 19.190 38.380"
+    const colQty = workLine.match(colQtyRe);
     if (colQty) {
       const name = cleanPosItemName(colQty[1]);
       const qty = Number.parseInt(colQty[2], 10);
@@ -806,20 +982,23 @@ export function extractReceiptItemsAndProduct(
 
     // Pattern B: Two-line POS item (Product name on line i, qty/price or price on line i + 1)
     if (i + 1 < lines.length && extractMoneyCandidates(line).length === 0) {
-      const nextLine = lines[i + 1];
+      const nextLine = healOcrMoneyTokens(lines[i + 1]);
       const nextQtyMatch = nextLine.match(nextQtyRe);
       if (nextQtyMatch && !SUMMARY_STOP_LINE_RE.test(line) && !nonMoneyLineIndexes.has(i + 1)) {
-        const qty = Number.parseInt(nextQtyMatch[1], 10);
-        const unitPrice = parseIndonesianMoney(nextQtyMatch[2]);
-        const explicitTotal = nextQtyMatch[3] ? parseIndonesianMoney(nextQtyMatch[3]) : 0;
-        const lineTotal = explicitTotal > 0 ? explicitTotal : qty * unitPrice;
+        const rawQty = nextQtyMatch[1] || nextQtyMatch[4];
+        const rawUnit = nextQtyMatch[2] || nextQtyMatch[5];
+        const rawTotal = nextQtyMatch[3] || nextQtyMatch[6];
+        const qty = Number.parseFloat(rawQty.replace(',', '.'));
+        const unitPrice = parseIndonesianMoney(rawUnit);
+        const explicitTotal = rawTotal ? parseIndonesianMoney(rawTotal) : 0;
+        const lineTotal = explicitTotal > 0 ? explicitTotal : Math.round(qty * unitPrice);
         const name = cleanPosItemName(line).slice(0, 60);
         if (qty > 0 && unitPrice >= 500 && /[A-Za-z]{2,}/.test(name)) {
           items.push({ name, quantity: qty, price: unitPrice, total: lineTotal });
           i += 1;
           continue;
         }
-      } else if (/^(?:(?:rp|idr)\.?\s*)?([1-9]\d{0,2}(?:[.,]\d{3})+|[1-9]\d{3,6})$/i.test(nextLine)) {
+      } else if (/^(?:(?:rp|idr)\.?\s*)?([1-9]\d{0,2}(?:[.,]\d{3})+|[1-9]\d{3,6})(?:,\d{2})?$/i.test(nextLine)) {
         const nextPrice = parseIndonesianMoney(nextLine);
         const name = cleanPosItemName(line).slice(0, 60);
         if (
@@ -833,15 +1012,64 @@ export function extractReceiptItemsAndProduct(
           continue;
         }
       }
+
+      // Pattern B2: E-Commerce multi-line item block (e.g. Shopee "- Product Name" + Variasi / Harga Satuan / Subtotal Produk)
+      let blockQty = 1;
+      let blockUnitPrice = 0;
+      let blockSubtotal = 0;
+      let blockEndIdx = -1;
+      for (let j = i + 1; j <= Math.min(lines.length - 1, i + 3); j += 1) {
+        const peek = healOcrMoneyTokens(lines[j]);
+        if (/^rincian\s*(?:biaya|pembayaran)\b/i.test(peek) || PRIMARY_TOTAL_LINE_RE.test(peek)) break;
+        const qtyMatch = peek.match(/\bjumlah\s*:\s*(\d{1,3})\b/i);
+        if (qtyMatch) {
+          blockQty = Math.max(1, Number.parseInt(qtyMatch[1], 10));
+          blockEndIdx = j;
+        }
+        const unitMatch = peek.match(/^harga\s*satuan\s*:\s*(?:(?:rp|idr)\.?\s*)?(.+)$/i);
+        if (unitMatch) {
+          const vals = extractMoneyCandidates(unitMatch[1], { allowPlainInteger: true });
+          if (vals.length > 0) {
+            blockUnitPrice = vals[vals.length - 1];
+            blockEndIdx = j;
+            continue;
+          }
+        }
+        const subMatch = peek.match(/^subtotal\s*produk\s*(?::|=|\s)\s*(?:(?:rp|idr)\.?\s*)?(.+)$/i);
+        if (subMatch) {
+          const vals = extractMoneyCandidates(subMatch[1], { allowPlainInteger: true });
+          if (vals.length > 0) {
+            blockSubtotal = vals[vals.length - 1];
+            blockEndIdx = j;
+            break;
+          }
+        }
+        if (!/^variasi\s*:/i.test(peek)) break;
+        blockEndIdx = j;
+      }
+      const blockTotal = blockSubtotal || blockQty * blockUnitPrice;
+      if (blockEndIdx > i && blockTotal >= 500) {
+        const name = cleanPosItemName(line).slice(0, 60);
+        if (name.length >= 4 && /[A-Za-z]{3,}/.test(name)) {
+          items.push({
+            name,
+            quantity: blockQty,
+            price: blockUnitPrice || Math.round(blockTotal / blockQty),
+            total: blockTotal,
+          });
+          i = blockEndIdx;
+          continue;
+        }
+      }
     }
 
-    // Pattern C: Single-line "ES KOPI SUSU   22.000" or "TEH BOTOL SOSRO 4500"
-    const singleLine = line.match(singleLineRe);
+    // Pattern C: Single-line "ES KOPI SUSU   22.000", "- Parfum Extra = Rp 2.000", "1. Konsultasi : Rp 150.000"
+    const singleLine = workLine.match(singleLineRe);
     if (singleLine) {
       const name = cleanPosItemName(singleLine[1]);
       const price = parseIndonesianMoney(singleLine[2]);
       const isMetaKeyword =
-        /\b(?:total|bayar|tunai|cash|kembali|diskon|hemat|ppn|pajak|qris|saldo|biaya|admin|referensi|npwp|nmid|mandiri|bca|bni|bri|bsi|gopay|ovo|dana|shopeepay|transfer|nominal|jumlah|lokasi|sumber)\b/i.test(
+        /\b(?:total|bayar|tunai|cash|kembali|diskon|hemat|ppn|pb\s*1|pb1|ppj|bkp|dpp|materai|pembulatan|token|tarif|denda|liter|volume|amounts?|idr|merchant|status|operator|kasir|shift|pasien|pelanggan|trace|batch|auth|card|terminal|pajak|qris|saldo|biaya|admin|referensi|npwp|nmid|mandiri|bca|bni|bri|bsi|gopay|ovo|dana|shopeepay|transfer|nominal|top\s*up|jumlah|lokasi|sumber|harga\s*barang|tagihan|iuran|ongkir|ongkos|convenience\s*fee|asuransi|sparepart|kilometer|odometer)\b/i.test(
           name
         );
       if (
@@ -857,6 +1085,115 @@ export function extractReceiptItemsAndProduct(
   }
 
   let productName = labeledProduct;
+
+  // Domain enrichment: SPBU Pertamina (Fuel product + volume in liters)
+  if (
+    /\b(?:pertamina|spbu)\b/i.test(rawText) ||
+    /\b(?:pertalite|pertamax(?:\s*turbo|\s*green\s*95)?|dexlite|pertamina\s*dex|bio\s*solar)\b/i.test(rawText)
+  ) {
+    const fuelMatch = (labeledProduct || rawText).match(
+      /\b(pertalite|pertamax(?:\s*turbo|\s*green\s*95)?|dexlite|pertamina\s*dex|bio\s*solar)\b/i
+    );
+    const volMatch = rawText.match(/volume\s*(?::|=)\s*([\d.,]+\s*l(?:iter)?)/i);
+    if (fuelMatch) {
+      const baseFuel =
+        labeledProduct && new RegExp(fuelMatch[1], 'i').test(labeledProduct)
+          ? labeledProduct
+          : fuelMatch[1];
+      productName = volMatch
+        ? `${baseFuel} (${volMatch[1].replace(/\s+/g, ' ').trim()})`
+        : baseFuel;
+      items.length = 0;
+    }
+  }
+
+  // Domain enrichment: Ride-hailing (Gojek / Grab service & pickup->destination route)
+  if (!productName && isRideHailingReceipt(rawText)) {
+    const serviceMatch = rawText.match(
+      /\b(grabcar(?:\s+(?:hemat|xl|plus|protect))?|grabbike(?:\s+(?:hemat|xl))?|gocar(?:\s+(?:hemat|xl|comfort|luxe))?|goride(?:\s+(?:hemat|comfort))?)\b/i
+    );
+    const jemputMatch = rawText.match(/^[*•-\s]*jemput\s*(?::|=)\s*([^\r\n]+)/im);
+    const tujuanMatch = rawText.match(/^[*•-\s]*tujuan\s*(?::|=)\s*([^\r\n]+)/im);
+    const serviceLabel = serviceMatch
+      ? serviceMatch[1].trim()
+      : /\bgojek\b/i.test(rawText)
+        ? 'Gojek Ride'
+        : 'Grab Ride';
+    if (jemputMatch && tujuanMatch) {
+      productName = `${serviceLabel} (${jemputMatch[1].trim()} -> ${tujuanMatch[1].trim()})`;
+    } else {
+      productName = serviceLabel;
+    }
+    items.length = 0;
+  }
+
+  // Domain enrichment: Train E-Tickets (Whoosh / KAI Access)
+  if (!productName && /\b(?:whoosh|kcic|kereta\s*api\s*indonesia|access\s*by\s*kai)\b/i.test(rawText)) {
+    const trainMatch = rawText.match(/^kereta\s*(?::|=)\s*([^\r\n]+)/im);
+    const routeMatch = rawText.match(/^rute\s*(?::|=)\s*([^\r\n]+)/im);
+    if (trainMatch && routeMatch) {
+      productName = `${trainMatch[1].trim()} — ${routeMatch[1].trim()}`;
+    } else if (trainMatch) {
+      productName = trainMatch[1].trim();
+    }
+  }
+
+  // Domain enrichment: Cinema Tickets (XXI / TIX ID / CGV)
+  if (!productName && /\b(?:cinema\s*xxi|tix\s*id|cgv|cinepolis)\b/i.test(rawText)) {
+    const filmMatch = rawText.match(/^film\s*(?::|=)\s*([^\r\n]+)/im);
+    if (filmMatch) {
+      const qty = items[0]?.quantity || 1;
+      const filmTitle = filmMatch[1].trim();
+      productName = qty > 1 ? `Tiket Bioskop: ${filmTitle} (${qty}x)` : `Tiket Bioskop: ${filmTitle}`;
+    }
+  }
+
+  // Domain enrichment: Token PLN prabayar (20-digit token & kWh)
+  if (!productName && /\b(?:token\s*pln|pembelian\s*token\s*pln|kode\s*token\s*\(?20\s*digit)\b/i.test(rawText)) {
+    const kwhMatch = rawText.match(/jumlah\s*kwh\s*(?::|=)\s*([\d.,]+\s*kwh)/i);
+    productName = kwhMatch
+      ? `Token Listrik PLN (${kwhMatch[1].replace(/\s+/g, ' ').trim()})`
+      : 'Token Listrik PLN';
+    items.length = 0;
+  }
+
+  // Domain enrichment: PPOB Bills (PDAM, IndiHome, BPJS Kesehatan)
+  if (!productName && (/\bpdam\b/i.test(rawText) || /\btagihan\s*air\b/i.test(rawText))) {
+    const periodeMatch = rawText.match(/\bperiode\s*(?::|=)\s*([^\r\n]+)/i);
+    productName = periodeMatch ? `Tagihan Air PDAM (${periodeMatch[1].trim()})` : 'Tagihan Air PDAM';
+    items.length = 0;
+  } else if (!productName && /\bindihome\b/i.test(rawText)) {
+    const periodeMatch = rawText.match(/\bperiode\s*(?::|=)\s*([^\r\n]+)/i);
+    productName = periodeMatch ? `Tagihan IndiHome (${periodeMatch[1].trim()})` : 'Tagihan IndiHome';
+    items.length = 0;
+  } else if (!productName && /\b(?:bpjs\s*kesehatan|iuran\s*bpjs)\b/i.test(rawText)) {
+    const periodeMatch = rawText.match(/\bperiode\s*(?::|=)\s*([^\r\n]+)/i);
+    productName = periodeMatch ? `Iuran BPJS Kesehatan (${periodeMatch[1].trim()})` : 'Iuran BPJS Kesehatan';
+    items.length = 0;
+  }
+
+  // Domain enrichment: Top Up E-Wallet / E-Money
+  const topUpTarget = formatTopUpTarget(rawText);
+  if (!productName && topUpTarget) {
+    productName = `Top Up ${topUpTarget}`;
+    items.length = 0;
+  }
+
+  // Domain enrichment: Struk Parkir (Jenis Kendaraan + Durasi Parkir)
+  if (!productName && /\b(?:parkir|parking)\b/i.test(rawText)) {
+    const vehicleMatch = rawText.match(/jenis\s*kendaraan\s*(?::|=)\s*([^\r\n]+)/i);
+    const durationMatch = rawText.match(/durasi\s*(?:parkir)?\s*(?::|=)\s*([^\r\n]+)/i);
+    if (vehicleMatch || durationMatch) {
+      const rawVehicle = vehicleMatch
+        ? vehicleMatch[1].replace(/\(roda\s*\d+\)/gi, '').trim()
+        : '';
+      const rawDuration = durationMatch ? durationMatch[1].trim() : '';
+      const baseLabel = rawVehicle ? `Parkir ${rawVehicle}` : 'Biaya Parkir';
+      productName = rawDuration ? `${baseLabel} (${rawDuration})` : baseLabel;
+      items.length = 0;
+    }
+  }
+
   if (!productName && items.length > 0) {
     const summaryParts = items
       .slice(0, 4)
@@ -874,10 +1211,17 @@ export function extractReceiptItemsAndProduct(
       if (SUMMARY_STOP_LINE_RE.test(line) || PRIMARY_TOTAL_LINE_RE.test(line)) break;
       if (shouldSkipItemLine(line, i)) continue;
       if (/^lokasi\b/i.test(line) || (i > 0 && /^lokasi\b/i.test(lines[i - 1]))) continue;
-      if (/\b(?:pusat|barat|timur|selatan|utara|indonesia|kota|provinsi|wib|wita|wit)\b/i.test(line)) {
+      if (
+        /\b(?:pusat|barat|timur|selatan|utara|indonesia|kota|provinsi|surabaya|bandung|jakarta|jawa\s+(?:tengah|barat|timur)|wib|wita|wit)\b/i.test(
+          line
+        )
+      ) {
         continue;
       }
-      if (/\b(?:berhasil|sukses|selesai|pembayaran|transaksi|transfer|rincian|detail|bukti)\b/i.test(line)) {
+      if (/\b(?:berhasil|sukses|selesai|approved|pembayaran|transaksi|transfer|purchase|sale|rincian|detail|bukti)\b/i.test(line)) {
+        continue;
+      }
+      if (/^(?:pt\.?\s+|bank\s+\w+\s+edcs?\b|harga\s*barang|i\s+agree\s+to\s+pay|terima\s*kasih|thank\s*you|simpan\s*(?:struk|bukti))/i.test(line)) {
         continue;
       }
       if (/^(?:rp|idr)\b/i.test(line) || /\d{5,}$/.test(line.replace(/\s+/g, ''))) continue;
@@ -906,15 +1250,17 @@ export function extractQrisOrReceiptMerchant(rawText: string): string {
     .split(/\r?\n/)
     .map((l) => l.trim())
     .filter(Boolean);
+  const rideHailing = isRideHailingReceipt(rawText);
 
-  // Pass 1: Explicit QRIS/Transfer recipient labels (inline or next line)
+  // Pass 1: Explicit QRIS/Transfer/EDC/Delivery recipient labels (inline or next line)
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i];
     const m = line.match(MERCHANT_LABEL_RE);
     if (!m) continue;
 
-    // Avoid mistaking "Lokasi Merchant" as merchant name when "Merchant" already exists separately
-    if (/^lokasi\b/i.test(line)) continue;
+    // Avoid mistaking "Lokasi/Kota Merchant", "Merchant ID/PAN/Copy", "Bank Tujuan", or ride-hailing destination "Tujuan"
+    if (/^(?:lokasi|kota|bank\s*tujuan)\b|^merchant\s*(?:id|pan|copy|\/)/i.test(line)) continue;
+    if (rideHailing && /^tujuan\b/i.test(line)) continue;
 
     const inlineValue = (m[1] || '').replace(/^(?::|=)\s*/, '').trim();
     if (inlineValue && !isNoiseMerchantCandidate(inlineValue)) {
@@ -929,10 +1275,73 @@ export function extractQrisOrReceiptMerchant(rawText: string): string {
     }
   }
 
+  // Domain institutional templates
+  if (rideHailing) {
+    return /\b(?:gojek|goride|gocar)\b/i.test(rawText) ? 'Gojek' : 'Grab';
+  }
+  if (/\b(?:whoosh|kcic)\b/i.test(rawText)) {
+    return 'Whoosh (KCIC)';
+  }
+  if (/\b(?:kereta\s*api\s*indonesia|access\s*by\s*kai)\b/i.test(rawText)) {
+    return 'KAI (Kereta Api Indonesia)';
+  }
+  if (/\bpertamina\b/i.test(rawText)) {
+    const spbuMatch = rawText.match(/\bspbu\s+(\d{2}[.,]\d{3}[.,]\d{2})\b/i);
+    return spbuMatch ? `SPBU Pertamina ${spbuMatch[1]}` : 'SPBU Pertamina';
+  }
+  if (/\b(?:token\s*pln|pembelian\s*token\s*pln|kode\s*token\s*\(?20\s*digit)\b/i.test(rawText)) {
+    return 'PLN (Token Listrik)';
+  }
+  if (/\bpdam\b/i.test(rawText) || /\btagihan\s*air\b/i.test(rawText)) {
+    return 'PDAM';
+  }
+  if (/\bindihome\b/i.test(rawText)) {
+    return 'IndiHome';
+  }
+  if (/\b(?:bpjs\s*kesehatan|iuran\s*bpjs)\b/i.test(rawText)) {
+    return 'BPJS Kesehatan';
+  }
+  const pulsaOpMatch = rawText.match(/\bpembelian\s*pulsa\s*([a-z0-9]+)/i);
+  if (pulsaOpMatch) {
+    const op = pulsaOpMatch[1];
+    return op.charAt(0).toUpperCase() + op.slice(1).toLowerCase();
+  }
+  if (/\bshopee\s*-\s*rincian\s*pesanan\b/i.test(rawText)) {
+    return 'Shopee';
+  }
+  const topUpTarget = formatTopUpTarget(rawText);
+  if (topUpTarget) {
+    return `Top Up ${topUpTarget}`;
+  }
+
   // Pass 2: Fallback top meaningful lines (excluding generic bank headers & timestamps)
-  for (const line of lines.slice(0, 8)) {
-    if (isNoiseMerchantCandidate(line)) continue;
-    return line.slice(0, 80);
+  const topCandidates = lines.slice(0, 8).filter((l) => !isNoiseMerchantCandidate(l));
+  if (topCandidates.length > 0) {
+    const first = topCandidates[0];
+    if (
+      /^pt\.?\s+(?:indomarco\s*prismatama|sumber\s*alfaria\s*trijaya|midi\s*utama\s*indonesia|lion\s*super\s*indo|fast\s*food\s*indonesia|sari\s*coffee\s*indonesia|rekso\s*nasional\s*food|map\s*boga)\b/i.test(
+        first
+      )
+    ) {
+      const brandLine = topCandidates
+        .slice(1, 3)
+        .find((l) =>
+          /\b(?:indomaret|alfamart|alfamidi|super\s*indo|lawson|kfc|starbucks|mcdonald(?:'?s)?|burger\s*king|subway|pizza\s*hut)\b/i.test(
+            l
+          )
+        );
+      if (brandLine) {
+        const cleanedBrand = brandLine.replace(/^[(\s]+|[)\s]+$/g, '').trim();
+        if (cleanedBrand.includes('/')) {
+          const singleBrand = cleanedBrand.match(
+            /\b(indomaret|alfamart|alfamidi|super\s*indo|lawson|kfc|starbucks|mcdonald(?:'?s)?|burger\s*king|subway|pizza\s*hut)\b/i
+          );
+          if (singleBrand) return singleBrand[1].toUpperCase();
+        }
+        return cleanedBrand.slice(0, 80);
+      }
+    }
+    return first.slice(0, 80);
   }
 
   const prov = detectProviderKeyword(rawText).provider;
@@ -941,7 +1350,7 @@ export function extractQrisOrReceiptMerchant(rawText: string): string {
 
 export function extractReferenceNumber(rawText: string): string {
   const re =
-    /(?:no\.?\s*ref(?:erensi)?|kode\s*referensi|rrn|ref\s*id|no\.?\s*transaksi|id\s*transaksi)\s*(?::|=|#|\s)*([A-Z0-9][A-Z0-9-]{3,35})/gi;
+    /(?:no\.?\s*ref(?:erensi)?|kode\s*referensi|reff?\s*(?:id|no\.?|number)|ref\.?\s*(?:no\.?|number|id)|no\.?\s*resi(?:\s*\/\s*rrn)?|rrn(?:\s*qris)?|no\.?\s*transaksi|id\s*transaksi)\s*(?::|=|#|\s)*([A-Z0-9][A-Z0-9._-]{3,35})/gi;
   let match = re.exec(rawText);
   while (match) {
     const candidate = (match[1] || '').trim();
@@ -951,6 +1360,38 @@ export function extractReferenceNumber(rawText: string): string {
     match = re.exec(rawText);
   }
   return '';
+}
+
+function scanBottomUpTotal(
+  lines: string[],
+  nonMoneyLineIndexes: Set<number>,
+  linePattern: RegExp,
+  mode: 'last' | 'max' = 'last',
+  skipCashWords = false
+): number {
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (isExcludedTotalLine(line)) continue;
+    if (skipCashWords && /\b(?:tunai|cash)\b/i.test(line)) continue;
+    if (nonMoneyLineIndexes.has(i) && !linePattern.test(line)) continue;
+
+    if (linePattern.test(line)) {
+      const amounts = extractMoneyCandidates(line, { allowPlainInteger: true });
+      if (amounts.length > 0) {
+        return mode === 'max' ? Math.max(...amounts) : amounts[amounts.length - 1];
+      }
+      if (!/\d/.test(line) && i + 1 < lines.length) {
+        const nextLine = lines[i + 1];
+        if (!isExcludedTotalLine(nextLine) && !nonMoneyLineIndexes.has(i + 1)) {
+          const nextAmounts = extractMoneyCandidates(nextLine, { allowPlainInteger: true });
+          if (nextAmounts.length > 0) {
+            return mode === 'max' ? Math.max(...nextAmounts) : nextAmounts[nextAmounts.length - 1];
+          }
+        }
+      }
+    }
+  }
+  return 0;
 }
 
 export function parseReceiptFromText(
@@ -967,56 +1408,50 @@ export function parseReceiptFromText(
   const date = parseIndonesianDate(rawText) || getTodayLocalDate();
   const merchant = extractQrisOrReceiptMerchant(rawText);
   const nonMoneyLineIndexes = buildWrappedNonMoneyIndexes(lines);
+  const { items, productName } = extractReceiptItemsAndProduct(rawText, merchant, 0);
 
-  let total = 0;
-  for (let i = lines.length - 1; i >= 0; i -= 1) {
-    const line = lines[i];
-    if (EXCLUDE_TOTAL_LINE_RE.test(line)) continue;
-    if (nonMoneyLineIndexes.has(i) && !PRIMARY_TOTAL_LINE_RE.test(line)) continue;
-
-    if (PRIMARY_TOTAL_LINE_RE.test(line)) {
-      const amounts = extractMoneyCandidates(line, { allowPlainInteger: true });
-      if (amounts.length > 0) {
-        total = amounts[amounts.length - 1];
-        break;
-      }
-      if (!/\d/.test(line) && i + 1 < lines.length) {
-        const nextLine = lines[i + 1];
-        if (!EXCLUDE_TOTAL_LINE_RE.test(nextLine) && !nonMoneyLineIndexes.has(i + 1)) {
-          const nextAmounts = extractMoneyCandidates(nextLine, { allowPlainInteger: true });
-          if (nextAmounts.length > 0) {
-            total = nextAmounts[nextAmounts.length - 1];
-            break;
-          }
-        }
-      }
-    }
+  let total = scanBottomUpTotal(lines, nonMoneyLineIndexes, TIER1_TOTAL_LINE_RE, 'last');
+  if (total === 0) {
+    total = scanBottomUpTotal(lines, nonMoneyLineIndexes, TIER2_TOTAL_LINE_RE, 'last');
+  }
+  if (total === 0) {
+    total = scanBottomUpTotal(lines, nonMoneyLineIndexes, SECONDARY_TOTAL_LINE_RE, 'max', true);
   }
 
-  if (total === 0) {
-    for (let i = lines.length - 1; i >= 0; i -= 1) {
-      const line = lines[i];
-      if (EXCLUDE_TOTAL_LINE_RE.test(line) || nonMoneyLineIndexes.has(i)) continue;
-      if (/\b(?:tunai|cash)\b/i.test(line)) continue;
-
-      if (SECONDARY_TOTAL_LINE_RE.test(line)) {
-        const amounts = extractMoneyCandidates(line, { allowPlainInteger: true });
-        if (amounts.length > 0) {
-          total = Math.max(...amounts);
-          break;
-        }
-        if (!/\d/.test(line) && i + 1 < lines.length) {
-          const nextLine = lines[i + 1];
-          if (!EXCLUDE_TOTAL_LINE_RE.test(nextLine) && !nonMoneyLineIndexes.has(i + 1)) {
-            const nextAmounts = extractMoneyCandidates(nextLine, { allowPlainInteger: true });
-            if (nextAmounts.length > 0) {
-              total = Math.max(...nextAmounts);
-              break;
-            }
-          }
-        }
-      }
+  // Arithmetic Self-Correction: Tunai - Kembalian and Items Sum cross-check
+  let cashPaid = 0;
+  let changeGiven = 0;
+  for (let i = lines.length - 1; i >= 0; i -= 1) {
+    const line = lines[i];
+    if (nonMoneyLineIndexes.has(i)) continue;
+    if (
+      cashPaid === 0 &&
+      /^(?:uang\s*tunai|pembayaran\s*tunai|tunai(?:\s*\/\s*cash)?|cash(?:\s*\/\s*tunai)?)\b/i.test(line)
+    ) {
+      const vals = extractMoneyCandidates(line, { allowPlainInteger: true });
+      if (vals.length > 0) cashPaid = vals[vals.length - 1];
+    } else if (changeGiven === 0 && /^(?:kembali(?:an)?|change)\b/i.test(line)) {
+      const vals = extractMoneyCandidates(line, { allowPlainInteger: true });
+      if (vals.length > 0) changeGiven = vals[vals.length - 1];
     }
+  }
+  const impliedCashTotal =
+    cashPaid > 0 && changeGiven > 0 && cashPaid > changeGiven ? cashPaid - changeGiven : 0;
+  const itemsSum = items.reduce((acc, it) => acc + (it.total || 0), 0);
+
+  if (total === 0) {
+    if (impliedCashTotal >= 500) {
+      total = impliedCashTotal;
+    } else if (itemsSum >= 500) {
+      total = itemsSum;
+    }
+  } else if (
+    impliedCashTotal >= 500 &&
+    itemsSum >= 500 &&
+    Math.abs(impliedCashTotal - itemsSum) <= Math.round(itemsSum * 0.15) &&
+    Math.abs(total - impliedCashTotal) > Math.round(impliedCashTotal * 0.2)
+  ) {
+    total = impliedCashTotal;
   }
 
   if (total === 0) {
@@ -1034,7 +1469,7 @@ export function parseReceiptFromText(
     const safeCandidates: number[] = [];
     for (let i = headerBoundary + 1; i < lines.length; i += 1) {
       const line = lines[i];
-      if (nonMoneyLineIndexes.has(i) || EXCLUDE_TOTAL_LINE_RE.test(line)) continue;
+      if (nonMoneyLineIndexes.has(i) || isExcludedTotalLine(line)) continue;
       if (/\b(?:tunai|cash|kembali|change|saldo)\b/i.test(line)) continue;
       safeCandidates.push(...extractMoneyCandidates(line));
     }
@@ -1042,8 +1477,6 @@ export function parseReceiptFromText(
       total = Math.max(...safeCandidates);
     }
   }
-
-  const { items, productName } = extractReceiptItemsAndProduct(rawText, merchant, total);
 
   let paymentMethod = 'Tunai';
   if (/qris/i.test(rawText)) paymentMethod = 'QRIS';
