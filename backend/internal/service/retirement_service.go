@@ -41,7 +41,7 @@ func (s *retirementService) resolveOwnerID(ctx context.Context, userID string) (
 	if err != nil {
 		return "", err
 	}
-	if role == "spouse_viewer" && invitedBy != nil && *invitedBy != "" {
+	if (role == "spouse_viewer" || role == "spouse_co_owner") && invitedBy != nil && *invitedBy != "" {
 		return *invitedBy, nil
 	}
 	return userID, nil

@@ -28,9 +28,18 @@ type AIChatRequest struct {
 	Message string `json:"message" binding:"required"`
 }
 
+type AgenticActionDTO struct {
+	ID      string                 `json:"id"`
+	Type    string                 `json:"type"`
+	Title   string                 `json:"title"`
+	Summary string                 `json:"summary"`
+	Payload map[string]interface{} `json:"payload"`
+}
+
 type AIChatResponse struct {
-	Response string `json:"response"`
-	Reason   string `json:"reason"`
+	Response        string             `json:"response"`
+	Reason          string             `json:"reason"`
+	ProposedActions []AgenticActionDTO `json:"proposed_actions,omitempty"`
 }
 
 type AnomalyCheckResponse struct {

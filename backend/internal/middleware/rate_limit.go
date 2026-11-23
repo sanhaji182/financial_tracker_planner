@@ -3,10 +3,12 @@ package middleware
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 )
 
 type clientInfo struct {
@@ -90,12 +92,64 @@ func (rl *rateLimiter) isAllowed(ip string) (bool, int, time.Time) {
 }
 
 func RateLimit(requestsPerMinute int) gin.HandlerFunc {
-	limiter := newRateLimiter(requestsPerMinute)
+	return RateLimitWithRedis(nil, requestsPerMinute)
+}
+
+// RateLimitWithRedis enforces sliding-window per-IP rate limiting backed by Redis
+// across replicas, automatically falling back to the in-memory limiter when Redis is unavailable.
+func RateLimitWithRedis(rdb *redis.Client, requestsPerMinute int) gin.HandlerFunc {
+	fallbackLimiter := newRateLimiter(requestsPerMinute)
 
 	return func(c *gin.Context) {
 		ip := c.ClientIP()
 
-		allowed, remaining, resetTime := limiter.isAllowed(ip)
+		if rdb != nil {
+			now := time.Now()
+			windowStartMs := now.Add(-1 * time.Minute).UnixMilli()
+			nowMs := now.UnixMilli()
+			key := fmt.Sprintf("ratelimit:ip:%s", ip)
+
+			pipe := rdb.TxPipeline()
+			pipe.ZRemRangeByScore(c.Request.Context(), key, "-inf", strconv.FormatInt(windowStartMs, 10))
+			countCmd := pipe.ZCard(c.Request.Context(), key)
+			_, err := pipe.Exec(c.Request.Context())
+
+			if err == nil {
+				count := int(countCmd.Val())
+				resetTime := now.Add(1 * time.Minute)
+				if count >= requestsPerMinute {
+					c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", requestsPerMinute))
+					c.Header("X-RateLimit-Remaining", "0")
+					c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
+					c.JSON(http.StatusTooManyRequests, gin.H{
+						"error": gin.H{
+							"code":    "RATE_LIMIT_EXCEEDED",
+							"message": "Terlalu banyak permintaan. Silakan coba lagi dalam 1 menit.",
+						},
+					})
+					c.Abort()
+					return
+				}
+
+				member := fmt.Sprintf("%d-%d", nowMs, now.UnixNano())
+				writePipe := rdb.TxPipeline()
+				writePipe.ZAdd(c.Request.Context(), key, redis.Z{Score: float64(nowMs), Member: member})
+				writePipe.PExpire(c.Request.Context(), key, time.Minute)
+				_, _ = writePipe.Exec(c.Request.Context())
+
+				remaining := requestsPerMinute - (count + 1)
+				if remaining < 0 {
+					remaining = 0
+				}
+				c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", requestsPerMinute))
+				c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+				c.Header("X-RateLimit-Reset", fmt.Sprintf("%d", resetTime.Unix()))
+				c.Next()
+				return
+			}
+		}
+
+		allowed, remaining, resetTime := fallbackLimiter.isAllowed(ip)
 
 		// Set standard rate limit headers
 		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", requestsPerMinute))

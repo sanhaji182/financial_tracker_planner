@@ -61,3 +61,28 @@ func TestSecurityHeadersPresent(t *testing.T) {
 		}
 	}
 }
+
+func TestRateLimitWithRedisNilFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	r := gin.New()
+	r.POST("/auth/refresh", RateLimitWithRedis(nil, 2), func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/auth/refresh", nil)
+		req.RemoteAddr = "198.51.100.42:5555"
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if w.Header().Get("X-RateLimit-Limit") != "2" {
+			t.Fatalf("expected X-RateLimit-Limit=2, got %q", w.Header().Get("X-RateLimit-Limit"))
+		}
+		if i < 2 && w.Code != http.StatusOK {
+			t.Fatalf("request %d: expected 200, got %d", i+1, w.Code)
+		}
+		if i == 2 && w.Code != http.StatusTooManyRequests {
+			t.Fatalf("request %d: expected 429, got %d", i+1, w.Code)
+		}
+	}
+}

@@ -42,7 +42,7 @@ func (s *sharedViewService) resolveOwner(ctx context.Context, userID string) (st
 		return userID, name, nil
 	}
 
-	if role == "spouse_viewer" {
+	if role == "spouse_viewer" || role == "spouse_co_owner" {
 		if invitedBy == nil || *invitedBy == "" {
 			return "", "", errors.New("spouse user does not have a linked family owner")
 		}

@@ -15,37 +15,95 @@ import (
 )
 
 type TransactionHandler struct {
-	txService service.TransactionService
+	txService         service.TransactionService
+	accountService    service.AccountService
+	householdResolver HouseholdOwnerResolver
 }
 
 func NewTransactionHandler(txService service.TransactionService) *TransactionHandler {
 	return &TransactionHandler{txService: txService}
 }
 
+func (h *TransactionHandler) WithHouseholdAccess(
+	accountService service.AccountService,
+	resolver HouseholdOwnerResolver,
+) *TransactionHandler {
+	h.accountService = accountService
+	h.householdResolver = resolver
+	return h
+}
+
+func (h *TransactionHandler) resolveHouseholdOwner(c *gin.Context) (string, bool, bool) {
+	userID := c.GetString("user_id")
+	role := c.GetString("role")
+	if role != "spouse_co_owner" && role != "spouse_viewer" {
+		return userID, false, true
+	}
+	if h.householdResolver == nil {
+		return userID, role == "spouse_co_owner", true
+	}
+	ownerID, err := h.householdResolver(c.Request.Context(), userID, role)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{"code": "FORBIDDEN", "message": err.Error()},
+		})
+		return "", role == "spouse_co_owner", false
+	}
+	return ownerID, role == "spouse_co_owner", true
+}
+
+func (h *TransactionHandler) ensureSharedAccountForCoOwner(c *gin.Context, ownerID, accountID string) bool {
+	if h.accountService == nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{"code": "FORBIDDEN", "message": "Account access service unavailable"},
+		})
+		return false
+	}
+	acc, err := h.accountService.GetAccountByID(c.Request.Context(), accountID, ownerID)
+	if err != nil {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{"code": "FORBIDDEN", "message": "Selected account not accessible in household"},
+		})
+		return false
+	}
+	if !acc.IsShared {
+		c.JSON(http.StatusForbidden, gin.H{
+			"error": gin.H{"code": "FORBIDDEN", "message": "Spouse co-owner can only record transactions on shared joint accounts"},
+		})
+		return false
+	}
+	return true
+}
+
 func (h *TransactionHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	txGroup := rg.Group("/transactions")
 	txGroup.Use(middleware.AuthMiddleware())
 	{
-		// Both roles can read transactions
+		// Read routes
 		txGroup.GET("", h.List)
 		txGroup.GET("/summary", h.Summary)
 		txGroup.GET("/attachments/:attachmentId/download", h.DownloadAttachment)
 		txGroup.GET("/:id", h.Detail)
 
-		// Only owner can mutate transactions
-		txGroup.POST("", middleware.RoleMiddleware("owner"), h.Create)
-		txGroup.PUT("/:id", middleware.RoleMiddleware("owner"), h.Update)
+		// Owner & spouse_co_owner (co-owner gated to is_shared=true accounts)
+		txGroup.POST("", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.Create)
+		txGroup.PUT("/:id", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.Update)
+		txGroup.POST("/:id/split", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.Split)
+		txGroup.POST("/upload", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.UploadDocument)
+		txGroup.PUT("/confirm-bulk", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.ConfirmBulkDrafts)
+		txGroup.PUT("/confirm/:id", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.ConfirmDraft)
+
+		// Owner-only destructive / attachment mutations
 		txGroup.DELETE("/:id", middleware.RoleMiddleware("owner"), h.Delete)
-		txGroup.POST("/:id/attachments", middleware.RoleMiddleware("owner"), h.UploadAttachment)
-		txGroup.POST("/:id/split", middleware.RoleMiddleware("owner"), h.Split)
-		txGroup.POST("/upload", middleware.RoleMiddleware("owner"), h.UploadDocument)
-		txGroup.PUT("/confirm-bulk", middleware.RoleMiddleware("owner"), h.ConfirmBulkDrafts)
-		txGroup.PUT("/confirm/:id", middleware.RoleMiddleware("owner"), h.ConfirmDraft)
+		txGroup.POST("/:id/attachments", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.UploadAttachment)
 	}
 }
 
 func (h *TransactionHandler) List(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, _, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 
 	// Parse page and page size
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -109,7 +167,10 @@ func (h *TransactionHandler) List(c *gin.Context) {
 }
 
 func (h *TransactionHandler) Summary(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, _, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 	dateFrom := c.Query("date_from")
 	dateTo := c.Query("date_to")
 
@@ -131,7 +192,10 @@ func (h *TransactionHandler) Summary(c *gin.Context) {
 
 func (h *TransactionHandler) Detail(c *gin.Context) {
 	txID := c.Param("id")
-	userID := c.GetString("user_id")
+	userID, _, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 
 	res, err := h.txService.GetTransactionByID(c.Request.Context(), txID, userID)
 	if err != nil {
@@ -150,7 +214,10 @@ func (h *TransactionHandler) Detail(c *gin.Context) {
 }
 
 func (h *TransactionHandler) Create(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, isCoOwner, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 	ip := c.ClientIP()
 	ua := c.Request.UserAgent()
 
@@ -158,6 +225,15 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.handleValidationError(c, err)
 		return
+	}
+
+	if isCoOwner {
+		if !h.ensureSharedAccountForCoOwner(c, userID, req.AccountID) {
+			return
+		}
+		if req.Type == "transfer" && req.TargetAccountID != nil && !h.ensureSharedAccountForCoOwner(c, userID, *req.TargetAccountID) {
+			return
+		}
 	}
 
 	res, err := h.txService.CreateTransaction(c.Request.Context(), userID, req, &ip, &ua)
@@ -179,13 +255,20 @@ func (h *TransactionHandler) Create(c *gin.Context) {
 
 func (h *TransactionHandler) Update(c *gin.Context) {
 	txID := c.Param("id")
-	userID := c.GetString("user_id")
+	userID, isCoOwner, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 	ip := c.ClientIP()
 	ua := c.Request.UserAgent()
 
 	var req dto.UpdateTransactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.handleValidationError(c, err)
+		return
+	}
+
+	if isCoOwner && !h.ensureSharedAccountForCoOwner(c, userID, req.AccountID) {
 		return
 	}
 
@@ -243,7 +326,10 @@ func (h *TransactionHandler) DownloadAttachment(c *gin.Context) {
 
 func (h *TransactionHandler) UploadAttachment(c *gin.Context) {
 	txID := c.Param("id")
-	userID := c.GetString("user_id")
+	userID, _, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -299,7 +385,10 @@ func (h *TransactionHandler) UploadAttachment(c *gin.Context) {
 
 func (h *TransactionHandler) Split(c *gin.Context) {
 	id := c.Param("id")
-	userID := c.GetString("user_id")
+	userID, _, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 
 	var req dto.SplitTransactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -346,7 +435,10 @@ func (h *TransactionHandler) handleValidationError(c *gin.Context, err error) {
 }
 
 func (h *TransactionHandler) UploadDocument(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, _, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 
 	file, header, err := c.Request.FormFile("file")
 	if err != nil {
@@ -381,12 +473,19 @@ func (h *TransactionHandler) UploadDocument(c *gin.Context) {
 }
 
 func (h *TransactionHandler) ConfirmDraft(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, isCoOwner, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 	draftTxID := c.Param("id")
 
 	var req dto.ConfirmDraftTransactionRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.handleValidationError(c, err)
+		return
+	}
+
+	if isCoOwner && !h.ensureSharedAccountForCoOwner(c, userID, req.AccountID) {
 		return
 	}
 
@@ -408,12 +507,23 @@ func (h *TransactionHandler) ConfirmDraft(c *gin.Context) {
 }
 
 func (h *TransactionHandler) ConfirmBulkDrafts(c *gin.Context) {
-	userID := c.GetString("user_id")
+	userID, isCoOwner, ok := h.resolveHouseholdOwner(c)
+	if !ok {
+		return
+	}
 
 	var req dto.BulkConfirmDraftsRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.handleValidationError(c, err)
 		return
+	}
+
+	if isCoOwner {
+		for _, item := range req.Drafts {
+			if !h.ensureSharedAccountForCoOwner(c, userID, item.AccountID) {
+				return
+			}
+		}
 	}
 
 	ip := c.ClientIP()

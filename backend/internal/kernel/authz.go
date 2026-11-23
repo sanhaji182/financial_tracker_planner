@@ -10,8 +10,9 @@ const AuthzMatrixVersion = "authz-v1"
 
 // Roles
 const (
-	RoleOwner        = "owner"
-	RoleSpouseViewer = "spouse_viewer"
+	RoleOwner         = "owner"
+	RoleSpouseViewer  = "spouse_viewer"
+	RoleSpouseCoOwner = "spouse_co_owner"
 )
 
 // Resource classes for matrix checks.
@@ -61,13 +62,49 @@ func HouseholdAuthz(role, resource, action string, objectShared bool) AuthzDecis
 	v := AuthzMatrixVersion
 
 	// Unknown role → deny
-	if role != RoleOwner && role != RoleSpouseViewer {
+	if role != RoleOwner && role != RoleSpouseViewer && role != RoleSpouseCoOwner {
 		return AuthzDecision{Allowed: false, Reason: "unknown_role", MatrixVersion: v}
 	}
 
 	// Owner: full access on household resources
 	if role == RoleOwner {
 		return AuthzDecision{Allowed: true, Reason: "owner_full", MatrixVersion: v}
+	}
+
+	// spouse_co_owner matrix: can read/write household transactions, bills, goals, AI chat,
+	// read shared accounts/assets/documents, read dashboard/forecast/debt; never delete or access vault/backup/settings/export/audit.
+	if role == RoleSpouseCoOwner {
+		switch resource {
+		case ResTransaction, ResBill, ResGoal, ResAIChat:
+			if action == ActRead || action == ActWrite {
+				return AuthzDecision{Allowed: true, Reason: "spouse_co_owner_write", MatrixVersion: v}
+			}
+			return AuthzDecision{Allowed: false, Reason: "spouse_co_owner_no_delete", MatrixVersion: v}
+
+		case ResAccount, ResAsset, ResDocument:
+			if action == ActRead {
+				if !objectShared {
+					return AuthzDecision{Allowed: false, Reason: "private_object", RequiresShared: true, MatrixVersion: v}
+				}
+				return AuthzDecision{Allowed: true, Reason: "spouse_shared_read", RequiresShared: true, MatrixVersion: v}
+			}
+			return AuthzDecision{Allowed: false, Reason: "spouse_co_owner_no_struct_edit", MatrixVersion: v}
+
+		case ResDashboard, ResForecast, ResSharedView, ResDebt:
+			if action == ActRead {
+				return AuthzDecision{Allowed: true, Reason: "spouse_read", MatrixVersion: v}
+			}
+			return AuthzDecision{Allowed: false, Reason: "spouse_read_only", MatrixVersion: v}
+
+		case ResVault, ResBackup, ResAISettings, ResAudit:
+			return AuthzDecision{Allowed: false, Reason: "spouse_denied_sensitive", MatrixVersion: v}
+
+		case ResExport:
+			return AuthzDecision{Allowed: false, Reason: "spouse_denied_export", MatrixVersion: v}
+
+		default:
+			return AuthzDecision{Allowed: false, Reason: "deny_by_default", MatrixVersion: v}
+		}
 	}
 
 	// spouse_viewer matrix (deny-by-default)
@@ -125,7 +162,7 @@ func BuildAuthzMatrix() []AuthzMatrixRow {
 		ResAsset, ResDocument, ResVault, ResBackup, ResExport, ResAISettings, ResAIChat, ResAudit, ResSharedView,
 	}
 	actions := []string{ActRead, ActWrite, ActDelete, ActExport}
-	roles := []string{RoleOwner, RoleSpouseViewer}
+	roles := []string{RoleOwner, RoleSpouseViewer, RoleSpouseCoOwner}
 	var rows []AuthzMatrixRow
 	for _, role := range roles {
 		for _, res := range resources {

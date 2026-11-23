@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -176,9 +177,15 @@ func (s *authService) InviteSpouse(ctx context.Context, ownerID string, req dto.
 		return nil, fmt.Errorf("failed to generate invite token: %w", err)
 	}
 
-	// Save invite token in Redis, pointing to owner ID
+	role := strings.TrimSpace(req.Role)
+	if role != "spouse_co_owner" {
+		role = "spouse_viewer"
+	}
+
+	// Save invite owner + requested spouse role in Redis
 	redisKey := fmt.Sprintf("spouse_invite:%s", inviteToken)
-	err = s.rdb.Set(ctx, redisKey, ownerID, 24*time.Hour).Err()
+	redisVal := fmt.Sprintf("%s|%s", ownerID, role)
+	err = s.rdb.Set(ctx, redisKey, redisVal, 24*time.Hour).Err()
 	if err != nil {
 		return nil, fmt.Errorf("failed to store invite token in Redis: %w", err)
 	}
@@ -190,19 +197,32 @@ func (s *authService) InviteSpouse(ctx context.Context, ownerID string, req dto.
 		Email:      req.Email,
 		InviteLink: inviteLink,
 		Token:      inviteToken,
+		Role:       role,
 	}, nil
+}
+
+// ParseSpouseInviteValue extracts ownerID and spouse role from Redis value ("ownerID|role" or legacy "ownerID").
+func ParseSpouseInviteValue(rawVal string) (string, string) {
+	parts := strings.SplitN(strings.TrimSpace(rawVal), "|", 2)
+	ownerID := strings.TrimSpace(parts[0])
+	role := "spouse_viewer"
+	if len(parts) == 2 && strings.TrimSpace(parts[1]) == "spouse_co_owner" {
+		role = "spouse_co_owner"
+	}
+	return ownerID, role
 }
 
 func (s *authService) RegisterSpouse(ctx context.Context, inviteToken string, req dto.RegisterRequest) (*dto.AuthResponse, error) {
 	// Look up invite token in Redis
 	redisKey := fmt.Sprintf("spouse_invite:%s", inviteToken)
-	ownerID, err := s.rdb.Get(ctx, redisKey).Result()
+	rawInviteVal, err := s.rdb.Get(ctx, redisKey).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return nil, errors.New("invalid or expired invitation link")
 		}
 		return nil, fmt.Errorf("failed to read invite token from Redis: %w", err)
 	}
+	ownerID, spouseRole := ParseSpouseInviteValue(rawInviteVal)
 
 	// Verify email uniqueness
 	existingUser, err := s.userRepo.GetUserByEmail(ctx, req.Email)
@@ -216,12 +236,12 @@ func (s *authService) RegisterSpouse(ctx context.Context, inviteToken string, re
 		return nil, fmt.Errorf("failed to hash password: %w", err)
 	}
 
-	// Create user with 'spouse_viewer' role
+	// Create spouse user with invited role (spouse_viewer or spouse_co_owner)
 	newSpouse := &model.User{
 		Email:           req.Email,
 		PasswordHash:    string(hashedPassword),
 		Name:            req.Name,
-		Role:            "spouse_viewer",
+		Role:            spouseRole,
 		InvitedBy:       &ownerID,
 		Timezone:        "Asia/Jakarta",
 		CurrencyDefault: "IDR",

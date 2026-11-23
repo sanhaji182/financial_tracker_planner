@@ -164,7 +164,7 @@ func (r *pgAISettingsRepository) GetOwnerID(ctx context.Context, userID string) 
 		return "", err
 	}
 
-	if role == "spouse_viewer" && invitedBy != nil && *invitedBy != "" {
+	if (role == "spouse_viewer" || role == "spouse_co_owner") && invitedBy != nil && *invitedBy != "" {
 		return *invitedBy, nil
 	}
 

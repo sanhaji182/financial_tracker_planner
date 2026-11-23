@@ -236,20 +236,23 @@ type OCRResponse struct {
 }
 
 type ParsedPDFTransaction struct {
-	DraftID     string  `json:"draft_id,omitempty"`
-	Date        string  `json:"date"`
-	Description string  `json:"description"`
-	Debit       float64 `json:"debit"`
-	Credit      float64 `json:"credit"`
-	Balance     float64 `json:"balance"`
+	DraftID          string  `json:"draft_id,omitempty"`
+	Date             string  `json:"date"`
+	Description      string  `json:"description"`
+	Debit            float64 `json:"debit"`
+	Credit           float64 `json:"credit"`
+	Balance          float64 `json:"balance"`
+	PossibleTransfer bool    `json:"possible_transfer,omitempty"`
+	TransferHint     string  `json:"transfer_hint,omitempty"`
 }
 
 type PDFStatementResponse struct {
-	BankDetected     string                 `json:"bank_detected"`
-	Period           string                 `json:"period"`
-	Transactions     []ParsedPDFTransaction `json:"transactions"`
-	Confidence       float64                `json:"confidence"`
-	ExtractionMethod string                 `json:"extraction_method,omitempty"`
+	BankDetected            string                 `json:"bank_detected"`
+	Period                  string                 `json:"period"`
+	Transactions            []ParsedPDFTransaction `json:"transactions"`
+	Confidence              float64                `json:"confidence"`
+	ExtractionMethod        string                 `json:"extraction_method,omitempty"`
+	TransferCandidatesCount int                    `json:"transfer_candidates_count,omitempty"`
 }
 
 type DocumentUploadParseResponse struct {

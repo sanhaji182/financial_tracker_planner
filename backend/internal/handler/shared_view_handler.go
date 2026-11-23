@@ -19,8 +19,8 @@ func NewSharedViewHandler(sharedViewService service.SharedViewService) *SharedVi
 func (h *SharedViewHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	sharedGroup := rg.Group("/shared-view")
 	sharedGroup.Use(middleware.AuthMiddleware())
-	// Allow both spouse_viewer and owner for easy preview/testing
-	sharedGroup.Use(middleware.RoleMiddleware("spouse_viewer", "owner"))
+	// Allow owner, spouse_viewer, and spouse_co_owner
+	sharedGroup.Use(middleware.RoleMiddleware("spouse_viewer", "spouse_co_owner", "owner"))
 	{
 		sharedGroup.GET("/summary", h.GetSummary)
 		sharedGroup.GET("/assets", h.GetAssets)

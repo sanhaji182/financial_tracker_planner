@@ -146,8 +146,13 @@ func main() {
 	retirementHandler := handler.NewRetirementHandler(retirementService)
 	behavioralHandler := handler.NewBehavioralHandler(behavioralService)
 	privacyHandler := handler.NewPrivacyHandler(privacyService)
-	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService)
+	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService).
+		WithCatalogServices(accountService, categoryService)
 	governanceHandler := handler.NewGovernanceHandler()
+	syncStore := handler.NewPgSyncStore(dbPool)
+	syncHandler := handler.NewSyncHandler(syncStore)
+	accountHandler.WithHouseholdResolver(syncStore.ResolveHouseholdOwner)
+	txHandler.WithHouseholdAccess(accountService, syncStore.ResolveHouseholdOwner)
 	jobRunner := service.NewJobRunner(rdb, "")
 
 	// Initialize Gin engine
@@ -194,9 +199,9 @@ func main() {
 		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck, cfg.BuildVersion, cfg.BuildSHA)
 		healthHandler.RegisterRoutes(v1)
 
-		// Auth routes — rate limited (login/register/refresh brute-force protection)
+		// Auth routes — distributed Redis rate limited (fallback to in-memory)
 		authGroup := v1.Group("/auth")
-		authGroup.Use(middleware.RateLimit(30))
+		authGroup.Use(middleware.RateLimitWithRedis(rdb, 30))
 		authHandler.RegisterRoutes(authGroup)
 
 		// Register Accounts handler
@@ -272,6 +277,7 @@ func main() {
 		privacyHandler.RegisterRoutes(v1)
 		aiSettingsHandler.RegisterRoutes(v1)
 		governanceHandler.RegisterRoutes(v1)
+		syncHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {

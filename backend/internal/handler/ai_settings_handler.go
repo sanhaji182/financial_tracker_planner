@@ -17,6 +17,8 @@ type AISettingsHandler struct {
 	efService        service.EFService
 	budgetService    service.BudgetService
 	auditService     service.AuditService
+	accountService   service.AccountService
+	categoryService  service.CategoryService
 }
 
 func NewAISettingsHandler(
@@ -35,6 +37,16 @@ func NewAISettingsHandler(
 	}
 }
 
+// WithCatalogServices wires account & category services so Cloud AI Advisor can generate executable AgenticAction proposals.
+func (h *AISettingsHandler) WithCatalogServices(
+	accountService service.AccountService,
+	categoryService service.CategoryService,
+) *AISettingsHandler {
+	h.accountService = accountService
+	h.categoryService = categoryService
+	return h
+}
+
 func (h *AISettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	aiGroup := rg.Group("/settings/ai")
 	aiGroup.Use(middleware.AuthMiddleware())
@@ -47,8 +59,8 @@ func (h *AISettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 	chatGroup := rg.Group("/ai")
 	chatGroup.Use(middleware.AuthMiddleware())
 	{
-		// Both owner and spouse can chat with advisor
-		chatGroup.POST("/chat", middleware.RoleMiddleware("owner", "spouse_viewer"), h.Chat)
+		// Owner and spouse roles can chat with advisor
+		chatGroup.POST("/chat", middleware.RoleMiddleware("owner", "spouse_viewer", "spouse_co_owner"), h.Chat)
 		// Only owner can trigger manual anomaly detection
 		chatGroup.POST("/detect-anomaly", middleware.RoleMiddleware("owner"), h.DetectAnomaly)
 	}
@@ -157,11 +169,48 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 	currentMonth := time.Now().Format("2006-01")
 	budgetSummary, _ := h.budgetService.GetBudgetSummary(ctx, userID, currentMonth)
 
+	// Attach compact account & category catalog for AgenticAction resolution in Python Worker
+	var accountCatalog []map[string]interface{}
+	if h.accountService != nil {
+		if accs, accErr := h.accountService.GetAccounts(ctx, userID); accErr == nil {
+			for _, a := range accs {
+				if !a.IsActive {
+					continue
+				}
+				entry := map[string]interface{}{
+					"id":        a.ID,
+					"name":      a.Name,
+					"type":      a.Type,
+					"is_active": a.IsActive,
+				}
+				if a.BankProvider != nil {
+					entry["bank_provider"] = *a.BankProvider
+				}
+				accountCatalog = append(accountCatalog, entry)
+			}
+		}
+	}
+
+	var categoryCatalog []map[string]interface{}
+	if h.categoryService != nil {
+		if cats, catErr := h.categoryService.GetCategories(ctx, userID); catErr == nil {
+			for _, c := range cats {
+				categoryCatalog = append(categoryCatalog, map[string]interface{}{
+					"id":   c.ID,
+					"name": c.Name,
+					"type": c.Type,
+				})
+			}
+		}
+	}
+
 	// Construct context block
 	workerContext := map[string]interface{}{
 		"dashboard":      dashboard,
 		"emergency_fund": efSummary,
 		"budget":         budgetSummary,
+		"accounts":       accountCatalog,
+		"categories":     categoryCatalog,
 		"financial_guidance_policy": map[string]interface{}{
 			"purpose":      "education_and_decision_support_only",
 			"must_explain": []string{"data_used", "assumptions", "missing_data", "confidence", "alternatives"},

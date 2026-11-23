@@ -195,3 +195,14 @@ func TestAuthService(t *testing.T) {
 		}
 	})
 }
+
+func TestParseSpouseInviteValue(t *testing.T) {
+	owner1, role1 := ParseSpouseInviteValue("owner-uuid-1")
+	if owner1 != "owner-uuid-1" || role1 != "spouse_viewer" {
+		t.Fatalf("legacy invite parse mismatch: %s %s", owner1, role1)
+	}
+	owner2, role2 := ParseSpouseInviteValue("owner-uuid-2|spouse_co_owner")
+	if owner2 != "owner-uuid-2" || role2 != "spouse_co_owner" {
+		t.Fatalf("co-owner invite parse mismatch: %s %s", owner2, role2)
+	}
+}

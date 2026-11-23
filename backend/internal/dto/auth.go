@@ -23,12 +23,14 @@ type AuthResponse struct {
 
 type InviteSpouseRequest struct {
 	Email string `json:"email" binding:"required,email"`
+	Role  string `json:"role" binding:"omitempty,oneof=spouse_viewer spouse_co_owner"`
 }
 
 type InviteLink struct {
 	Email      string `json:"email"`
 	InviteLink string `json:"invite_link"`
 	Token      string `json:"token"`
+	Role       string `json:"role,omitempty"`
 }
 
 type ChangePasswordRequest struct {
