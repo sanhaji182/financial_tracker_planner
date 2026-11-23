@@ -1,7 +1,7 @@
 import io
 import re
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pdfplumber
 import pytesseract
@@ -27,6 +27,7 @@ def detect_bank_format(first_page_text: str) -> str:
     """
     text = first_page_text.upper()
     bank_keywords = [
+        ("Blu by BCA Digital", ("BLU BY BCA", "BCA DIGITAL")),
         ("BCA", ("BCA", "BANK CENTRAL ASIA")),
         ("Mandiri", ("MANDIRI", "BANK MANDIRI")),
         ("BNI", ("BNI", "BANK NEGARA INDONESIA")),
@@ -35,14 +36,228 @@ def detect_bank_format(first_page_text: str) -> str:
         ("CIMB Niaga", ("CIMB", "CIMB NIAGA")),
         ("Permata", ("PERMATA BANK", "PERMATABANK")),
         ("Danamon", ("DANAMON",)),
-        ("Bank Jago", ("BANK JAGO", "PT BANK JAGO")),
+        ("Bank Jago", ("BANK JAGO", "PT BANK JAGO", "KANTONG JAGO", "BY JAGO")),
         ("SeaBank", ("SEABANK", "PT BANK SEABANK")),
+        ("Jenius", ("JENIUS", "BTPN", "SMBC INDONESIA")),
+        ("GoPay", ("GOPAY", "DOMPET ANAK BANGSA")),
+        ("ShopeePay", ("SHOPEEPAY", "AIRPAY INTERNATIONAL")),
+        ("OVO", ("OVO", "PT VISIONET INTERNASIONAL")),
         ("OCBC", ("OCBC",)),
     ]
     for bank_name, keywords in bank_keywords:
         if any(kw in text for kw in keywords):
             return bank_name
     return "Unknown"
+
+
+_ID_MONTH_MAP = {
+    "jan": "01",
+    "feb": "02",
+    "mar": "03",
+    "apr": "04",
+    "mei": "05",
+    "may": "05",
+    "jun": "06",
+    "jul": "07",
+    "agu": "08",
+    "agt": "08",
+    "aug": "08",
+    "sep": "09",
+    "okt": "10",
+    "oct": "10",
+    "nov": "11",
+    "nop": "11",
+    "des": "12",
+    "dec": "12",
+}
+
+
+def _normalize_statement_date(raw_date: str) -> str:
+    clean = (raw_date or "").strip()
+    if not clean:
+        return ""
+    m_iso = re.match(r"^(20\d{2})[-/](\d{1,2})[-/](\d{1,2})$", clean)
+    if m_iso:
+        return f"{m_iso.group(1)}-{int(m_iso.group(2)):02d}-{int(m_iso.group(3)):02d}"
+
+    m_dmy = re.match(r"^(\d{1,2})[-/](\d{1,2})[-/](\d{2,4})$", clean)
+    if m_dmy:
+        d, mo, y = m_dmy.groups()
+        if len(y) == 2:
+            y = "20" + y
+        return f"{y}-{int(mo):02d}-{int(d):02d}"
+
+    m_word = re.match(r"^(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$", clean)
+    if m_word:
+        d, mo_word, y = m_word.groups()
+        m_num = _ID_MONTH_MAP.get(mo_word.lower()[:3])
+        if m_num:
+            return f"{y}-{m_num}-{int(d):02d}"
+    return ""
+
+
+def parse_digital_bank_statement(pages, bank: str = "Digital Bank") -> List[Dict[str, Any]]:
+    """
+    Parser for Indonesian digital banks & e-wallets (Bank Jago Kantong, SeaBank,
+    Blu by BCA Digital, BSI, Jenius, GoPay, ShopeePay, OVO).
+    Supports both tabular extraction and text lines with 'DD Mon YYYY [HH:MM]'
+    or DD/MM/YYYY prefixes and signed Rp amounts (+/-) or Masuk/Keluar columns.
+    """
+    transactions: List[Dict[str, Any]] = []
+    date_prefix_re = (
+        r"(\d{1,2}\s+(?:jan|feb|mar|apr|mei|may|jun|jul|agu|agt|aug|sep|okt|oct|nov|nop|des|dec)[a-z]*\s+20\d{2}"
+        r"|20\d{2}[-/]\d{1,2}[-/]\d{1,2}"
+        r"|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})"
+    )
+    line_re = re.compile(
+        rf"^{date_prefix_re}(?:\s+\d{{1,2}}[:.]\d{{2}}(?::\d{{2}})?)?\s+(.*?)\s+"
+        rf"([+-]?\s*(?:[Rr]p\.?\s*|IDR\s*)?[\d.,]+)\s*(Masuk|Keluar|CR|DB|DR)?(?:\s+(?:[Rr]p\.?\s*)?([\d.,]+))?$",
+        re.IGNORECASE,
+    )
+
+    for page in pages:
+        table = page.extract_table()
+        if table:
+            for row in table:
+                if not row or len(row) < 3:
+                    continue
+                date_str = _normalize_statement_date((row[0] or "").splitlines()[0])
+                if not date_str:
+                    continue
+                desc = (row[1] or "").replace("\n", " ").strip()
+                cells = [str(c or "").strip() for c in row[2:]]
+                debit = 0.0
+                credit = 0.0
+                bal = 0.0
+                # Handle separate Masuk / Keluar columns vs single signed amount column
+                if len(cells) >= 3 and (
+                    re.search(r"[\d.,]{3,}", cells[0]) or re.search(r"[\d.,]{3,}", cells[1])
+                ):
+                    c0 = clean_pdf_amount(cells[0])
+                    c1 = clean_pdf_amount(cells[1])
+                    # Determine debit vs credit using sign or column header heuristic (Masuk/Keluar)
+                    if c0 < 0 or c1 < 0:
+                        for v in (c0, c1):
+                            if v < 0:
+                                debit = abs(v)
+                            elif v > 0:
+                                credit = v
+                    else:
+                        credit = abs(c0)
+                        debit = abs(c1)
+                    bal = abs(clean_pdf_amount(cells[-1]))
+                else:
+                    amt_raw = cells[0] if cells else "0"
+                    bal_raw = cells[-1] if len(cells) >= 2 else "0"
+                    val = clean_pdf_amount(amt_raw)
+                    bal = abs(clean_pdf_amount(bal_raw))
+                    upper_desc = desc.upper()
+                    upper_amt = amt_raw.upper()
+                    if val < 0 or "-" in amt_raw or "KELUAR" in upper_amt or "DB" in upper_amt or "QRIS" in upper_desc or "PEMBAYARAN" in upper_desc:
+                        debit = abs(val)
+                    else:
+                        credit = abs(val)
+                if debit == 0.0 and credit == 0.0:
+                    continue
+                transactions.append(
+                    {
+                        "date": date_str,
+                        "description": desc or f"Mutasi {bank}",
+                        "debit": debit,
+                        "credit": credit,
+                        "balance": bal,
+                    }
+                )
+            if transactions:
+                continue
+
+        text = page.extract_text() or ""
+        for raw_line in text.split("\n"):
+            line = re.sub(r"\s+", " ", raw_line).strip()
+            if not line:
+                continue
+            m = line_re.match(line)
+            if not m:
+                continue
+            raw_dt, desc, raw_amt, indicator, raw_bal = m.groups()
+            date_str = _normalize_statement_date(raw_dt)
+            if not date_str:
+                continue
+            amt = clean_pdf_amount(raw_amt)
+            if amt == 0.0:
+                continue
+            bal = abs(clean_pdf_amount(raw_bal or "0"))
+            ind_up = (indicator or "").upper()
+            raw_amt_up = raw_amt.upper()
+            is_outgoing = (
+                amt < 0
+                or raw_amt.lstrip().startswith("-")
+                or ind_up in ("KELUAR", "DB", "DR")
+                or "KELUAR" in raw_amt_up
+                or "DB" in desc.upper()
+            )
+            transactions.append(
+                {
+                    "date": date_str,
+                    "description": desc.strip(),
+                    "debit": abs(amt) if is_outgoing else 0.0,
+                    "credit": 0.0 if is_outgoing else abs(amt),
+                    "balance": bal,
+                }
+            )
+
+    return transactions
+
+
+def annotate_internal_transfers(
+    transactions: List[Dict[str, Any]]
+) -> Tuple[List[Dict[str, Any]], int]:
+    """
+    Marks rows that are likely internal transfers / e-wallet top-ups or exact same-day
+    opposite-direction duplicates so users can exclude double-counting during import.
+    """
+    transfer_keywords = (
+        r"\b(top\s*up|topup|isi\s*saldo|transfer\s*(?:ke|dari)\s*(?:kantong|pocket|rekening\s*sendiri|tabungan)|"
+        r"pindah\s*(?:dana|saldo|kantong)|switch(?:ing)?\s*rekening|tarik\s*tunai|atm\s*withdrawal|"
+        r"(?:ke|dari)\s*(?:gopay|ovo|dana|shopeepay|linkaja|seabank|jago|blu|jenius))\b"
+    )
+    transfer_re = re.compile(transfer_keywords, re.IGNORECASE)
+
+    # Index amount pairs (date, rounded_amount) for opposite direction matches
+    by_day_amount: Dict[Tuple[str, int], List[Tuple[int, str]]] = {}
+    for idx, tx in enumerate(transactions):
+        amt = int(round(tx.get("debit") or tx.get("credit") or 0))
+        if amt <= 0:
+            continue
+        direction = "debit" if (tx.get("debit") or 0) > 0 else "credit"
+        key = (str(tx.get("date") or ""), amt)
+        by_day_amount.setdefault(key, []).append((idx, direction))
+
+    matched_pair_idxs = set()
+    for items in by_day_amount.values():
+        dirs = {d for _, d in items}
+        if "debit" in dirs and "credit" in dirs:
+            for idx, _ in items:
+                matched_pair_idxs.add(idx)
+
+    annotated: List[Dict[str, Any]] = []
+    candidates_count = 0
+    for idx, tx in enumerate(transactions):
+        copy_tx = dict(tx)
+        desc = str(tx.get("description") or "")
+        hint = ""
+        if idx in matched_pair_idxs:
+            hint = "Pasangan debit & kredit bernominal sama di hari yang sama (potensi pindah dana)"
+        elif transfer_re.search(desc):
+            hint = "Terdeteksi kata kunci top-up e-wallet / pindah rekening"
+
+        if hint:
+            copy_tx["possible_transfer"] = True
+            copy_tx["transfer_hint"] = hint
+            candidates_count += 1
+        annotated.append(copy_tx)
+
+    return annotated, candidates_count
 
 
 def clean_pdf_amount(val_str: str) -> float:
@@ -329,15 +544,29 @@ def parse_pdf_mutasi(
             period = period_match.group(1).strip().split("\n")[0]
 
         transactions: List[Dict[str, Any]] = []
+        digital_banks = (
+            "Bank Jago",
+            "SeaBank",
+            "Blu by BCA Digital",
+            "BSI",
+            "Jenius",
+            "GoPay",
+            "ShopeePay",
+            "OVO",
+        )
         if len(combined_text) >= 20:
             if bank == "BCA":
                 transactions = parse_bca_statement(pdf.pages)
             elif bank in ("Mandiri", "BNI", "BRI"):
                 transactions = parse_mandiri_statement(pdf.pages)
+            elif bank in digital_banks:
+                transactions = parse_digital_bank_statement(pdf.pages, bank=bank)
             else:
                 transactions = parse_bca_statement(pdf.pages)
                 if not transactions:
                     transactions = parse_mandiri_statement(pdf.pages)
+                if not transactions:
+                    transactions = parse_digital_bank_statement(pdf.pages, bank=bank)
 
         # Fallback to OCR if digital text is empty/minimal (scanned PDF) or digital parsing found nothing
         if (len(combined_text) < 40 or not transactions) and convert_from_bytes is not None:
@@ -391,11 +620,13 @@ def parse_pdf_mutasi(
                 if is_pdf_password_error(exc):
                     raise_pdf_password_error(pdf_password)
 
-        if transactions and extraction_method == "scanned_pdf_ocr":
+        annotated_transactions, transfer_candidates_count = annotate_internal_transfers(transactions)
+
+        if annotated_transactions and extraction_method == "scanned_pdf_ocr":
             confidence = 0.8 if bank != "Unknown" else 0.72
-        elif transactions and bank != "Unknown":
+        elif annotated_transactions and bank != "Unknown":
             confidence = 0.9
-        elif transactions:
+        elif annotated_transactions:
             confidence = 0.65
         else:
             confidence = 0.3
@@ -403,7 +634,8 @@ def parse_pdf_mutasi(
         return {
             "bank_detected": bank,
             "period": period,
-            "transactions": transactions,
+            "transactions": annotated_transactions,
             "confidence": confidence,
             "extraction_method": extraction_method,
+            "transfer_candidates_count": transfer_candidates_count,
         }

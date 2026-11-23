@@ -1,8 +1,11 @@
+from datetime import datetime
 import json
 import logging
 import base64
 import os
-from typing import Dict, Any, List, Optional
+import re
+import uuid
+from typing import Dict, Any, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger("worker.ai")
@@ -461,7 +464,331 @@ def mock_categorize(description: str, merchant: str, available_categories: List[
     return {"category_id": "", "category_name": "", "confidence": 0.0}
 
 
-# 3. Advisor Chat Service
+# 3. Advisor Chat Service — Indonesian Agentic Action Parser
+VALID_AGENTIC_ACTION_TYPES = {
+    "create_transaction",
+    "create_transfer",
+    "set_budget",
+    "create_goal",
+}
+
+_SPOKEN_UNITS = {
+    "nol": 0,
+    "satu": 1,
+    "se": 1,
+    "dua": 2,
+    "tiga": 3,
+    "empat": 4,
+    "lima": 5,
+    "enam": 6,
+    "tujuh": 7,
+    "delapan": 8,
+    "sembilan": 9,
+}
+
+
+def parse_indonesian_amount(text: str) -> float:
+    """
+    Parses Indonesian spoken or shorthand monetary amounts:
+    e.g. '28rb', '1,5jt', '50k', 'Rp 150.000', 'seratus ribu', 'setengah juta'.
+    """
+    if not text:
+        return 0.0
+    low = text.lower()
+
+    # 1. Explicit half-unit idioms
+    if "setengah juta" in low:
+        return 500_000.0
+    if "setengah miliar" in low or "setengah milyar" in low:
+        return 500_000_000.0
+
+    # 2. Numeric shorthand with multiplier: 1,5jt / 28rb / 50k / 2.5 juta
+    m_mult = re.search(
+        r"(?:rp\.?\s*)?(\d+(?:[.,]\d+)?)\s*(jt|juta|m|miliar|milyar|rb|ribu|k)\b",
+        low,
+    )
+    if m_mult:
+        num_str = m_mult.group(1)
+        unit = m_mult.group(2)
+        if "," in num_str and "." not in num_str:
+            num_str = num_str.replace(",", ".")
+        elif "." in num_str and "," in num_str:
+            num_str = num_str.replace(".", "").replace(",", ".")
+        try:
+            base = float(num_str)
+        except ValueError:
+            base = 0.0
+        mult = 1.0
+        if unit in ("jt", "juta"):
+            mult = 1_000_000.0
+        elif unit in ("rb", "ribu", "k"):
+            mult = 1_000.0
+        elif unit in ("m", "miliar", "milyar"):
+            mult = 1_000_000_000.0
+        return round(base * mult)
+
+    # 3. Standard formatted rupiah / digits: Rp 150.000 / 75000
+    m_std = re.search(r"(?:rp\.?\s*)(\d[\d.,]*)|(\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b)", low)
+    if m_std:
+        raw = (m_std.group(1) or m_std.group(2) or "").strip()
+        if "," in raw and "." in raw:
+            raw = raw.replace(".", "").replace(",", ".")
+        elif "." in raw:
+            parts = raw.split(".")
+            if all(len(p) == 3 for p in parts[1:]):
+                raw = raw.replace(".", "")
+        elif "," in raw:
+            parts = raw.split(",")
+            if len(parts[-1]) == 2:
+                raw = raw.replace(",", ".")
+            else:
+                raw = raw.replace(",", "")
+        try:
+            return round(float(raw))
+        except ValueError:
+            pass
+
+    # 4. Spoken Indonesian words: 'dua juta lima ratus ribu', 'seratus ribu', 'lima puluh ribu'
+    if re.search(r"\b(ribu|juta|ratus|puluh|seribu|sejuta|seratus)\b", low):
+        tokens = re.findall(r"[a-z]+", low)
+        total = 0
+        current = 0
+        pending = 0
+        matched_word_number = False
+        for tok in tokens:
+            if tok == "seribu":
+                total += (current + pending) + 1000
+                current = 0
+                pending = 0
+                matched_word_number = True
+            elif tok == "sejuta":
+                total += (current + pending) + 1_000_000
+                current = 0
+                pending = 0
+                matched_word_number = True
+            elif tok == "seratus":
+                current += pending + 100
+                pending = 0
+                matched_word_number = True
+            elif tok == "sepuluh":
+                current += pending + 10
+                pending = 0
+                matched_word_number = True
+            elif tok == "sebelas":
+                current += pending + 11
+                pending = 0
+                matched_word_number = True
+            elif tok in _SPOKEN_UNITS:
+                current += pending
+                pending = _SPOKEN_UNITS[tok]
+                matched_word_number = True
+            elif tok == "belas":
+                current += (pending if pending > 0 else 1) + 10
+                pending = 0
+                matched_word_number = True
+            elif tok == "puluh":
+                current += (pending if pending > 0 else 1) * 10
+                pending = 0
+                matched_word_number = True
+            elif tok == "ratus":
+                current += (pending if pending > 0 else 1) * 100
+                pending = 0
+                matched_word_number = True
+            elif tok == "ribu":
+                chunk = current + pending
+                total += (chunk if chunk > 0 else 1) * 1000
+                current = 0
+                pending = 0
+                matched_word_number = True
+            elif tok == "juta":
+                chunk = current + pending
+                total += (chunk if chunk > 0 else 1) * 1_000_000
+                current = 0
+                pending = 0
+                matched_word_number = True
+        if matched_word_number and (total + current + pending) > 0:
+            return float(total + current + pending)
+
+    return 0.0
+
+
+def _resolve_account_from_text(
+    text_lower: str, accounts: List[Dict[str, Any]]
+) -> Optional[Dict[str, Any]]:
+    active = [a for a in accounts if a.get("is_active", True)]
+    pool = active or accounts
+    if not pool:
+        return None
+    best: Optional[Dict[str, Any]] = None
+    best_len = 0
+    for acc in pool:
+        candidates = [
+            str(acc.get("name") or "").lower().strip(),
+            str(acc.get("bank_provider") or "").lower().strip(),
+        ]
+        for cand in candidates:
+            if cand and cand in text_lower and len(cand) > best_len:
+                best = acc
+                best_len = len(cand)
+    return best or pool[0]
+
+
+def _resolve_category_from_text(
+    text_lower: str,
+    categories: List[Dict[str, Any]],
+    tx_type: str,
+) -> Optional[Dict[str, Any]]:
+    typed = [c for c in categories if not c.get("type") or c.get("type") == tx_type]
+    pool = typed or categories
+    if not pool:
+        return None
+    for cat in pool:
+        cname = str(cat.get("name") or "").lower().strip()
+        if cname and cname in text_lower:
+            return cat
+
+    keyword_buckets = {
+        "makan": ["kopi", "makan", "minum", "bakso", "nasi", "ayam", "restoran", "cafe", "lunch", "dinner"],
+        "belanja": ["belanja", "indomaret", "alfamart", "superindo", "sabun", "sembako"],
+        "transport": ["bensin", "gojek", "grab", "tol", "parkir", "mrt", "krl", "ojol"],
+        "tagihan": ["listrik", "pln", "wifi", "internet", "pdam", "bpjs", "pulsa"],
+        "gaji": ["gaji", "bonus", "thr", "upah", "honor"],
+    }
+    for bucket, kws in keyword_buckets.items():
+        if any(kw in text_lower for kw in kws):
+            for cat in pool:
+                if bucket in str(cat.get("name") or "").lower():
+                    return cat
+    return pool[0]
+
+
+def parse_indonesian_action_command(
+    message: str,
+    accounts: Optional[List[Dict[str, Any]]] = None,
+    categories: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Parses natural Indonesian financial commands into executable AgenticAction schemas
+    matching frontend AdvisorChatDrawer actions.
+    """
+    clean = (message or "").strip()
+    if not clean:
+        return None
+    low = clean.lower()
+    accounts = accounts or []
+    categories = categories or []
+    amount = parse_indonesian_amount(clean)
+    if amount <= 0:
+        return None
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    month = datetime.now().strftime("%Y-%m")
+
+    # 1. Transfer intent: "transfer 500rb dari BCA ke GoPay"
+    if re.search(r"\b(transfer|kirim|pindah(?:\s+dana)?|topup|top\s*up)\b", low):
+        m_pair = re.search(r"(?:dari|from)\s+([a-z0-9\s]+?)\s+(?:ke|to)\s+([a-z0-9\s]+)$", low)
+        if m_pair and len(accounts) >= 2:
+            src = _resolve_account_from_text(m_pair.group(1), accounts)
+            remaining = [a for a in accounts if src and a.get("id") != src.get("id")]
+            tgt = _resolve_account_from_text(m_pair.group(2), remaining) if remaining else None
+            if src and tgt and src.get("id") != tgt.get("id"):
+                return {
+                    "id": f"act-{uuid.uuid4().hex[:8]}",
+                    "type": "create_transfer",
+                    "title": f"Transfer {src.get('name')} → {tgt.get('name')}",
+                    "summary": f"Nominal Rp {amount:,.0f}".replace(",", ".") + f" pada {today}",
+                    "payload": {
+                        "source_account_id": src["id"],
+                        "target_account_id": tgt["id"],
+                        "amount": amount,
+                        "date": today,
+                        "notes": "Transfer via AI Advisor",
+                    },
+                }
+
+    # 2. Set budget intent: "atur budget makan 2jt"
+    if re.search(r"\b(atur|set|buat)\s+(?:budget|anggaran)\b", low) or (
+        re.search(r"\b(budget|anggaran)\b", low) and re.search(r"\b(bulan|per\s*bulan|/bln|jadi|menjadi)\b", low)
+    ):
+        cat = _resolve_category_from_text(low, categories, "expense")
+        if cat:
+            return {
+                "id": f"act-{uuid.uuid4().hex[:8]}",
+                "type": "set_budget",
+                "title": f"Atur Anggaran {cat.get('name', 'Kategori')}",
+                "summary": f"Batas Rp {amount:,.0f}".replace(",", ".") + f" untuk bulan {month}",
+                "payload": {
+                    "category_id": cat["id"],
+                    "month": month,
+                    "amount": amount,
+                },
+            }
+
+    # 3. Create goal intent: "buat target dana liburan 10jt"
+    if re.search(r"\b(target|goal|tabungan\s+impian|impian)\b", low) and re.search(
+        r"\b(buat|tambah|bikin|mulai|simpan)\b", low
+    ):
+        desc = re.sub(
+            r"\b(tolong|coba|buat|buatkan|tambah|tambahkan|bikin|target|goal|impian|sebesar|senilai)\b",
+            "",
+            clean,
+            flags=re.IGNORECASE,
+        ).strip(" :-.,")
+        title_desc = desc[:60] if desc else "Target Keuangan Baru"
+        acc = _resolve_account_from_text(low, accounts)
+        payload: Dict[str, Any] = {
+            "name": title_desc,
+            "type": "custom",
+            "target_amount": amount,
+        }
+        if acc:
+            payload["linked_account_id"] = acc["id"]
+        return {
+            "id": f"act-{uuid.uuid4().hex[:8]}",
+            "type": "create_goal",
+            "title": f"Buat Target: {title_desc}",
+            "summary": f"Target Rp {amount:,.0f}".replace(",", "."),
+            "payload": payload,
+        }
+
+    # 4. Transaction intent (explicit command verbs)
+    if re.search(r"\b(catat|beli|bayar|jajan|pengeluaran|keluar|terima|gaji|pemasukan|masuk|dapat)\b", low) and not re.search(
+        r"\b(simulasi|what[\s-]*if|andai|kalau|jika|kira[\s-]*kira|berapa)\b", low
+    ):
+        is_income = bool(re.search(r"\b(terima|gaji|pemasukan|masuk|dapat|bonus|thr)\b", low))
+        tx_type = "income" if is_income else "expense"
+        acc = _resolve_account_from_text(low, accounts)
+        cat = _resolve_category_from_text(low, categories, tx_type)
+        if acc:
+            desc = re.sub(
+                r"\b(tolong|catat|catatkan|beli|bayar|pakai|via|dengan|dari|untuk|sebesar|rp\.?\s*[\d.,]+|\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k))\b",
+                "",
+                clean,
+                flags=re.IGNORECASE,
+            ).strip(" :-.,")
+            desc = re.sub(r"\s+", " ", desc).strip() or ("Pemasukan" if is_income else "Pengeluaran Harian")
+            payload = {
+                "date": today,
+                "amount": amount,
+                "type": tx_type,
+                "account_id": acc["id"],
+                "description": desc,
+            }
+            if cat:
+                payload["category_id"] = cat["id"]
+            acc_name = acc.get("name", "Rekening")
+            cat_name = cat.get("name", "Umum") if cat else "Umum"
+            return {
+                "id": f"act-{uuid.uuid4().hex[:8]}",
+                "type": "create_transaction",
+                "title": f"Catat {'Pemasukan' if is_income else 'Pengeluaran'}: {desc}",
+                "summary": f"Rp {amount:,.0f}".replace(",", ".") + f" • {acc_name} • {cat_name}",
+                "payload": payload,
+            }
+
+    return None
+
+
 async def chat_advisor(
     message: str,
     context_data: Dict[str, Any],
@@ -471,12 +798,17 @@ async def chat_advisor(
 ) -> Dict[str, Any]:
     """
     Chats with the AI Financial Advisor.
-    Prefixes responses with a disclaimer and reasons using the context provided.
+    Prefixes responses with a disclaimer, reasons using provided context, and
+    emits executable `proposed_actions` when user commands a mutation.
     """
     # 1. Extract context sub-objects
     dashboard = context_data.get("dashboard", {}) or {}
     ef = context_data.get("emergency_fund", {}) or {}
     budget = context_data.get("budget", {}) or {}
+    accounts = context_data.get("accounts", []) or []
+    categories = context_data.get("categories", []) or []
+    deterministic_action = parse_indonesian_action_command(message, accounts, categories)
+    fallback_actions = [deterministic_action] if deterministic_action else []
 
     # Helper to safely extract float from plain number or MoneyValue dict
     def _val(obj, key: str, default: float = 0.0) -> float:
@@ -506,6 +838,17 @@ async def chat_advisor(
     budget_remaining = _val(budget, "remaining")
     budget_remaining_pct = (budget_remaining / budget_limit * 100) if budget_limit > 0 else 100.0
 
+    accounts_summary = ", ".join(
+        f"{a.get('name')} (id={a.get('id')}, type={a.get('type', 'bank')})"
+        for a in accounts[:12]
+        if a.get("id")
+    ) or "Belum ada"
+    categories_summary = ", ".join(
+        f"{c.get('name')} (id={c.get('id')}, type={c.get('type', 'expense')})"
+        for c in categories[:20]
+        if c.get("id")
+    ) or "Belum ada"
+
     context_str = (
         f"Kekayaan Bersih: Rp {net_worth:,.2f}\n"
         f"Kas Tersedia: Rp {cash:,.2f}\n"
@@ -515,6 +858,8 @@ async def chat_advisor(
         f"Prediksi Akhir Bulan: Rp {forecast:,.2f}\n"
         f"Status Dana Darurat: Target Rp {ef_target:,.2f}, Terkumpul Rp {ef_current:,.2f} ({ef_months} bulan tercover)\n"
         f"Status Anggaran Bulan Ini: Limit Rp {budget_limit:,.2f}, Terpakai Rp {budget_spent:,.2f} ({budget_remaining_pct:.1f}% tersisa)\n"
+        f"Daftar Rekening Aktif: {accounts_summary}\n"
+        f"Daftar Kategori: {categories_summary}\n"
     )
 
     system_prompt = (
@@ -525,7 +870,12 @@ async def chat_advisor(
         "PENTING:\n"
         "1. JAWABAN ANDA HARUS SELALU diawali dengan baris disclaimer tepat seperti ini:\n"
         "🤖 Saran AI — bukan nasihat keuangan profesional\n\n"
-        "2. Di bagian akhir jawaban Anda, Anda HARUS menulis bagian 'Alasan:' yang merangkum alasan di balik rekomendasi Anda berdasarkan data finansial di atas.\n"
+        "2. Jika user meminta mencatat transaksi, transfer antar rekening, mengatur budget, atau membuat target keuangan, "
+        "Anda boleh menyertakan blok ```actions JSON array menggunakan HANYA ID rekening/kategori yang valid di atas:\n"
+        "```actions\n"
+        "[{\"id\": \"act-1\", \"type\": \"create_transaction|create_transfer|set_budget|create_goal\", \"title\": \"...\", \"summary\": \"...\", \"payload\": {...}}]\n"
+        "```\n"
+        "3. Di bagian akhir jawaban Anda, Anda HARUS menulis bagian 'Alasan:' yang merangkum alasan di balik rekomendasi Anda berdasarkan data finansial di atas.\n"
         "Format output akhir:\n"
         "🤖 Saran AI — bukan nasihat keuangan profesional\n"
         "[Isi saran detail Anda dengan angka dan rekomendasi konkret]\n\n"
@@ -555,7 +905,7 @@ async def chat_advisor(
                 temperature=0.7,
                 timeout=60.0,
             )
-            return parse_advisor_response(content)
+            return parse_advisor_response(content, fallback_actions=fallback_actions)
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
             llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
@@ -570,7 +920,7 @@ async def chat_advisor(
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
                 content = resp.json()["content"][0]["text"]
-                return parse_advisor_response(content)
+                return parse_advisor_response(content, fallback_actions=fallback_actions)
         elif provider == "gemini":
             llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
@@ -583,7 +933,7 @@ async def chat_advisor(
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()
                 content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return parse_advisor_response(content)
+                return parse_advisor_response(content, fallback_actions=fallback_actions)
     except Exception as e:
         logger.error(f"Error calling {provider} for advisor chat: {str(e)}")
         return generate_mock_chat_response(message, context_data)
@@ -591,31 +941,87 @@ async def chat_advisor(
     return generate_mock_chat_response(message, context_data)
 
 
-def parse_advisor_response(content: str) -> Dict[str, str]:
+def _extract_actions_block(content: str) -> Tuple[str, List[Dict[str, Any]]]:
+    actions: List[Dict[str, Any]] = []
+    match = re.search(r"```actions\s*([\s\S]*?)```", content, re.IGNORECASE)
+    cleaned = content
+    if match:
+        raw_block = match.group(1).strip()
+        cleaned = (content[: match.start()] + content[match.end() :]).strip()
+        try:
+            parsed = json.loads(raw_block)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            if isinstance(parsed, list):
+                for idx, item in enumerate(parsed):
+                    if not isinstance(item, dict):
+                        continue
+                    act_type = str(item.get("type") or "").strip()
+                    if act_type not in VALID_AGENTIC_ACTION_TYPES:
+                        continue
+                    payload = item.get("payload")
+                    if not isinstance(payload, dict):
+                        continue
+                    actions.append(
+                        {
+                            "id": str(item.get("id") or f"act-llm-{idx + 1}"),
+                            "type": act_type,
+                            "title": str(item.get("title") or act_type),
+                            "summary": str(item.get("summary") or ""),
+                            "payload": payload,
+                        }
+                    )
+        except Exception:
+            actions = []
+    return cleaned, actions
+
+
+def parse_advisor_response(
+    content: str, fallback_actions: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
     disclaimer = "🤖 Saran AI — bukan nasihat keuangan profesional"
-    
+
+    stripped_content, parsed_actions = _extract_actions_block(content)
+
     # Strip disclaimer from the start if present to handle it cleanly in the frontend
-    main_response = content
+    main_response = stripped_content
     if disclaimer in main_response:
         main_response = main_response.replace(disclaimer, "").strip()
 
     # Split reason if present
     reason = "Berdasarkan ringkasan data kesehatan keuangan di dashboard Anda."
     if "Alasan:" in main_response:
-        parts = main_response.split("Alasan:")
+        parts = main_response.split("Alasan:", 1)
         main_response = parts[0].strip()
         reason = parts[1].strip()
 
-    return {
+    final_actions = parsed_actions if parsed_actions else (fallback_actions or [])
+    result: Dict[str, Any] = {
         "response": main_response,
-        "reason": reason
+        "reason": reason,
     }
+    if final_actions:
+        result["proposed_actions"] = final_actions
+    return result
 
 
 def generate_mock_chat_response(message: str, context_data: Dict[str, Any]) -> Dict[str, Any]:
     dashboard = context_data.get("dashboard", {})
     ef = context_data.get("emergency_fund", {})
     budget = context_data.get("budget", {})
+    accounts = context_data.get("accounts", []) or []
+    categories = context_data.get("categories", []) or []
+
+    deterministic_action = parse_indonesian_action_command(message, accounts, categories)
+    if deterministic_action is not None:
+        return {
+            "response": (
+                f"Siap! Saya sudah menyiapkan draf aksi **{deterministic_action['title']}** "
+                f"({deterministic_action['summary']}). Ketuk Konfirmasi di kartu aksi di bawah untuk menjalankan."
+            ),
+            "reason": "agentic-nlp-worker",
+            "proposed_actions": [deterministic_action],
+        }
 
     # Safe extractor for MoneyValue or plain float
     def _val(obj, key: str, default: float = 0.0) -> float:
