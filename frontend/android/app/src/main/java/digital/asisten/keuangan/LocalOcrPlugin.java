@@ -1,9 +1,12 @@
 package digital.asisten.keuangan;
 
+import android.app.KeyguardManager;
 import android.content.ClipData;
+import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -15,17 +18,25 @@ import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.pdf.PdfRenderer;
+import android.hardware.biometrics.BiometricManager;
+import android.hardware.biometrics.BiometricPrompt;
 import android.media.ExifInterface;
 import android.net.Uri;
 import android.os.Build;
+import android.os.CancellationSignal;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.ParcelFileDescriptor;
 import android.provider.OpenableColumns;
+import android.provider.Settings;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.text.TextUtils;
 import android.util.Base64;
 import android.view.Window;
 import android.view.WindowManager;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.JSArray;
@@ -46,6 +57,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -53,6 +65,13 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.atomic.AtomicBoolean;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 @CapacitorPlugin(name = "LocalOcr")
 public class LocalOcrPlugin extends Plugin {
@@ -61,10 +80,18 @@ public class LocalOcrPlugin extends Plugin {
     private static final int MAX_SHARED_FILES = 10;
     private static final int MAX_SHARED_FILE_BYTES = 15 * 1024 * 1024;
     private static final String SHARE_CONSUMED_EXTRA = "kb_share_consumed";
+    private static final String QUICK_CONSUMED_EXTRA = "kb_quick_consumed";
+    private static final String SECURE_VAULT_PREFS = "kb_secure_vault";
+    private static final String KEYSTORE_ALIAS = "kb_master_keystore_key_v1";
+    private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
+    private static final String AES_GCM_TRANSFORMATION = "AES/GCM/NoPadding";
+    private static final int GCM_IV_LENGTH = 12;
+    private static final int GCM_TAG_LENGTH_BITS = 128;
 
     private static final List<JSObject> PENDING_SHARES =
             Collections.synchronizedList(new ArrayList<>());
     private static final ExecutorService SHARE_EXECUTOR = Executors.newSingleThreadExecutor();
+    private static volatile String pendingQuickAction = null;
     private static volatile LocalOcrPlugin activeInstance;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -98,6 +125,21 @@ public class LocalOcrPlugin extends Plugin {
     public static void handleIncomingIntent(Context context, Intent intent) {
         if (context == null || intent == null) {
             return;
+        }
+
+        String quickAction = intent.getStringExtra(FinanceSummaryWidgetProvider.EXTRA_QUICK_ACTION);
+        if (quickAction != null && !quickAction.trim().isEmpty()
+                && !intent.getBooleanExtra(QUICK_CONSUMED_EXTRA, false)) {
+            intent.putExtra(QUICK_CONSUMED_EXTRA, true);
+            pendingQuickAction = quickAction.trim();
+            final JSObject quickPayload = new JSObject();
+            quickPayload.put("action", pendingQuickAction);
+            new Handler(Looper.getMainLooper()).post(() -> {
+                LocalOcrPlugin live = activeInstance;
+                if (live != null) {
+                    live.notifyListeners("quickActionReceived", quickPayload);
+                }
+            });
         }
 
         String action = intent.getAction();
@@ -778,6 +820,340 @@ public class LocalOcrPlugin extends Plugin {
             }
             call.resolve();
         });
+    }
+
+    @PluginMethod
+    public void setSecureItem(PluginCall call) {
+        String key = call.getString("key", "");
+        String value = call.getString("value", "");
+        if (key == null || key.trim().isEmpty()) {
+            call.reject("Key wajib diisi.");
+            return;
+        }
+        try {
+            SecretKey secretKey = getOrCreateKeystoreSecretKey();
+            Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+            cipher.init(Cipher.ENCRYPT_MODE, secretKey);
+            byte[] iv = cipher.getIV();
+            byte[] encrypted = cipher.doFinal((value != null ? value : "").getBytes(StandardCharsets.UTF_8));
+            byte[] combined = new byte[iv.length + encrypted.length];
+            System.arraycopy(iv, 0, combined, 0, iv.length);
+            System.arraycopy(encrypted, 0, combined, iv.length, encrypted.length);
+
+            SharedPreferences prefs = getContext().getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE);
+            prefs.edit().putString(key.trim(), Base64.encodeToString(combined, Base64.NO_WRAP)).apply();
+            JSObject ret = new JSObject();
+            ret.put("saved", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            call.reject("Gagal menyimpan rahasia terenkripsi: " + safeErrorMessage(e));
+        }
+    }
+
+    @PluginMethod
+    public void getSecureItem(PluginCall call) {
+        String key = call.getString("key", "");
+        if (key == null || key.trim().isEmpty()) {
+            JSObject ret = new JSObject();
+            ret.put("value", JSObject.NULL);
+            call.resolve(ret);
+            return;
+        }
+        try {
+            SharedPreferences prefs = getContext().getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE);
+            String encoded = prefs.getString(key.trim(), null);
+            if (encoded == null || encoded.isEmpty()) {
+                JSObject ret = new JSObject();
+                ret.put("value", JSObject.NULL);
+                call.resolve(ret);
+                return;
+            }
+            byte[] combined = Base64.decode(encoded, Base64.NO_WRAP);
+            if (combined.length <= GCM_IV_LENGTH) {
+                JSObject ret = new JSObject();
+                ret.put("value", JSObject.NULL);
+                call.resolve(ret);
+                return;
+            }
+            byte[] iv = new byte[GCM_IV_LENGTH];
+            byte[] cipherBytes = new byte[combined.length - GCM_IV_LENGTH];
+            System.arraycopy(combined, 0, iv, 0, GCM_IV_LENGTH);
+            System.arraycopy(combined, GCM_IV_LENGTH, cipherBytes, 0, cipherBytes.length);
+
+            SecretKey secretKey = getOrCreateKeystoreSecretKey();
+            Cipher cipher = Cipher.getInstance(AES_GCM_TRANSFORMATION);
+            cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
+            String decrypted = new String(cipher.doFinal(cipherBytes), StandardCharsets.UTF_8);
+            JSObject ret = new JSObject();
+            ret.put("value", decrypted);
+            call.resolve(ret);
+        } catch (Exception e) {
+            JSObject ret = new JSObject();
+            ret.put("value", JSObject.NULL);
+            call.resolve(ret);
+        }
+    }
+
+    @PluginMethod
+    public void removeSecureItem(PluginCall call) {
+        String key = call.getString("key", "");
+        if (key != null && !key.trim().isEmpty()) {
+            SharedPreferences prefs = getContext().getSharedPreferences(SECURE_VAULT_PREFS, Context.MODE_PRIVATE);
+            prefs.edit().remove(key.trim()).apply();
+        }
+        JSObject ret = new JSObject();
+        ret.put("removed", true);
+        call.resolve(ret);
+    }
+
+    private static SecretKey getOrCreateKeystoreSecretKey() throws Exception {
+        KeyStore ks = KeyStore.getInstance(ANDROID_KEYSTORE);
+        ks.load(null);
+        if (ks.containsAlias(KEYSTORE_ALIAS)) {
+            KeyStore.Entry entry = ks.getEntry(KEYSTORE_ALIAS, null);
+            if (entry instanceof KeyStore.SecretKeyEntry) {
+                return ((KeyStore.SecretKeyEntry) entry).getSecretKey();
+            }
+        }
+        KeyGenerator keyGen = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, ANDROID_KEYSTORE);
+        KeyGenParameterSpec spec = new KeyGenParameterSpec.Builder(
+                KEYSTORE_ALIAS,
+                KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT
+        )
+                .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+                .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+                .setKeySize(256)
+                .build();
+        keyGen.init(spec);
+        return keyGen.generateKey();
+    }
+
+    @PluginMethod
+    public void isBiometricAvailable(PluginCall call) {
+        boolean available = false;
+        try {
+            Context ctx = getContext();
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                BiometricManager bm = ctx.getSystemService(BiometricManager.class);
+                if (bm != null) {
+                    int auth = BiometricManager.Authenticators.BIOMETRIC_STRONG
+                            | BiometricManager.Authenticators.BIOMETRIC_WEAK
+                            | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+                    int canAuth = bm.canAuthenticate(auth);
+                    available = canAuth == BiometricManager.BIOMETRIC_SUCCESS;
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                KeyguardManager km = (KeyguardManager) ctx.getSystemService(Context.KEYGUARD_SERVICE);
+                available = km != null && km.isDeviceSecure();
+            }
+        } catch (Exception ignored) {
+            available = false;
+        }
+        JSObject ret = new JSObject();
+        ret.put("available", available);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void authenticateBiometric(PluginCall call) {
+        AppCompatActivity activity = getActivity();
+        if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            JSObject ret = new JSObject();
+            ret.put("authenticated", false);
+            ret.put("reason", "unavailable");
+            call.resolve(ret);
+            return;
+        }
+
+        String title = call.getString("title", "Buka Keuangan Bersama");
+        String subtitle = call.getString("subtitle", "Verifikasi identitas perangkat Anda");
+
+        activity.runOnUiThread(() -> {
+            final AtomicBoolean finished = new AtomicBoolean(false);
+            try {
+                BiometricPrompt.Builder builder = new BiometricPrompt.Builder(activity)
+                        .setTitle(title != null ? title : "Buka Keuangan Bersama")
+                        .setSubtitle(subtitle != null ? subtitle : "Verifikasi perangkat");
+
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    int authenticators = BiometricManager.Authenticators.BIOMETRIC_STRONG
+                            | BiometricManager.Authenticators.BIOMETRIC_WEAK
+                            | BiometricManager.Authenticators.DEVICE_CREDENTIAL;
+                    builder.setAllowedAuthenticators(authenticators);
+                } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    @SuppressWarnings("deprecation")
+                    BiometricPrompt.Builder ignored = builder.setDeviceCredentialAllowed(true);
+                } else {
+                    builder.setNegativeButton(
+                            "Gunakan PIN",
+                            ContextCompat.getMainExecutor(activity),
+                            (dialog, which) -> resolveBiometricResult(call, finished, false, "cancelled")
+                    );
+                }
+
+                BiometricPrompt prompt = builder.build();
+                CancellationSignal signal = new CancellationSignal();
+                prompt.authenticate(
+                        signal,
+                        ContextCompat.getMainExecutor(activity),
+                        new BiometricPrompt.AuthenticationCallback() {
+                            @Override
+                            public void onAuthenticationSucceeded(BiometricPrompt.AuthenticationResult result) {
+                                resolveBiometricResult(call, finished, true, null);
+                            }
+
+                            @Override
+                            public void onAuthenticationError(int errorCode, CharSequence errString) {
+                                String reason = errorCode == BiometricPrompt.BIOMETRIC_ERROR_USER_CANCELED
+                                        || errorCode == BiometricPrompt.BIOMETRIC_ERROR_CANCELED
+                                        ? "cancelled"
+                                        : "error";
+                                resolveBiometricResult(call, finished, false, reason);
+                            }
+
+                            @Override
+                            public void onAuthenticationFailed() {
+                                // Prompt stays open for retry
+                            }
+                        }
+                );
+            } catch (Exception e) {
+                resolveBiometricResult(call, finished, false, "error");
+            }
+        });
+    }
+
+    private static void resolveBiometricResult(
+            PluginCall call, AtomicBoolean finished, boolean ok, String reason) {
+        if (!finished.compareAndSet(false, true)) {
+            return;
+        }
+        JSObject ret = new JSObject();
+        ret.put("authenticated", ok);
+        if (reason != null) {
+            ret.put("reason", reason);
+        }
+        call.resolve(ret);
+    }
+
+    private boolean isNotificationListenerGranted() {
+        try {
+            Context ctx = getContext();
+            String flat = Settings.Secure.getString(ctx.getContentResolver(), "enabled_notification_listeners");
+            if (TextUtils.isEmpty(flat)) {
+                return false;
+            }
+            ComponentName cn = BankNotificationListenerService.getComponentName(ctx);
+            return flat.contains(cn.flattenToString()) || flat.contains(ctx.getPackageName());
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    @PluginMethod
+    public void getNotificationCaptureStatus(PluginCall call) {
+        SharedPreferences prefs = getContext().getSharedPreferences(
+                BankNotificationListenerService.PREFS_NAME, Context.MODE_PRIVATE);
+        boolean enabled = prefs.getBoolean(BankNotificationListenerService.KEY_ENABLED, false);
+        int pendingCount = 0;
+        try {
+            JSONArray arr = new JSONArray(prefs.getString(BankNotificationListenerService.KEY_BUFFER, "[]"));
+            pendingCount = arr.length();
+        } catch (Exception ignored) {
+        }
+        JSObject ret = new JSObject();
+        ret.put("enabled", enabled);
+        ret.put("permissionGranted", isNotificationListenerGranted());
+        ret.put("pendingCount", pendingCount);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void setNotificationCaptureEnabled(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        SharedPreferences prefs = getContext().getSharedPreferences(
+                BankNotificationListenerService.PREFS_NAME, Context.MODE_PRIVATE);
+        prefs.edit().putBoolean(BankNotificationListenerService.KEY_ENABLED, enabled).apply();
+        JSObject ret = new JSObject();
+        ret.put("enabled", enabled);
+        ret.put("permissionGranted", isNotificationListenerGranted());
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void openNotificationListenerSettings(PluginCall call) {
+        try {
+            Intent intent = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+        } catch (Exception ignored) {
+        }
+        call.resolve();
+    }
+
+    @PluginMethod
+    public void consumeCapturedNotifications(PluginCall call) {
+        SharedPreferences prefs = getContext().getSharedPreferences(
+                BankNotificationListenerService.PREFS_NAME, Context.MODE_PRIVATE);
+        JSArray out = new JSArray();
+        try {
+            String raw = prefs.getString(BankNotificationListenerService.KEY_BUFFER, "[]");
+            JSONArray arr = new JSONArray(raw);
+            for (int i = 0; i < arr.length(); i++) {
+                JSONObject obj = arr.optJSONObject(i);
+                if (obj != null) {
+                    out.put(JSObject.fromJSONObject(obj));
+                }
+            }
+            prefs.edit().putString(BankNotificationListenerService.KEY_BUFFER, "[]").apply();
+        } catch (Exception ignored) {
+        }
+        JSObject ret = new JSObject();
+        ret.put("notifications", out);
+        call.resolve(ret);
+    }
+
+    public static void emitCapturedNotificationsUpdated(int count) {
+        JSObject payload = new JSObject();
+        payload.put("count", count);
+        new Handler(Looper.getMainLooper()).post(() -> {
+            LocalOcrPlugin live = activeInstance;
+            if (live != null) {
+                live.notifyListeners("capturedNotificationsUpdated", payload);
+            }
+        });
+    }
+
+    @PluginMethod
+    public void updateWidgetSummary(PluginCall call) {
+        boolean masked = Boolean.TRUE.equals(call.getBoolean("privacyMasked", false));
+        String safeToSpend = call.getString("safeToSpend", "Rp 0");
+        String liquidCash = call.getString("liquidCash", "Rp 0");
+        String netWorth = call.getString("netWorth", "Rp 0");
+
+        Context ctx = getContext();
+        SharedPreferences prefs = ctx.getSharedPreferences(
+                FinanceSummaryWidgetProvider.WIDGET_PREFS, Context.MODE_PRIVATE);
+        prefs.edit()
+                .putString(FinanceSummaryWidgetProvider.KEY_SAFE_TO_SPEND, masked ? "Rp ••••••" : safeToSpend)
+                .putString(FinanceSummaryWidgetProvider.KEY_LIQUID_CASH, masked ? "Kas Likuid: Rp ••••••" : ("Kas Likuid: " + liquidCash))
+                .putString(FinanceSummaryWidgetProvider.KEY_NET_WORTH, masked ? "Rp ••••••" : netWorth)
+                .putString(FinanceSummaryWidgetProvider.KEY_UPDATED_LABEL, masked ? "Mode Privasi Aktif" : "Diperbarui langsung")
+                .apply();
+
+        FinanceSummaryWidgetProvider.refreshAllWidgets(ctx);
+        JSObject ret = new JSObject();
+        ret.put("updated", true);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void consumePendingQuickAction(PluginCall call) {
+        String action = pendingQuickAction;
+        pendingQuickAction = null;
+        JSObject ret = new JSObject();
+        ret.put("action", action != null ? action : JSObject.NULL);
+        call.resolve(ret);
     }
 
     private static String safeErrorMessage(Exception e) {
