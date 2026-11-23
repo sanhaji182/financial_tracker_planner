@@ -539,7 +539,11 @@ export const BottomNav: React.FC = () => {
                         {user?.name || 'User'}
                       </p>
                       <p className="text-[11px] text-slate-500">
-                        {user?.role === 'owner' ? 'Owner' : 'Pasangan'}
+                        {user?.role === 'owner'
+                          ? 'Owner'
+                          : user?.role === 'spouse_co_owner'
+                            ? 'Co-Pilot'
+                            : 'Pasangan'}
                       </p>
                     </div>
                   </div>

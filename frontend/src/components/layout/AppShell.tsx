@@ -9,6 +9,7 @@ import { CommandPalette } from '../ui/CommandPalette';
 import { TransactionFormModal } from '../modals/TransactionFormModal';
 import { TransferModal } from '../modals/TransferModal';
 import { SharedReceiptQuickModal } from '../modals/SharedReceiptQuickModal';
+import { NotificationCaptureModal } from '../modals/NotificationCaptureModal';
 import { useQuickActionStore } from '../../stores/useQuickActionStore';
 import { useAuthStore } from '../../stores/authStore';
 import { DocumentMeta } from '../DocumentMeta';
@@ -21,7 +22,10 @@ export const AppShell: React.FC = () => {
   const {
     sidebarCollapsed,
     isQuickTxOpen,
+    quickTxInitialVoice,
     closeQuickTx,
+    isNotifCaptureOpen,
+    closeNotifCapture,
     isQuickTransferOpen,
     quickTransferSourceId,
     closeQuickTransfer,
@@ -95,13 +99,21 @@ export const AppShell: React.FC = () => {
       <CommandPalette />
       {isOwner && (
         <>
-          <TransactionFormModal isOpen={isQuickTxOpen} onClose={closeQuickTx} />
+          <TransactionFormModal
+            isOpen={isQuickTxOpen}
+            onClose={closeQuickTx}
+            initialVoiceMode={quickTxInitialVoice}
+          />
           <TransferModal
             isOpen={isQuickTransferOpen}
             onClose={closeQuickTransfer}
             defaultSourceAccountId={quickTransferSourceId}
           />
           <SharedReceiptQuickModal />
+          <NotificationCaptureModal
+            isOpen={isNotifCaptureOpen}
+            onClose={closeNotifCapture}
+          />
         </>
       )}
     </div>

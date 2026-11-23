@@ -9,6 +9,7 @@ import { toast } from '../stores/useToastStore';
 
 export const InviteSpousePage: React.FC = () => {
   const [email, setEmail] = useState('');
+  const [inviteRole, setInviteRole] = useState<'spouse_viewer' | 'spouse_co_owner'>('spouse_viewer');
   const [emailError, setEmailError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -41,7 +42,7 @@ export const InviteSpousePage: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const data = await authService.inviteSpouse(email);
+      const data = await authService.inviteSpouse(email, inviteRole);
       setInviteLink(data.invite_link);
       toast.success('Tautan undangan berhasil dibuat');
     } catch (err: unknown) {
@@ -67,12 +68,12 @@ export const InviteSpousePage: React.FC = () => {
     <div className="mx-auto max-w-2xl space-y-6 animate-fade-in">
       <PageHeader
         title="Undang Pasangan"
-        subtitle="Hubungkan akun pasangan Anda ke dashboard keuangan keluarga (akses Spouse Viewer)."
+        subtitle="Hubungkan akun pasangan Anda ke dashboard keuangan keluarga (Viewer atau Co-Pilot)."
       />
 
       <Card
         title="Undangan Baru"
-        subtitle="Masukkan email pasangan untuk menghasilkan tautan pendaftaran unik (berlaku 24 jam)."
+        subtitle="Masukkan email pasangan dan pilih hak akses untuk menghasilkan tautan pendaftaran unik (berlaku 24 jam)."
       >
         {errorMsg && (
           <div className="mb-4 flex items-center gap-2 rounded-xl bg-rose-50 border border-rose-200/80 p-3 text-sm text-rose-700 dark:bg-rose-950/30 dark:text-rose-300">
@@ -82,6 +83,41 @@ export const InviteSpousePage: React.FC = () => {
         )}
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <button
+              type="button"
+              onClick={() => setInviteRole('spouse_viewer')}
+              className={`text-left p-3.5 rounded-xl border transition-all ${
+                inviteRole === 'spouse_viewer'
+                  ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30'
+                  : 'border-slate-200 dark:border-slate-800 hover:border-indigo-300'
+              }`}
+            >
+              <p className="text-xs font-bold text-slate-900 dark:text-white">
+                Pasangan Viewer (Hanya Lihat)
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Dapat memantau aset bersama, utang, dan tagihan tanpa mengubah data.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setInviteRole('spouse_co_owner')}
+              className={`text-left p-3.5 rounded-xl border transition-all ${
+                inviteRole === 'spouse_co_owner'
+                  ? 'border-indigo-500 bg-indigo-50/70 dark:bg-indigo-950/30'
+                  : 'border-slate-200 dark:border-slate-800 hover:border-indigo-300'
+              }`}
+            >
+              <p className="text-xs font-bold text-slate-900 dark:text-white">
+                Pasangan Co-Pilot (Co-Owner)
+              </p>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Ikut mencatat transaksi &amp; scan struk khusus pada Rekening Bersama.
+              </p>
+            </button>
+          </div>
+
           <Input
             label="Alamat Email Pasangan"
             id="spouse-email"

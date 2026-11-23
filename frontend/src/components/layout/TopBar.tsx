@@ -15,9 +15,12 @@ import {
   Info,
   X,
   CheckCheck,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { ModeToggle } from '../ui/ModeToggle';
+import { useSecurityStore } from '../../stores/useSecurityStore';
 import { useUnreadCount } from '../../hooks/useAlerts';
 import alertService, { type Alert, type AlertSeverity } from '../../services/alerts';
 import { getPageTitleFromLocation } from '../../config/navigation';
@@ -34,6 +37,7 @@ const severityIcon: Record<AlertSeverity, React.ReactNode> = {
 
 export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
   const { theme, toggleTheme } = useThemeStore();
+  const { privacyMasked, togglePrivacyMask } = useSecurityStore();
   const { user } = useAuthStore();
   const { openCommandPalette, openQuickTx, uiMode, toggleUiMode } = useQuickActionStore();
   const navigate = useNavigate();
@@ -164,13 +168,29 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
         {isOwner && (
           <Button
             size="sm"
-            onClick={openQuickTx}
+            onClick={() => openQuickTx()}
             className="hidden md:inline-flex !h-9 !px-3.5 !rounded-xl"
           >
             <Plus className="w-4 h-4" />
             <span>Transaksi</span>
           </Button>
         )}
+
+        {/* Privacy Mask Toggle */}
+        <button
+          type="button"
+          onClick={togglePrivacyMask}
+          className="p-2 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors"
+          title={privacyMasked ? 'Tampilkan nominal' : 'Sembunyikan nominal (Mode Privasi)'}
+          aria-label={privacyMasked ? 'Tampilkan nominal' : 'Sembunyikan nominal'}
+          aria-pressed={privacyMasked}
+        >
+          {privacyMasked ? (
+            <EyeOff className="w-4 h-4 text-indigo-600 dark:text-indigo-400" aria-hidden="true" />
+          ) : (
+            <Eye className="w-4 h-4" aria-hidden="true" />
+          )}
+        </button>
 
         {/* Theme Toggler (preserves svg.lucide-sun / svg.lucide-moon for E2E) */}
         <button

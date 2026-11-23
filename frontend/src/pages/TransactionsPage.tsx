@@ -40,7 +40,7 @@ import {
 export const TransactionsPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const isOwner = user?.role === 'owner';
+  const isOwner = user?.role === 'owner' || user?.role === 'spouse_co_owner';
 
   const now = new Date();
   const initialBounds = getLocalMonthBounds(now.getFullYear(), now.getMonth());

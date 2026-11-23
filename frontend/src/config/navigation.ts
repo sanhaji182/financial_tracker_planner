@@ -79,6 +79,7 @@ export const OWNER_NAV_GROUPS: NavGroup[] = [
       { name: 'Dana Darurat', path: '/emergency-fund', icon: Shield, tier: 'advanced', keywords: 'emergency fund investasi rasio' },
       { name: 'Saran Alokasi', path: '/allocation', icon: Lightbulb, tier: 'advanced', keywords: 'surplus rekomendasi' },
       { name: 'Target Keuangan', path: '/goals', icon: Target, tier: 'simple', keywords: 'tabungan impian dp rumah' },
+      { name: 'Hub Finansial ID', path: '/wealth-id', icon: Landmark, tier: 'simple', keywords: 'emas sbn deposito idx zakat spt pajak pendidikan' },
       { name: 'Simulasi What-If', path: '/scenarios', icon: Activity, tier: 'advanced', keywords: 'skenario planner' },
     ],
   },
@@ -153,8 +154,53 @@ export const EXTRA_SEARCHABLE_ROUTES: NavItem[] = [
   { name: 'Privasi & Kontrol Data', path: '/settings/privacy', icon: Lock, tier: 'simple', keywords: 'privasi ekspor retensi data izin analitik' },
 ];
 
+export const CO_OWNER_NAV_GROUPS: NavGroup[] = [
+  {
+    id: 'overview',
+    label: 'Ringkasan Bersama',
+    items: [
+      { name: 'Dashboard', path: '/', icon: LayoutDashboard, tier: 'simple', end: true, keywords: 'home beranda ringkasan net worth' },
+      { name: 'Transaksi', path: '/transactions', icon: Receipt, tier: 'simple', keywords: 'pemasukan pengeluaran catatan' },
+      { name: 'Scan Struk / OCR', path: '/transactions/upload', icon: Camera, tier: 'simple', keywords: 'scan struk ocr foto nota pdf mutasi bank' },
+      { name: 'Rekening Bersama', path: '/accounts', icon: Landmark, tier: 'simple', keywords: 'bank dompet ewallet saldo bersama' },
+    ],
+  },
+  {
+    id: 'wealth',
+    label: 'Kekayaan & Tagihan',
+    items: [
+      { name: 'Aset', path: '/assets', icon: Coins, tier: 'simple', keywords: 'properti investasi emas kendaraan' },
+      { name: 'Utang & Cicilan', path: '/debts', icon: CreditCard, tier: 'simple', keywords: 'kpr kartu kredit pinjaman' },
+      { name: 'Kalender Tagihan', path: '/bills', icon: CalendarDays, tier: 'simple', keywords: 'listrik internet jatuh tempo' },
+    ],
+  },
+  {
+    id: 'planning',
+    label: 'Perencanaan',
+    items: [
+      { name: 'Budget Kategori', path: '/budgets', icon: PieChart, tier: 'simple', keywords: 'anggaran limit bulanan' },
+      { name: 'Target Keuangan', path: '/goals', icon: Target, tier: 'simple', keywords: 'tabungan impian dp rumah' },
+      { name: 'Hub Finansial ID', path: '/wealth-id', icon: Landmark, tier: 'simple', keywords: 'emas sbn zakat spt pendidikan' },
+      { name: 'Simulasi What-If', path: '/scenarios', icon: Activity, tier: 'advanced', keywords: 'skenario planner' },
+    ],
+  },
+  {
+    id: 'settings',
+    label: 'Pengaturan',
+    collapsible: true,
+    items: [
+      { name: 'Akun & Privasi', path: '/settings/account', icon: ShieldCheck, tier: 'simple', keywords: 'akun profil password privasi e2ee' },
+    ],
+  },
+];
+
 export function getNavGroupsForRole(role?: string, mode: UIMode = 'advanced'): NavGroup[] {
-  const baseGroups = role === 'spouse_viewer' ? SPOUSE_NAV_GROUPS : OWNER_NAV_GROUPS;
+  const baseGroups =
+    role === 'spouse_viewer'
+      ? SPOUSE_NAV_GROUPS
+      : role === 'spouse_co_owner'
+        ? CO_OWNER_NAV_GROUPS
+        : OWNER_NAV_GROUPS;
   if (mode === 'advanced') {
     return baseGroups;
   }
@@ -172,7 +218,12 @@ export function getNavGroupsForRole(role?: string, mode: UIMode = 'advanced'): N
 }
 
 export function getHiddenAdvancedCount(role?: string): number {
-  const baseGroups = role === 'spouse_viewer' ? SPOUSE_NAV_GROUPS : OWNER_NAV_GROUPS;
+  const baseGroups =
+    role === 'spouse_viewer'
+      ? SPOUSE_NAV_GROUPS
+      : role === 'spouse_co_owner'
+        ? CO_OWNER_NAV_GROUPS
+        : OWNER_NAV_GROUPS;
   return baseGroups.reduce(
     (sum, group) => sum + group.items.filter((item) => item.tier === 'advanced').length,
     0
@@ -200,6 +251,7 @@ const ROUTE_TITLES: Array<{ match: (pathname: string, search: string) => boolean
   { match: (p) => p.startsWith('/emergency-fund'), title: 'Dana Darurat & Investasi' },
   { match: (p) => p.startsWith('/allocation'), title: 'Saran Alokasi Dana' },
   { match: (p) => p.startsWith('/goals'), title: 'Target Keuangan' },
+  { match: (p) => p.startsWith('/wealth-id'), title: 'Hub Finansial Indonesia' },
   { match: (p) => p.startsWith('/scenarios'), title: 'Simulasi What-If' },
   { match: (p) => p.startsWith('/insights'), title: 'Insight Bulanan' },
   { match: (p) => p.startsWith('/closing'), title: 'Tutup Buku Bulanan' },

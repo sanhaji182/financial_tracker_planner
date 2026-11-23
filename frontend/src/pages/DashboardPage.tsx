@@ -5,6 +5,8 @@ import { useDataQuality } from '../hooks/useDataQuality';
 import { gateFor } from '../services/dataQuality';
 import { useAuthStore } from '../stores/authStore';
 import { useQuickActionStore } from '../stores/useQuickActionStore';
+import { useSecurityStore, maskMoneyText } from '../stores/useSecurityStore';
+import { localOcrBridge } from '../offline/nativeOcr';
 import { getCurrentLocalMonth } from '../utils/date';
 import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
@@ -48,6 +50,7 @@ export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
   const { openQuickTx, openQuickTransfer, uiMode, setUiMode } = useQuickActionStore();
+  const privacyMasked = useSecurityStore((s) => s.privacyMasked);
 
   // Call ALL hooks unconditionally before role checks
   const { data: dash, isLoading, isError, refetch } = useDashboardData();
@@ -101,16 +104,27 @@ export const DashboardPage: React.FC = () => {
     return () => clearInterval(timer);
   }, [dash]);
 
+  useEffect(() => {
+    if (!dash) return;
+    void localOcrBridge.updateWidgetSummary({
+      safeToSpend: dash.safe_to_spend.formatted_value,
+      liquidCash: dash.cash_available.formatted_value,
+      netWorth: dash.net_worth.formatted_value,
+      privacyMasked,
+    });
+  }, [dash, privacyMasked]);
+
   if (isSpouse) {
     return <Navigate to="/spouse" replace />;
   }
 
   const formatRupiah = (val: number) => {
-    return new Intl.NumberFormat('id-ID', {
+    const formatted = new Intl.NumberFormat('id-ID', {
       style: 'currency',
       currency: 'IDR',
       maximumFractionDigits: 0,
     }).format(val);
+    return maskMoneyText(formatted, privacyMasked);
   };
 
   const getDtiBadgeColor = (status: string): 'success' | 'warning' | 'danger' => {
@@ -360,7 +374,7 @@ export const DashboardPage: React.FC = () => {
               </div>
               <div className="text-right shrink-0 space-y-1">
                 <p className="font-money text-sm font-bold text-slate-900 dark:text-white">
-                  {bill.formatted_amount}
+                  {maskMoneyText(bill.formatted_amount, privacyMasked)}
                 </p>
                 <Badge variant={bill.days_remaining <= 1 ? 'danger' : 'warning'}>
                   <Clock className="h-3 w-3" />
@@ -430,7 +444,7 @@ export const DashboardPage: React.FC = () => {
             <ArrowLeftRight className="h-3.5 w-3.5" />
             Transfer
           </Button>
-          <Button size="sm" onClick={openQuickTx} className="!h-9">
+          <Button size="sm" onClick={() => openQuickTx()} className="!h-9">
             <Plus className="h-4 w-4" />
             Catat Transaksi
           </Button>
@@ -503,7 +517,7 @@ export const DashboardPage: React.FC = () => {
           label="Total Utang Aktif"
           value={
             <span className="text-rose-600 dark:text-rose-400">
-              {dash.total_debts.formatted_total_outstanding}
+              {maskMoneyText(dash.total_debts.formatted_total_outstanding, privacyMasked)}
             </span>
           }
           badge={
@@ -709,7 +723,7 @@ export const DashboardPage: React.FC = () => {
                       Saldo Proyeksi
                     </span>
                     <span className="font-money text-base sm:text-lg font-bold text-slate-900 dark:text-white mt-1 block truncate">
-                      {dash.forecast_end_month.formatted_value}
+                      {maskMoneyText(dash.forecast_end_month.formatted_value, privacyMasked)}
                     </span>
                   </div>
                   <div className="rounded-xl bg-emerald-50/80 dark:bg-emerald-950/30 border border-emerald-200/70 dark:border-emerald-900/40 p-3.5">
@@ -718,7 +732,7 @@ export const DashboardPage: React.FC = () => {
                       <MetricHelp metric="safe_to_spend" />
                     </span>
                     <span className="font-money text-base sm:text-lg font-bold text-emerald-700 dark:text-emerald-300 mt-1 block truncate">
-                      {dash.safe_to_spend.formatted_value}
+                      {maskMoneyText(dash.safe_to_spend.formatted_value, privacyMasked)}
                     </span>
                   </div>
                 </div>
@@ -727,19 +741,19 @@ export const DashboardPage: React.FC = () => {
                     <div className="rounded-lg bg-slate-50 dark:bg-slate-800/40 px-2.5 py-1.5">
                       <span className="text-slate-400 block">Konservatif</span>
                       <span className="font-mono font-bold text-slate-700 dark:text-slate-200">
-                        {dash.safe_to_spend_scenarios.conservative.formatted_value}
+                        {maskMoneyText(dash.safe_to_spend_scenarios.conservative.formatted_value, privacyMasked)}
                       </span>
                     </div>
                     <div className="rounded-lg bg-indigo-50/60 dark:bg-indigo-950/30 px-2.5 py-1.5">
                       <span className="text-indigo-500 block">Expected</span>
                       <span className="font-mono font-bold text-indigo-700 dark:text-indigo-300">
-                        {dash.safe_to_spend_scenarios.expected.formatted_value}
+                        {maskMoneyText(dash.safe_to_spend_scenarios.expected.formatted_value, privacyMasked)}
                       </span>
                     </div>
                     <div className="rounded-lg bg-emerald-50/60 dark:bg-emerald-950/30 px-2.5 py-1.5">
                       <span className="text-emerald-600 block">Optimis</span>
                       <span className="font-mono font-bold text-emerald-700 dark:text-emerald-300">
-                        {dash.safe_to_spend_scenarios.optimistic.formatted_value}
+                        {maskMoneyText(dash.safe_to_spend_scenarios.optimistic.formatted_value, privacyMasked)}
                       </span>
                     </div>
                   </div>

@@ -1,5 +1,6 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { QueryClientContext } from '@tanstack/react-query';
 import {
   Upload,
   Check,
@@ -14,34 +15,58 @@ import {
   ChevronDown,
   ChevronUp,
   ListChecks,
+  ArrowLeftRight,
 } from 'lucide-react';
 import {
   transactionsService,
   type ConfirmDraftTransactionRequest,
   type ParsedOCRItem,
   type ParsedPDFTransaction,
+  type Transaction,
 } from '../services/transactions';
 import { useAccounts } from '../hooks/useAccounts';
 import { useCategories } from '../hooks/useTransactions';
+import { invalidateFinancialData } from '../hooks/invalidateFinancialQueries';
 import { Card } from '../components/ui/Card';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
 import { PageHeader } from '../components/ui/PageHeader';
+import { ReceiptSplitPanel } from '../components/modals/ReceiptSplitPanel';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/useToastStore';
 import { captureReceiptPhoto, isNativeMobile } from '../utils/mobile';
 import { getTodayLocalDate } from '../utils/date';
 import { findMerchantMemory, learnMerchantMemory } from '../offline/storage';
+import { annotatePdfTransferCandidates } from '../utils/transferDeduplicator';
+import type { TransactionSplitPayloadItem } from '../utils/receiptSplit';
 
 export const UploadPage: React.FC = () => {
   const navigate = useNavigate();
+  const queryClient = useContext(QueryClientContext);
   const [searchParams] = useSearchParams();
   const draftId = searchParams.get('draft_id');
   const { user } = useAuthStore();
-  const isOwner = user?.role === 'owner';
+  const isOwner = user?.role === 'owner' || user?.role === 'spouse_co_owner';
 
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
+  const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
+
+  useEffect(() => {
+    let active = true;
+    if (typeof transactionsService?.getTransactions !== 'function') return;
+    transactionsService
+      .getTransactions({ page: 1, page_size: 50 })
+      .then((res) => {
+        if (active && Array.isArray(res?.data)) {
+          setRecentTransactions(res.data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
@@ -72,6 +97,7 @@ export const UploadPage: React.FC = () => {
   const [overallConfidence, setOverallConfidence] = useState<number>(1.0);
   const [ocrEngine, setOcrEngine] = useState('');
   const [ocrItems, setOcrItems] = useState<ParsedOCRItem[]>([]);
+  const [showSplitPanel, setShowSplitPanel] = useState(false);
   const [rawText, setRawText] = useState('');
   const [showRawText, setShowRawText] = useState(false);
 
@@ -378,7 +404,7 @@ export const UploadPage: React.FC = () => {
     }
   };
 
-  const handleConfirm = async () => {
+  const handleConfirm = async (splits?: TransactionSplitPayloadItem[]) => {
     if (!currentDraftId) {
       setErrorMsg('ID transaksi draf tidak ditemukan.');
       return;
@@ -418,13 +444,16 @@ export const UploadPage: React.FC = () => {
         amount: parsedAmount,
         type: txType,
         account_id: selectedAccountId,
-        category_id: selectedCategoryId || undefined,
+        category_id: (splits && splits[0]?.category_id) || selectedCategoryId || undefined,
         description: combinedDescription,
         notes: notes || undefined,
         source: draftSource,
       };
 
-      await transactionsService.confirmDraftTransaction(currentDraftId, payload);
+      const confirmedTx = await transactionsService.confirmDraftTransaction(currentDraftId, payload);
+      if (splits && splits.length >= 2) {
+        await transactionsService.splitTransaction(confirmedTx?.id || currentDraftId, splits);
+      }
       if (txType === 'expense') {
         learnMerchantMemory({
           merchantName: merchantClean,
@@ -435,12 +464,41 @@ export const UploadPage: React.FC = () => {
           accountId: selectedAccountId,
         });
       }
-      toast.success('Transaksi berhasil disimpan');
+      if (queryClient) {
+        invalidateFinancialData(queryClient);
+      }
+      toast.success(
+        splits && splits.length >= 2
+          ? `Transaksi dipecah ke ${splits.length} kategori & disimpan`
+          : 'Transaksi berhasil disimpan'
+      );
       navigate('/transactions');
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : 'Gagal mengonfirmasi transaksi.');
       setIsProcessing(false);
     }
+  };
+
+  const annotatedPdfTransactions = useMemo(
+    () =>
+      annotatePdfTransferCandidates(
+        pdfTransactions,
+        accounts || [],
+        recentTransactions
+      ),
+    [accounts, pdfTransactions, recentTransactions]
+  );
+
+  const transferCandidateCount = useMemo(
+    () => annotatedPdfTransactions.filter((t) => t.isTransferCandidate).length,
+    [annotatedPdfTransactions]
+  );
+
+  const excludeTransferCandidates = () => {
+    setSelectedPdfIndexes((prev) =>
+      prev.filter((idx) => !annotatedPdfTransactions[idx]?.isTransferCandidate)
+    );
+    toast.info(`${transferCandidateCount} baris terindikasi transfer/duplikat dikecualikan`);
   };
 
   const togglePdfSelection = (index: number) => {
@@ -507,6 +565,7 @@ export const UploadPage: React.FC = () => {
     setNotes('');
     setOcrEngine('');
     setOcrItems([]);
+    setShowSplitPanel(false);
     setRawText('');
     setShowRawText(false);
     setPdfTransactions([]);
@@ -736,17 +795,29 @@ export const UploadPage: React.FC = () => {
                     </div>
                   ) : (
                     <>
-                      <div className="flex items-center justify-between gap-2 text-xs">
-                        <button
-                          type="button"
-                          onClick={toggleAllPdfSelection}
-                          className="inline-flex items-center gap-1.5 font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
-                        >
-                          <ListChecks className="w-4 h-4" />
-                          {selectedPdfIndexes.length === pdfTransactions.length
-                            ? 'Batal Pilih Semua'
-                            : 'Pilih Semua'}
-                        </button>
+                      <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={toggleAllPdfSelection}
+                            className="inline-flex items-center gap-1.5 font-semibold text-indigo-600 dark:text-indigo-400 hover:underline"
+                          >
+                            <ListChecks className="w-4 h-4" />
+                            {selectedPdfIndexes.length === pdfTransactions.length
+                              ? 'Batal Pilih Semua'
+                              : 'Pilih Semua'}
+                          </button>
+                          {transferCandidateCount > 0 && (
+                            <button
+                              type="button"
+                              onClick={excludeTransferCandidates}
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full bg-amber-50 text-amber-700 border border-amber-200 font-semibold dark:bg-amber-950/30 dark:text-amber-300 dark:border-amber-900/50 hover:bg-amber-100"
+                            >
+                              <ArrowLeftRight className="w-3.5 h-3.5" />
+                              Kecualikan Transfer Ganda ({transferCandidateCount})
+                            </button>
+                          )}
+                        </div>
                         <span className="text-slate-500">
                           {selectedPdfIndexes.length} dari {pdfTransactions.length} baris dipilih
                         </span>
@@ -754,7 +825,7 @@ export const UploadPage: React.FC = () => {
 
                       {/* Mobile Cards */}
                       <div className="md:hidden space-y-2.5 max-h-[340px] overflow-y-auto pr-1">
-                        {pdfTransactions.map((tx, idx) => {
+                        {annotatedPdfTransactions.map((tx, idx) => {
                           const checked = selectedPdfIndexes.includes(idx);
                           return (
                             <label
@@ -787,6 +858,11 @@ export const UploadPage: React.FC = () => {
                                 <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 break-words">
                                   {tx.description}
                                 </p>
+                                {tx.isTransferCandidate && (
+                                  <p className="text-[11px] font-medium text-amber-700 dark:text-amber-300">
+                                    Potensi Transfer / Duplikat: {tx.transferReason}
+                                  </p>
+                                )}
                               </div>
                             </label>
                           );
@@ -814,7 +890,7 @@ export const UploadPage: React.FC = () => {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                            {pdfTransactions.map((tx, idx) => (
+                            {annotatedPdfTransactions.map((tx, idx) => (
                               <tr key={idx} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
                                 <td className="px-3 py-2.5">
                                   <input
@@ -826,8 +902,14 @@ export const UploadPage: React.FC = () => {
                                   />
                                 </td>
                                 <td className="px-3 py-2.5 text-slate-500 whitespace-nowrap">{tx.date}</td>
-                                <td className="px-3 py-2.5 text-slate-800 dark:text-slate-200 truncate max-w-[200px] font-medium">
-                                  {tx.description}
+                                <td className="px-3 py-2.5 text-slate-800 dark:text-slate-200 max-w-[240px] font-medium">
+                                  <p className="truncate">{tx.description}</p>
+                                  {tx.isTransferCandidate && (
+                                    <span className="inline-flex items-center gap-1 mt-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-300">
+                                      <ArrowLeftRight className="w-3 h-3" />
+                                      Potensi Transfer / Duplikat
+                                    </span>
+                                  )}
                                 </td>
                                 <td className="px-3 py-2.5 text-right text-rose-600 font-money whitespace-nowrap">
                                   {tx.debit > 0 ? `Rp ${tx.debit.toLocaleString('id-ID')}` : '-'}
@@ -1094,28 +1176,59 @@ export const UploadPage: React.FC = () => {
                 </Card>
 
                 {ocrItems.length > 0 && (
-                  <Card
-                    title="Rincian Item Struk Terdeteksi"
-                    extra={<Badge variant="info">{ocrItems.length} Item</Badge>}
-                  >
-                    <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
-                      {ocrItems.map((item, idx) => (
-                        <div key={idx} className="py-2.5 flex items-center justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
-                              {item.name}
-                            </p>
-                            <p className="text-slate-400">
-                              {item.quantity}x @ Rp {item.price.toLocaleString('id-ID')}
-                            </p>
-                          </div>
-                          <span className="font-money font-semibold text-slate-900 dark:text-white shrink-0">
-                            Rp {item.total.toLocaleString('id-ID')}
-                          </span>
+                  <>
+                    <Card
+                      title="Rincian Item Struk Terdeteksi"
+                      extra={
+                        <div className="flex items-center gap-2">
+                          <Badge variant="info">{ocrItems.length} Item</Badge>
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant={showSplitPanel ? 'primary' : 'secondary'}
+                            onClick={() => setShowSplitPanel((prev) => !prev)}
+                          >
+                            {showSplitPanel ? 'Tutup Split / Patungan' : 'Pecah Kategori / Patungan'}
+                          </Button>
                         </div>
-                      ))}
-                    </div>
-                  </Card>
+                      }
+                    >
+                      <div className="divide-y divide-slate-100 dark:divide-slate-800 text-xs">
+                        {ocrItems.map((item, idx) => (
+                          <div key={idx} className="py-2.5 flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                {item.name}
+                              </p>
+                              <p className="text-slate-400">
+                                {item.quantity}x @ Rp {item.price.toLocaleString('id-ID')}
+                              </p>
+                            </div>
+                            <span className="font-money font-semibold text-slate-900 dark:text-white shrink-0">
+                              Rp {item.total.toLocaleString('id-ID')}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </Card>
+
+                    {showSplitPanel && (
+                      <ReceiptSplitPanel
+                        items={ocrItems}
+                        receiptTotal={Number(amountStr) || ocrItems.reduce((s, i) => s + i.total, 0)}
+                        merchantName={merchantName}
+                        categories={categories || []}
+                        defaultCategoryId={selectedCategoryId}
+                        canMutate={isOwner}
+                        isSubmitting={isProcessing}
+                        onConfirmWithSplits={(splits) => handleConfirm(splits)}
+                        onApplyMyShare={(myShareAmount, summaryNote) => {
+                          setAmountStr(String(myShareAmount));
+                          setNotes((prev) => (prev ? `${prev}\n${summaryNote}` : summaryNote));
+                        }}
+                      />
+                    )}
+                  </>
                 )}
               </>
             )}

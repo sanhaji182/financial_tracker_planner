@@ -106,6 +106,7 @@ export const AISettingsPage: React.FC = () => {
       toast.success('Pengaturan AI berhasil diperbarui');
       setMessage({ type: 'success', text: 'Pengaturan AI berhasil diperbarui!' });
       setApiKey('');
+      window.dispatchEvent(new CustomEvent('kb:ai-settings-updated'));
       await loadSettings();
     } catch (err: unknown) {
       const msg =
@@ -251,11 +252,17 @@ export const AISettingsPage: React.FC = () => {
                       }}
                       className="w-full h-10 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl px-3 focus:outline-none focus:border-indigo-500"
                     >
-                      <option value="local">Local Simulator (Tanpa API Key)</option>
+                      <option value="local">On-Device Intelligence / SLM Ready (0% Data ke Cloud)</option>
                       <option value="openai">OpenAI (ChatGPT Vision API)</option>
                       <option value="anthropic">Anthropic (Claude Vision API)</option>
                       <option value="gemini">Google Gemini (Vision &amp; Chat API)</option>
                     </select>
+                    {aiProvider === 'local' && (
+                      <p className="text-[11px] font-medium text-emerald-700 dark:text-emerald-300 flex items-center gap-1 pt-0.5">
+                        <ShieldCheck className="w-3.5 h-3.5 shrink-0" />
+                        Privasi Penuh: Data keluar ke cloud 0% (diproses NLP &amp; Watchdog di perangkat).
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">
@@ -307,7 +314,7 @@ export const AISettingsPage: React.FC = () => {
                       </button>
                     </div>
                     <p className="text-[11px] text-slate-400">
-                      Disimpan pada konfigurasi brankas server lokal untuk pemanggilan worker AI.
+                      Disimpan terenkripsi di Android Keystore / WebCrypto Vault (perangkat) serta brankas server terenkripsi di Mode Cloud.
                     </p>
                   </div>
                 )}

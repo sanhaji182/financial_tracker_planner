@@ -1,4 +1,5 @@
 import React from 'react';
+import { useSecurityStore, maskMoneyText } from '../../stores/useSecurityStore';
 
 interface MoneyDisplayProps {
   value: number;
@@ -16,6 +17,7 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
   colorSemantic = false,
   ariaLabel,
 }) => {
+  const privacyMasked = useSecurityStore((s) => s.privacyMasked);
   const safeVal = Number.isFinite(value) ? value : 0;
   const isNegative = safeVal < 0;
   const absValue = Math.abs(safeVal);
@@ -28,19 +30,24 @@ export const MoneyDisplay: React.FC<MoneyDisplayProps> = ({
   };
 
   const formattedStr = `${currency === 'IDR' ? 'Rp' : currency} ${formatValue(absValue)}`;
-  const display = `${isNegative ? '-' : ''}${formattedStr}`;
+  const rawDisplay = `${isNegative ? '-' : ''}${formattedStr}`;
+  const display = maskMoneyText(rawDisplay, privacyMasked);
 
   // Prefer native Intl currency for screen readers (spoken form).
-  let spoken = display;
-  try {
-    spoken = new Intl.NumberFormat('id-ID', {
-      style: 'currency',
-      currency: currency || 'IDR',
-      currencyDisplay: 'name',
-      maximumFractionDigits: 2,
-    }).format(value);
-  } catch {
-    spoken = display;
+  let spoken = rawDisplay;
+  if (privacyMasked) {
+    spoken = 'Nominal disembunyikan';
+  } else {
+    try {
+      spoken = new Intl.NumberFormat('id-ID', {
+        style: 'currency',
+        currency: currency || 'IDR',
+        currencyDisplay: 'name',
+        maximumFractionDigits: 2,
+      }).format(value);
+    } catch {
+      spoken = rawDisplay;
+    }
   }
 
   let colorClass = '';

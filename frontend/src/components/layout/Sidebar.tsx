@@ -351,7 +351,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
                     {user?.name || 'User'}
                   </p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
-                    {user?.role === 'owner' ? 'Owner Akun' : 'Pasangan (View)'}
+                    {user?.role === 'owner'
+                      ? 'Owner Akun'
+                      : user?.role === 'spouse_co_owner'
+                        ? 'Pasangan (Co-Pilot)'
+                        : 'Pasangan (View)'}
                   </p>
                 </div>
               )}

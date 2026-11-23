@@ -8,6 +8,8 @@ import { Badge } from '../components/ui/Badge';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatCard } from '../components/ui/StatCard';
 import { DebtFormModal } from '../components/modals/DebtFormModal';
+import { PayLaterShieldCard } from '../components/debts/PayLaterShieldCard';
+import { KprCliffSimulatorCard } from '../components/debts/KprCliffSimulatorCard';
 import { CardSkeleton } from '../components/ui/Skeleton';
 import { EmptyState } from '../components/ui/EmptyState';
 import {
@@ -167,6 +169,14 @@ export const DebtsPage: React.FC = () => {
           loading={isPageLoading}
         />
       </div>
+
+      {/* PayLater & BNPL Guardrail Shield */}
+      {!isListLoading && debts && debts.length > 0 && (
+        <>
+          <PayLaterShieldCard debts={debts} />
+          <KprCliffSimulatorCard debts={debts} />
+        </>
+      )}
 
       {/* Status Filter Pills */}
       {!isListLoading && debts && debts.length > 0 && (

@@ -35,6 +35,7 @@ import {
 } from 'lucide-react';
 
 type AccountFilterType = 'all' | 'bank' | 'e_wallet' | 'cash' | 'investment' | 'deposit';
+type OwnershipFilter = 'all' | 'shared' | 'personal';
 
 const FILTER_OPTIONS: Array<{ value: AccountFilterType; label: string }> = [
   { value: 'all', label: 'Semua' },
@@ -53,6 +54,7 @@ export const AccountsPage: React.FC = () => {
   const isOwner = user?.role === 'owner';
 
   const [typeFilter, setTypeFilter] = useState<AccountFilterType>('all');
+  const [ownershipFilter, setOwnershipFilter] = useState<OwnershipFilter>('all');
   const [modalOpen, setModalOpen] = useState(false);
   const [selectedAccount, setSelectedAccount] = useState<Account | undefined>(undefined);
   const [activeDropdown, setActiveDropdown] = useState<string | null>(null);
@@ -141,19 +143,30 @@ export const AccountsPage: React.FC = () => {
   const totalDeposit = summary?.total_deposit || 0;
   const grandTotal = summary?.grand_total || 0;
 
-  const filteredAccounts = useMemo(() => {
+  const roleVisibleAccounts = useMemo(() => {
     if (!accounts) return [];
-    if (typeFilter === 'all') return accounts;
-    return accounts.filter((acc) => acc.type === typeFilter);
-  }, [accounts, typeFilter]);
+    if (user?.role === 'spouse_co_owner') {
+      return accounts.filter((acc) => acc.is_shared);
+    }
+    return accounts;
+  }, [accounts, user?.role]);
+
+  const filteredAccounts = useMemo(() => {
+    return roleVisibleAccounts.filter((acc) => {
+      if (typeFilter !== 'all' && acc.type !== typeFilter) return false;
+      if (ownershipFilter === 'shared' && !acc.is_shared) return false;
+      if (ownershipFilter === 'personal' && acc.is_shared) return false;
+      return true;
+    });
+  }, [ownershipFilter, roleVisibleAccounts, typeFilter]);
 
   const countsByType = useMemo(() => {
-    const map: Record<string, number> = { all: accounts?.length || 0 };
-    (accounts || []).forEach((acc) => {
+    const map: Record<string, number> = { all: roleVisibleAccounts.length };
+    roleVisibleAccounts.forEach((acc) => {
       map[acc.type] = (map[acc.type] || 0) + 1;
     });
     return map;
-  }, [accounts]);
+  }, [roleVisibleAccounts]);
 
   return (
     <div className="space-y-6 animate-fade-in">
@@ -225,37 +238,65 @@ export const AccountsPage: React.FC = () => {
         />
       </div>
 
-      {/* Type Filter Chips */}
-      {!isPageLoading && accounts && accounts.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          {FILTER_OPTIONS.map((opt) => {
-            const count = countsByType[opt.value] || 0;
-            const active = typeFilter === opt.value;
-            if (opt.value !== 'all' && count === 0) return null;
-            return (
-              <button
-                key={opt.value}
-                type="button"
-                onClick={() => setTypeFilter(opt.value)}
-                className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
-                  active
-                    ? 'bg-indigo-600 text-white shadow-sm'
-                    : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700'
-                }`}
-              >
-                <span>{opt.label}</span>
-                <span
-                  className={`text-[11px] px-1.5 py-0.2 rounded-full ${
+      {/* Type & Joint/Personal Filter Chips */}
+      {!isPageLoading && roleVisibleAccounts.length > 0 && (
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {FILTER_OPTIONS.map((opt) => {
+              const count = countsByType[opt.value] || 0;
+              const active = typeFilter === opt.value;
+              if (opt.value !== 'all' && count === 0) return null;
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => setTypeFilter(opt.value)}
+                  className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full text-xs font-semibold transition-all ${
                     active
-                      ? 'bg-white/20 text-white'
-                      : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 border border-slate-200 dark:border-slate-800 hover:border-indigo-300 dark:hover:border-indigo-700'
                   }`}
                 >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+                  <span>{opt.label}</span>
+                  <span
+                    className={`text-[11px] px-1.5 py-0.2 rounded-full ${
+                      active
+                        ? 'bg-white/20 text-white'
+                        : 'bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+
+          {user?.role !== 'spouse_co_owner' && (
+            <div className="inline-flex rounded-xl bg-slate-100 dark:bg-slate-800 p-1 self-start sm:self-auto">
+              {[
+                { value: 'all', label: 'Semua' },
+                { value: 'shared', label: 'Rekening Bersama' },
+                { value: 'personal', label: 'Rekening Pribadi' },
+              ].map((opt) => {
+                const active = ownershipFilter === opt.value;
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setOwnershipFilter(opt.value as OwnershipFilter)}
+                    className={`px-3 py-1 rounded-lg text-xs font-semibold transition-all ${
+                      active
+                        ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm'
+                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -380,7 +421,9 @@ export const AccountsPage: React.FC = () => {
                 <div className="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
                   <div className="flex flex-wrap gap-1.5">
                     <Badge variant="neutral">{getAccountTypeLabel(account.type)}</Badge>
-                    {account.is_shared && <Badge variant="transfer">Bersama</Badge>}
+                    <Badge variant={account.is_shared ? 'transfer' : 'warning'}>
+                      {account.is_shared ? 'Bersama' : 'Pribadi'}
+                    </Badge>
                     {account.is_emergency_fund && <Badge variant="success">Dana Darurat</Badge>}
                     {!account.is_active && <Badge variant="danger">Arsip</Badge>}
                   </div>

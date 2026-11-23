@@ -1,24 +1,33 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Bot, Send, Loader2, ChevronDown, MessageSquare } from 'lucide-react';
-import { aiSettingsService, type AISettings } from '../../services/aiSettings';
+import { useQueryClient } from '@tanstack/react-query';
+import { Bot, Send, Loader2, ChevronDown, MessageSquare, CheckCircle2, Sparkles, X } from 'lucide-react';
+import { aiSettingsService, type AISettings, type AgenticAction } from '../../services/aiSettings';
+import { transactionsService, type CreateTransactionRequest } from '../../services/transactions';
+import { transfersService, type TransferRequest } from '../../services/transfers';
+import { budgetsService } from '../../services/budgets';
+import goalsService, { type CreateGoalPayload } from '../../services/goals';
+import { invalidateFinancialData } from '../../hooks/invalidateFinancialQueries';
+import { toast } from '../../stores/useToastStore';
 import { useAuthStore } from '../../stores/authStore';
 
 interface ChatMessage {
   role: 'user' | 'assistant';
   text: string;
   reason?: string;
+  proposed_actions?: AgenticAction[];
 }
 
 const QUICK_QUESTIONS = [
   'Bagaimana kondisi keuangan saya bulan ini?',
-  'Apakah dana darurat saya sudah cukup?',
+  'Catat kopi 28rb',
+  'Cek anomali pengeluaran',
+  'Simulasi cicil 3jt/bulan aman?',
   'Bagaimana cara melunasi utang lebih cepat?',
-  'Di mana saya bisa menghemat pengeluaran?',
-  'Apakah saya on-track menuju tujuan finansial?',
 ];
 
 export const AdvisorChatDrawer: React.FC = () => {
+  const queryClient = useQueryClient();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const user = useAuthStore((s) => s.user);
   const [isOpen, setIsOpen] = useState(false);
@@ -27,31 +36,39 @@ export const AdvisorChatDrawer: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [advisorEnabled, setAdvisorEnabled] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
+  const [actionStates, setActionStates] = useState<
+    Record<string, 'idle' | 'running' | 'done' | 'dismissed'>
+  >({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  useEffect(() => {
-    if (!isAuthenticated || user?.role !== 'owner') {
+  const checkAdvisorEnabled = useCallback(async () => {
+    if (!isAuthenticated || (user?.role !== 'owner' && user?.role !== 'spouse_co_owner')) {
       setAdvisorEnabled(false);
       setSettingsLoaded(true);
       return;
     }
-
-    const checkAdvisorEnabled = async () => {
-      try {
-        const settings: AISettings = await aiSettingsService.getSettings();
-        setAdvisorEnabled(settings.ai_enabled && settings.advisor_enabled);
-      } catch {
-        setAdvisorEnabled(false);
-      } finally {
-        setSettingsLoaded(true);
-      }
-    };
-    void checkAdvisorEnabled();
+    try {
+      const settings: AISettings = await aiSettingsService.getSettings();
+      setAdvisorEnabled(
+        Boolean(settings.advisor_enabled && (settings.ai_enabled || settings.ai_provider === 'local'))
+      );
+    } catch {
+      setAdvisorEnabled(false);
+    } finally {
+      setSettingsLoaded(true);
+    }
   }, [isAuthenticated, user?.role]);
 
   useEffect(() => {
-    if (messagesEndRef.current) {
+    void checkAdvisorEnabled();
+    const onSettingsUpdate = () => void checkAdvisorEnabled();
+    window.addEventListener('kb:ai-settings-updated', onSettingsUpdate);
+    return () => window.removeEventListener('kb:ai-settings-updated', onSettingsUpdate);
+  }, [checkAdvisorEnabled]);
+
+  useEffect(() => {
+    if (messagesEndRef.current && typeof messagesEndRef.current.scrollIntoView === 'function') {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [messages, isLoading]);
@@ -77,6 +94,7 @@ export const AdvisorChatDrawer: React.FC = () => {
         role: 'assistant',
         text: result.response,
         reason: result.reason,
+        proposed_actions: result.proposed_actions,
       };
       setMessages((prev) => [...prev, assistantMessage]);
     } catch {
@@ -87,6 +105,30 @@ export const AdvisorChatDrawer: React.FC = () => {
       setMessages((prev) => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleExecuteAction = async (action: AgenticAction) => {
+    setActionStates((prev) => ({ ...prev, [action.id]: 'running' }));
+    try {
+      if (action.type === 'create_transaction') {
+        await transactionsService.createTransaction(
+          action.payload as unknown as CreateTransactionRequest
+        );
+      } else if (action.type === 'create_transfer') {
+        await transfersService.createTransfer(action.payload as unknown as TransferRequest);
+      } else if (action.type === 'set_budget') {
+        const p = action.payload as { category_id: string; month: string; amount: number };
+        await budgetsService.setBudget(p.category_id, p.month, p.amount);
+      } else if (action.type === 'create_goal') {
+        await goalsService.createGoal(action.payload as unknown as CreateGoalPayload);
+      }
+      invalidateFinancialData(queryClient);
+      setActionStates((prev) => ({ ...prev, [action.id]: 'done' }));
+      toast.success('Aksi AI berhasil dijalankan', action.title);
+    } catch {
+      setActionStates((prev) => ({ ...prev, [action.id]: 'idle' }));
+      toast.error('Gagal menjalankan aksi AI');
     }
   };
 
@@ -224,6 +266,70 @@ export const AdvisorChatDrawer: React.FC = () => {
                       } px-3.5 py-2.5 space-y-1`}
                     >
                       <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                      {msg.role === 'assistant' &&
+                        Array.isArray(msg.proposed_actions) &&
+                        msg.proposed_actions.length > 0 && (
+                          <div className="pt-2 space-y-2">
+                            {msg.proposed_actions.map((act) => {
+                              const status = actionStates[act.id] || 'idle';
+                              if (status === 'dismissed') return null;
+                              return (
+                                <div
+                                  key={act.id}
+                                  className="rounded-xl border border-indigo-200 dark:border-indigo-800/70 bg-white dark:bg-slate-900 p-2.5 space-y-2 shadow-sm"
+                                >
+                                  <div className="flex items-start gap-2">
+                                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                                    <div className="min-w-0">
+                                      <p className="text-xs font-bold text-slate-900 dark:text-white">
+                                        {act.title}
+                                      </p>
+                                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                        {act.summary}
+                                      </p>
+                                    </div>
+                                  </div>
+                                  {status === 'done' ? (
+                                    <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                      <CheckCircle2 className="w-3.5 h-3.5" />
+                                      Berhasil dijalankan
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={status === 'running'}
+                                        onClick={() => void handleExecuteAction(act)}
+                                        className="flex-1 inline-flex items-center justify-center gap-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 text-[11px] font-semibold disabled:opacity-50"
+                                      >
+                                        {status === 'running' ? (
+                                          <Loader2 className="w-3 h-3 animate-spin" />
+                                        ) : (
+                                          <CheckCircle2 className="w-3 h-3" />
+                                        )}
+                                        Konfirmasi &amp; Jalankan
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={status === 'running'}
+                                        onClick={() =>
+                                          setActionStates((prev) => ({
+                                            ...prev,
+                                            [act.id]: 'dismissed',
+                                          }))
+                                        }
+                                        className="rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                        aria-label="Batalkan saran aksi"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       {msg.role === 'assistant' && msg.reason && (
                         <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700 mt-1.5">
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">

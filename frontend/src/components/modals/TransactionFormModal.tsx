@@ -7,6 +7,7 @@ import {
 } from '../../hooks/useTransactions';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useDebts } from '../../hooks/useDebts';
+import { useSecurityStore } from '../../stores/useSecurityStore';
 import type { Transaction, CreateTransactionRequest } from '../../services/transactions';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -20,18 +21,32 @@ import {
 } from '../../offline/nativeOcr';
 import { getHybridAISettings } from '../../offline/storage';
 import { captureReceiptPhoto, isNativeMobile } from '../../utils/mobile';
-import { Loader2, AlertCircle, Upload, X, FileImage, Camera, Sparkles } from 'lucide-react';
+import { parseIndonesianFinancialCommand } from '../../utils/indonesianNlpParser';
+import { Loader2, AlertCircle, Upload, X, FileImage, Camera, Sparkles, Mic, MicOff } from 'lucide-react';
+
+interface BrowserSpeechRecognition {
+  lang: string;
+  interimResults: boolean;
+  maxAlternatives: number;
+  start: () => void;
+  stop: () => void;
+  onresult: ((e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+}
 
 interface TransactionFormModalProps {
   isOpen: boolean;
   onClose: () => void;
   editTransaction?: Transaction;
+  initialVoiceMode?: boolean;
 }
 
 export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   isOpen,
   onClose,
   editTransaction,
+  initialVoiceMode = false,
 }) => {
   const formId = useId();
   const isEditMode = Boolean(editTransaction);
@@ -42,9 +57,15 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   const { data: accounts } = useAccounts();
   const { data: categories } = useCategories();
   const { data: debts = [] } = useDebts();
+  const jointApprovalThresholdIdr = useSecurityStore((s) => s.jointApprovalThresholdIdr);
+  const [jointApproved, setJointApproved] = useState(false);
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const quickVoiceInputRef = useRef<HTMLInputElement | null>(null);
+  const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
   const [isScanningReceipt, setIsScanningReceipt] = useState(false);
+  const [quickCommandText, setQuickCommandText] = useState('');
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
 
   const [type, setType] = useState<'income' | 'expense' | 'transfer'>('expense');
   const [date, setDate] = useState('');
@@ -88,13 +109,114 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       setDescription('');
       setNotes('');
       setFiles([]);
+      setQuickCommandText('');
+      setIsListeningVoice(false);
     }
     setAmountError(null);
     setAccountError(null);
     setCategoryError(null);
     setErrorMsg(null);
     setIsScanningReceipt(false);
+    setJointApproved(false);
   }, [editTransaction, isOpen]);
+
+  useEffect(() => {
+    if (isOpen && initialVoiceMode && !editTransaction) {
+      const t = setTimeout(() => quickVoiceInputRef.current?.focus(), 120);
+      return () => clearTimeout(t);
+    }
+  }, [editTransaction, initialVoiceMode, isOpen]);
+
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore cleanup errors
+      }
+    };
+  }, []);
+
+  const applyQuickVoiceOrText = (rawText: string) => {
+    const clean = rawText.trim();
+    if (!clean) return;
+    const parsed = parseIndonesianFinancialCommand(clean, accounts || [], categories || []);
+    setType(parsed.type);
+    if (parsed.amount) {
+      setAmount(String(parsed.amount));
+      setAmountError(null);
+    }
+    if (parsed.accountId) {
+      setAccountId(parsed.accountId);
+      setAccountError(null);
+    }
+    if (parsed.targetAccountId) {
+      setTargetAccountId(parsed.targetAccountId);
+    }
+    if (parsed.categoryId) {
+      setCategoryId(parsed.categoryId);
+      setCategoryError(null);
+    }
+    if (parsed.description) {
+      setDescription(parsed.description);
+    }
+    toast.success('Form diisi otomatis dari kalimat Anda');
+  };
+
+  const handleToggleVoiceInput = () => {
+    if (isListeningVoice) {
+      try {
+        recognitionRef.current?.stop();
+      } catch {
+        // Ignore
+      }
+      setIsListeningVoice(false);
+      return;
+    }
+
+    const SpeechCtor = (
+      window as unknown as {
+        SpeechRecognition?: new () => BrowserSpeechRecognition;
+        webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+      }
+    ).SpeechRecognition ||
+      (
+        window as unknown as {
+          webkitSpeechRecognition?: new () => BrowserSpeechRecognition;
+        }
+      ).webkitSpeechRecognition;
+
+    if (!SpeechCtor) {
+      quickVoiceInputRef.current?.focus();
+      toast.info('Ketik kalimat singkat mis. "Kopi 28rb pakai GoPay" lalu tekan Isi Otomatis.');
+      return;
+    }
+
+    try {
+      const rec = new SpeechCtor();
+      rec.lang = 'id-ID';
+      rec.interimResults = false;
+      rec.maxAlternatives = 1;
+      rec.onresult = (e) => {
+        const transcript = e.results?.[0]?.[0]?.transcript || '';
+        if (transcript.trim()) {
+          setQuickCommandText(transcript.trim());
+          applyQuickVoiceOrText(transcript.trim());
+        }
+      };
+      rec.onerror = () => {
+        setIsListeningVoice(false);
+        toast.error('Tidak dapat mendengar suara. Coba ketik kalimat transaksi di samping.');
+      };
+      rec.onend = () => setIsListeningVoice(false);
+      recognitionRef.current = rec;
+      setIsListeningVoice(true);
+      rec.start();
+    } catch {
+      setIsListeningVoice(false);
+      quickVoiceInputRef.current?.focus();
+    }
+  };
 
   useEffect(() => {
     if (!isEditMode && isOpen) {
@@ -288,13 +410,31 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       return;
     }
 
+    const selectedAccount = accounts?.find((a) => a.id === accountId);
+    const requiresJointApproval =
+      !isEditMode &&
+      type === 'expense' &&
+      Boolean(selectedAccount?.is_shared) &&
+      jointApprovalThresholdIdr > 0 &&
+      parsedAmount >= jointApprovalThresholdIdr;
+
+    if (requiresJointApproval && !jointApproved) {
+      setErrorMsg('Konfirmasikan bahwa pengeluaran Rekening Bersama ini telah disetujui pasangan.');
+      return;
+    }
+
+    const finalNotes = requiresJointApproval
+      ? [notes, '[Disetujui Bersama Pasangan]'].filter(Boolean).join(' • ')
+      : notes || undefined;
+
     const payload: CreateTransactionRequest = {
       date: new Date(date).toISOString(),
       amount: parsedAmount,
       type,
       account_id: accountId,
       description: description || undefined,
-      notes: notes || undefined,
+      notes: finalNotes,
+      tags: requiresJointApproval ? ['persetujuan-bersama'] : undefined,
     };
 
     if (type === 'transfer') {
@@ -358,6 +498,14 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   );
 
   const filteredCategories = categories ? categories.filter((c) => c.type === type) : [];
+  const selectedAccountObj = accounts?.find((a) => a.id === accountId);
+  const parsedAmountNum = parseFloat(amount) || 0;
+  const needsJointApproval =
+    !isEditMode &&
+    type === 'expense' &&
+    Boolean(selectedAccountObj?.is_shared) &&
+    jointApprovalThresholdIdr > 0 &&
+    parsedAmountNum >= jointApprovalThresholdIdr;
 
   return (
     <Modal
@@ -425,6 +573,50 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       )}
 
       {!isEditMode && (
+        <div className="mb-4 flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-2">
+          <button
+            type="button"
+            onClick={handleToggleVoiceInput}
+            aria-label="Rekam suara transaksi"
+            title={isListeningVoice ? 'Hentikan rekaman suara' : 'Ucapkan transaksi Bahasa Indonesia'}
+            className={`p-2 rounded-lg shrink-0 transition-colors ${
+              isListeningVoice
+                ? 'bg-rose-600 text-white animate-pulse'
+                : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-950/30'
+            }`}
+          >
+            {isListeningVoice ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+          </button>
+          <input
+            ref={quickVoiceInputRef}
+            id="tx-quick-voice-input"
+            type="text"
+            value={quickCommandText}
+            onChange={(e) => setQuickCommandText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                applyQuickVoiceOrText(quickCommandText);
+              }
+            }}
+            placeholder="Suara / ketik cepat: Kopi 28rb pakai GoPay"
+            aria-label="Input cepat suara atau kalimat transaksi"
+            className="flex-1 min-w-0 bg-transparent text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none"
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="secondary"
+            disabled={!quickCommandText.trim()}
+            onClick={() => applyQuickVoiceOrText(quickCommandText)}
+            className="!h-7 !px-2.5 !text-[11px] shrink-0"
+          >
+            Isi Otomatis
+          </Button>
+        </div>
+      )}
+
+      {!isEditMode && (
         <div className="flex border border-slate-200/80 dark:border-slate-800 bg-slate-100/70 dark:bg-slate-800/80 rounded-xl p-1 mb-5">
           <button
             type="button"
@@ -473,6 +665,26 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
           required
           className="text-lg font-bold"
         />
+
+        {needsJointApproval && (
+          <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 p-3 space-y-2 text-xs">
+            <p className="font-bold text-amber-800 dark:text-amber-300">
+              Melebihi Batas Persetujuan Bersama (Rp {jointApprovalThresholdIdr.toLocaleString('id-ID')})
+            </p>
+            <label className="flex items-center gap-2 text-amber-900 dark:text-amber-200 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={jointApproved}
+                onChange={(e) => {
+                  setJointApproved(e.target.checked);
+                  setErrorMsg(null);
+                }}
+                className="h-4 w-4 rounded border-amber-400 text-amber-600 focus:ring-amber-500"
+              />
+              <span>Sudah disetujui bersama pasangan</span>
+            </label>
+          </div>
+        )}
 
         <Input
           label="Tanggal Transaksi"

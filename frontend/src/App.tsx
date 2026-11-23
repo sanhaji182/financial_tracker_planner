@@ -5,8 +5,10 @@ import { AppShell } from './components/layout/AppShell';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 import { OfflineBanner } from './components/shared/OfflineBanner';
 import { MobileRuntimeBridge } from './components/shared/MobileRuntimeBridge';
+import { AppLockGate } from './components/shared/AppLockGate';
 import { Toaster } from './components/ui/Toaster';
 import { authService } from './services/auth';
+import { hydrateOfflineStorage } from './offline/storage';
 import { useAuthStore } from './stores/authStore';
 import { syncAppModeFromNative } from './utils/appMode';
 import {
@@ -58,6 +60,7 @@ const CurrencyPage = React.lazy(() => import('./pages/CurrencyPage').then(m => (
 const AISettingsPage = React.lazy(() => import('./pages/AISettingsPage'));
 const PrivacyPolicyPage = React.lazy(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
 const AccountSettingsPage = React.lazy(() => import('./pages/AccountSettingsPage').then(m => ({ default: m.AccountSettingsPage })));
+const IndonesiaWealthPage = React.lazy(() => import('./pages/IndonesiaWealthPage').then(m => ({ default: m.IndonesiaWealthPage })));
 const AdvisorChatDrawer = React.lazy(() => import('./components/drawers/AdvisorChatDrawer').then(m => ({ default: m.AdvisorChatDrawer })));
 
 const queryClient = new QueryClient({
@@ -79,6 +82,7 @@ const App: React.FC = () => {
 
     syncAppModeFromNative()
       .catch(() => 'cloud')
+      .then(() => hydrateOfflineStorage().catch(() => {}))
       .then(() => authService.restoreSession())
       .then((data) => {
         if (active) setAuth(data.user, data.access_token);
@@ -175,7 +179,7 @@ const App: React.FC = () => {
               <Route
                 path="spouse"
                 element={
-                  <ProtectedRoute allowedRoles={['spouse_viewer', 'owner']}>
+                  <ProtectedRoute allowedRoles={['spouse_viewer', 'spouse_co_owner', 'owner']}>
                     <SpouseDashboard />
                   </ProtectedRoute>
                 }
@@ -183,7 +187,7 @@ const App: React.FC = () => {
               <Route
                 path="transactions"
                 element={
-                  <ProtectedRoute allowedRoles={['owner']}>
+                  <ProtectedRoute allowedRoles={['owner', 'spouse_co_owner']}>
                     <TransactionsPage />
                   </ProtectedRoute>
                 }
@@ -191,7 +195,7 @@ const App: React.FC = () => {
               <Route
                 path="transactions/upload"
                 element={
-                  <ProtectedRoute allowedRoles={['owner']}>
+                  <ProtectedRoute allowedRoles={['owner', 'spouse_co_owner']}>
                     <UploadPage />
                   </ProtectedRoute>
                 }
@@ -199,7 +203,7 @@ const App: React.FC = () => {
               <Route
                 path="accounts"
                 element={
-                  <ProtectedRoute allowedRoles={['owner']}>
+                  <ProtectedRoute allowedRoles={['owner', 'spouse_co_owner']}>
                     <AccountsPage />
                   </ProtectedRoute>
                 }
@@ -233,6 +237,7 @@ const App: React.FC = () => {
               <Route path="budgets" element={<BudgetsPage />} />
               <Route path="closing" element={<MonthlyClosingPage />} />
               <Route path="goals" element={<GoalsPage />} />
+              <Route path="wealth-id" element={<IndonesiaWealthPage />} />
               <Route path="subscriptions" element={<SubscriptionsPage />} />
               <Route path="insights" element={<InsightsPage />} />
               <Route path="scenarios" element={<ScenariosPage />} />
@@ -286,6 +291,7 @@ const App: React.FC = () => {
         </React.Suspense>
 
         <Toaster />
+        <AppLockGate />
         <React.Suspense fallback={null}>
           <AdvisorChatDrawer />
         </React.Suspense>
