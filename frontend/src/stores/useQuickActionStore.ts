@@ -9,8 +9,13 @@ interface QuickActionState {
   toggleCommandPalette: () => void;
 
   isQuickTxOpen: boolean;
-  openQuickTx: () => void;
+  quickTxInitialVoice: boolean;
+  openQuickTx: (opts?: { voice?: boolean }) => void;
   closeQuickTx: () => void;
+
+  isNotifCaptureOpen: boolean;
+  openNotifCapture: () => void;
+  closeNotifCapture: () => void;
 
   isQuickTransferOpen: boolean;
   quickTransferSourceId: string | undefined;
@@ -43,8 +48,13 @@ export const useQuickActionStore = create<QuickActionState>((set) => ({
     set((s) => ({ isCommandPaletteOpen: !s.isCommandPaletteOpen })),
 
   isQuickTxOpen: false,
-  openQuickTx: () => set({ isQuickTxOpen: true }),
-  closeQuickTx: () => set({ isQuickTxOpen: false }),
+  quickTxInitialVoice: false,
+  openQuickTx: (opts) => set({ isQuickTxOpen: true, quickTxInitialVoice: Boolean(opts?.voice) }),
+  closeQuickTx: () => set({ isQuickTxOpen: false, quickTxInitialVoice: false }),
+
+  isNotifCaptureOpen: false,
+  openNotifCapture: () => set({ isNotifCaptureOpen: true }),
+  closeNotifCapture: () => set({ isNotifCaptureOpen: false }),
 
   isQuickTransferOpen: false,
   quickTransferSourceId: undefined,

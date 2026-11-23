@@ -1,7 +1,6 @@
 import axios, { type AxiosRequestConfig } from 'axios';
 import { useAuthStore } from '../stores/authStore';
 import { isLocalOfflineMode } from './appMode';
-import { handleLocalApiRequest } from '../offline/localApiAdapter';
 import { readCloudGetCache, saveCloudGetCache } from '../offline/storage';
 import {
   clearStoredRefreshToken,
@@ -40,6 +39,7 @@ const networkAdapter = rawDefaultAdapter ? axios.getAdapter(rawDefaultAdapter) :
 
 api.defaults.adapter = async (config) => {
   if (isLocalOfflineMode()) {
+    const { handleLocalApiRequest } = await import('../offline/localApiAdapter');
     return handleLocalApiRequest(config);
   }
 

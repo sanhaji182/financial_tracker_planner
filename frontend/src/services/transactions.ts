@@ -264,6 +264,8 @@ export interface ParsedPDFTransaction {
   debit: number;
   credit: number;
   balance: number;
+  possible_transfer?: boolean;
+  transfer_hint?: string;
 }
 
 export interface PDFStatementResponse {
@@ -272,6 +274,7 @@ export interface PDFStatementResponse {
   transactions: ParsedPDFTransaction[];
   confidence: number;
   extraction_method?: string;
+  transfer_candidates_count?: number;
 }
 
 export interface DocumentUploadParseResponse {

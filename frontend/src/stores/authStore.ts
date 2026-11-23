@@ -1,16 +1,26 @@
 import { create } from 'zustand';
 
+export type UserRole = 'owner' | 'spouse_viewer' | 'spouse_co_owner';
+
 export interface User {
   id: string;
   email: string;
   name: string;
-  role: 'owner' | 'spouse_viewer';
+  role: UserRole;
   invited_by?: string;
   avatar_url?: string;
   timezone: string;
   currency_default: string;
   last_login_at?: string;
   created_at: string;
+}
+
+export function canMutateHousehold(role?: string | null): boolean {
+  return role === 'owner' || role === 'spouse_co_owner';
+}
+
+export function isSpouseViewerOnly(role?: string | null): boolean {
+  return role === 'spouse_viewer';
 }
 
 interface AuthState {

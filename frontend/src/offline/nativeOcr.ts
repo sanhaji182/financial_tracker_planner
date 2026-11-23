@@ -1,4 +1,7 @@
-import { Capacitor, registerPlugin, type PluginListenerHandle } from '@capacitor/core';
+import * as CapacitorCore from '@capacitor/core';
+import type { PluginListenerHandle } from '@capacitor/core';
+
+const { Capacitor } = CapacitorCore;
 import type { Account, AccountScanParsedData, AccountScanResponse } from '../services/accounts';
 import type { Category } from '../services/categories';
 import type {
@@ -28,6 +31,20 @@ export interface SharedFilePayload {
   extraText?: string;
 }
 
+export interface CapturedBankNotification {
+  id: string;
+  packageName: string;
+  title: string;
+  text: string;
+  timestamp: number;
+}
+
+export interface NotificationCaptureStatus {
+  enabled: boolean;
+  permissionGranted: boolean;
+  pendingCount: number;
+}
+
 export interface LocalOcrPlugin {
   isAvailable(): Promise<{ available: boolean; engine: string }>;
   recognizeImage(options: { base64: string }): Promise<{
@@ -42,20 +59,86 @@ export interface LocalOcrPlugin {
     engine: string;
   }>;
   consumePendingShares(): Promise<{ files: SharedFilePayload[] }>;
+  setSecureItem?(options: { key: string; value: string }): Promise<{ saved: boolean }>;
+  getSecureItem?(options: { key: string }): Promise<{ value: string | null }>;
+  removeSecureItem?(options: { key: string }): Promise<{ removed: boolean }>;
+  isBiometricAvailable?(): Promise<{ available: boolean }>;
+  authenticateBiometric?(options?: {
+    title?: string;
+    subtitle?: string;
+  }): Promise<{ authenticated: boolean; reason?: string }>;
+  getNotificationCaptureStatus?(): Promise<NotificationCaptureStatus>;
+  setNotificationCaptureEnabled?(options: { enabled: boolean }): Promise<{
+    enabled: boolean;
+    permissionGranted: boolean;
+  }>;
+  openNotificationListenerSettings?(): Promise<void>;
+  consumeCapturedNotifications?(): Promise<{ notifications: CapturedBankNotification[] }>;
+  updateWidgetSummary?(options: {
+    safeToSpend: string;
+    liquidCash: string;
+    netWorth: string;
+    privacyMasked: boolean;
+  }): Promise<{ updated: boolean }>;
+  consumePendingQuickAction?(): Promise<{ action: string | null }>;
   addListener(
     eventName: 'sharedFilesReceived',
     listenerFunc: (data: { files: SharedFilePayload[] }) => void
   ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'capturedNotificationsUpdated',
+    listenerFunc: (data: { count: number }) => void
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'quickActionReceived',
+    listenerFunc: (data: { action: string }) => void
+  ): Promise<PluginListenerHandle>;
 }
 
-export const LocalOcr = registerPlugin<LocalOcrPlugin>('LocalOcr');
+let cachedLocalOcrPlugin: LocalOcrPlugin | null = null;
+
+export function getLocalOcr(): LocalOcrPlugin {
+  if (cachedLocalOcrPlugin) return cachedLocalOcrPlugin;
+  try {
+    const rp = CapacitorCore.registerPlugin;
+    if (typeof rp === 'function') {
+      cachedLocalOcrPlugin = rp<LocalOcrPlugin>('LocalOcr');
+      return cachedLocalOcrPlugin;
+    }
+  } catch {
+    // Handle Vitest mocks of @capacitor/core that omit registerPlugin
+  }
+  cachedLocalOcrPlugin = {
+    isAvailable: async () => ({ available: false, engine: 'unavailable' }),
+    recognizeImage: async () => ({ text: '', pageCount: 0, engine: 'unavailable' }),
+    recognizePdf: async () => ({ text: '', pageCount: 0, engine: 'unavailable' }),
+    consumePendingShares: async () => ({ files: [] }),
+    addListener: async () => ({ remove: async () => {} }),
+  };
+  return cachedLocalOcrPlugin;
+}
+
+export const LocalOcr: LocalOcrPlugin = getLocalOcr();
+
+function hasNativeLocalOcrPlugin(): boolean {
+  try {
+    const isNative =
+      typeof Capacitor?.isNativePlatform === 'function' && Capacitor.isNativePlatform();
+    const hasPlugin =
+      typeof Capacitor?.isPluginAvailable === 'function' &&
+      Capacitor.isPluginAvailable('LocalOcr');
+    return isNative || hasPlugin;
+  } catch {
+    return false;
+  }
+}
 
 export const localOcrBridge = {
   recognizeImage: (options: { base64: string }) => LocalOcr.recognizeImage(options),
   recognizePdf: (options: { base64: string; maxPages?: number; password?: string }) =>
     LocalOcr.recognizePdf(options),
   consumePendingShares: async (): Promise<{ files: SharedFilePayload[] }> => {
-    if (!Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('LocalOcr')) {
+    if (!hasNativeLocalOcrPlugin()) {
       return { files: [] };
     }
     return LocalOcr.consumePendingShares();
@@ -63,10 +146,106 @@ export const localOcrBridge = {
   addShareListener: async (
     listener: (data: { files: SharedFilePayload[] }) => void
   ): Promise<{ remove: () => Promise<void> | void }> => {
-    if (!Capacitor.isNativePlatform() && !Capacitor.isPluginAvailable('LocalOcr')) {
+    if (!hasNativeLocalOcrPlugin()) {
       return { remove: () => {} };
     }
     return LocalOcr.addListener('sharedFilesReceived', listener);
+  },
+  isBiometricAvailable: async (): Promise<{ available: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.isBiometricAvailable) {
+      return { available: false };
+    }
+    try {
+      return await LocalOcr.isBiometricAvailable();
+    } catch {
+      return { available: false };
+    }
+  },
+  authenticateBiometric: async (options?: {
+    title?: string;
+    subtitle?: string;
+  }): Promise<{ authenticated: boolean; reason?: string }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.authenticateBiometric) {
+      return { authenticated: false, reason: 'unavailable' };
+    }
+    try {
+      return await LocalOcr.authenticateBiometric(options);
+    } catch {
+      return { authenticated: false, reason: 'error' };
+    }
+  },
+  getNotificationCaptureStatus: async (): Promise<NotificationCaptureStatus> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.getNotificationCaptureStatus) {
+      return { enabled: false, permissionGranted: false, pendingCount: 0 };
+    }
+    try {
+      return await LocalOcr.getNotificationCaptureStatus();
+    } catch {
+      return { enabled: false, permissionGranted: false, pendingCount: 0 };
+    }
+  },
+  setNotificationCaptureEnabled: async (
+    enabled: boolean
+  ): Promise<{ enabled: boolean; permissionGranted: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.setNotificationCaptureEnabled) {
+      return { enabled, permissionGranted: false };
+    }
+    return LocalOcr.setNotificationCaptureEnabled({ enabled });
+  },
+  openNotificationListenerSettings: async (): Promise<void> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.openNotificationListenerSettings) return;
+    await LocalOcr.openNotificationListenerSettings();
+  },
+  consumeCapturedNotifications: async (): Promise<{
+    notifications: CapturedBankNotification[];
+  }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.consumeCapturedNotifications) {
+      return { notifications: [] };
+    }
+    try {
+      return await LocalOcr.consumeCapturedNotifications();
+    } catch {
+      return { notifications: [] };
+    }
+  },
+  addCapturedNotificationsListener: async (
+    listener: (data: { count: number }) => void
+  ): Promise<{ remove: () => Promise<void> | void }> => {
+    if (!hasNativeLocalOcrPlugin()) {
+      return { remove: () => {} };
+    }
+    return LocalOcr.addListener('capturedNotificationsUpdated', listener);
+  },
+  updateWidgetSummary: async (options: {
+    safeToSpend: string;
+    liquidCash: string;
+    netWorth: string;
+    privacyMasked: boolean;
+  }): Promise<void> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.updateWidgetSummary) return;
+    try {
+      await LocalOcr.updateWidgetSummary(options);
+    } catch {
+      // Widget update optional on web/test
+    }
+  },
+  consumePendingQuickAction: async (): Promise<{ action: string | null }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.consumePendingQuickAction) {
+      return { action: null };
+    }
+    try {
+      return await LocalOcr.consumePendingQuickAction();
+    } catch {
+      return { action: null };
+    }
+  },
+  addQuickActionListener: async (
+    listener: (data: { action: string }) => void
+  ): Promise<{ remove: () => Promise<void> | void }> => {
+    if (!hasNativeLocalOcrPlugin()) {
+      return { remove: () => {} };
+    }
+    return LocalOcr.addListener('quickActionReceived', listener);
   },
 };
 

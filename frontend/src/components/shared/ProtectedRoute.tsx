@@ -2,9 +2,11 @@ import React from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../../stores/authStore';
 
+import type { UserRole } from '../../stores/authStore';
+
 interface ProtectedRouteProps {
   children: React.ReactNode;
-  allowedRoles?: Array<'owner' | 'spouse_viewer'>;
+  allowedRoles?: UserRole[];
 }
 
 export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({

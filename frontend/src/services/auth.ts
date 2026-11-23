@@ -17,6 +17,7 @@ export interface InviteResponse {
   email: string;
   invite_link: string;
   token: string;
+  role?: 'spouse_viewer' | 'spouse_co_owner';
 }
 
 export interface RegisterRequest {
@@ -182,8 +183,11 @@ export const authService = {
     }
   },
 
-  async inviteSpouse(email: string): Promise<InviteResponse> {
-    const res = await api.post('/auth/invite-spouse', { email });
+  async inviteSpouse(
+    email: string,
+    role: 'spouse_viewer' | 'spouse_co_owner' = 'spouse_viewer'
+  ): Promise<InviteResponse> {
+    const res = await api.post('/auth/invite-spouse', { email, role });
     return res.data.data;
   },
 

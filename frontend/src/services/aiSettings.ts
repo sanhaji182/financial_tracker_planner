@@ -22,9 +22,24 @@ export interface UpdateAISettingsRequest {
   api_key?: string;
 }
 
+export type AgenticActionType =
+  | 'create_transaction'
+  | 'create_transfer'
+  | 'set_budget'
+  | 'create_goal';
+
+export interface AgenticAction {
+  id: string;
+  type: AgenticActionType;
+  title: string;
+  summary: string;
+  payload: Record<string, unknown>;
+}
+
 export interface AIChatMessage {
   response: string;
   reason?: string;
+  proposed_actions?: AgenticAction[];
 }
 
 export interface AnomalyCheckResponse {

@@ -19,6 +19,18 @@ import type { Subscription } from '../services/subscriptions';
 import type { TaskChecklist } from '../services/tasks';
 import type { AuditLog, Transaction } from '../services/transactions';
 import { getTodayLocalDate } from '../utils/date';
+import {
+  IDB_BLOB_PREFIX,
+  mirrorDbSnapshotToIdb,
+  putBlob,
+  readMirroredDbSnapshot,
+} from './indexedDbStore';
+import {
+  getCachedSecret,
+  hydrateSecureVault,
+  removeSecureSecret,
+  setSecureSecret,
+} from './secureVault';
 
 export const LOCAL_DB_STORAGE_KEY = 'kb_local_db_v1';
 const CLOUD_GET_CACHE_PREFIX = 'kb_cloud_get_cache_v1:';
@@ -324,22 +336,131 @@ export function loadLocalDB(): LocalDatabase {
         Array.isArray(parsed.currencies) && parsed.currencies.length > 0
           ? parsed.currencies
           : defaults.currencies,
-      ai_settings: {
-        ...defaults.ai_settings,
-        ...(parsed.ai_settings || {}),
-      },
+      ai_settings: (() => {
+        const merged = {
+          ...defaults.ai_settings,
+          ...(parsed.ai_settings || {}),
+        };
+        const secretKey = getCachedSecret('ai_api_key') || merged.api_key || '';
+        return {
+          ...merged,
+          api_key: secretKey || undefined,
+          has_api_key: Boolean(merged.has_api_key || secretKey.trim()),
+        };
+      })(),
     };
   } catch {
     return createInitialLocalDB();
   }
 }
 
-export function saveLocalDB(db: LocalDatabase): void {
+function buildCompactLocalStorageCopy(db: LocalDatabase): LocalDatabase {
+  return {
+    ...db,
+    ai_settings: {
+      ...db.ai_settings,
+      has_api_key: Boolean(db.ai_settings?.has_api_key || db.ai_settings?.api_key?.trim()),
+      api_key: undefined,
+    },
+  };
+}
+
+function offloadHeavyBlobsToIdb(dbCopy: LocalDatabase): LocalDatabase {
+  return {
+    ...dbCopy,
+    documents: (dbCopy.documents || []).map((doc) => {
+      if (doc.content_data_url && !doc.content_data_url.startsWith(IDB_BLOB_PREFIX)) {
+        const blobId = `doc:${doc.id}`;
+        void putBlob(blobId, doc.content_data_url);
+        return {
+          ...doc,
+          content_data_url: `${IDB_BLOB_PREFIX}${blobId}`,
+          file_url: `${IDB_BLOB_PREFIX}${blobId}`,
+        };
+      }
+      return doc;
+    }),
+    backups: (dbCopy.backups || []).map((bkp) => {
+      if (bkp.snapshot && !bkp.snapshot.startsWith(IDB_BLOB_PREFIX)) {
+        const blobId = `bkp:${bkp.file_name}`;
+        void putBlob(blobId, bkp.snapshot);
+        return {
+          ...bkp,
+          snapshot: `${IDB_BLOB_PREFIX}${blobId}`,
+        };
+      }
+      return bkp;
+    }),
+  };
+}
+
+export function saveLocalDB(
+  db: LocalDatabase,
+  options?: { skipSyncBroadcast?: boolean }
+): void {
   try {
+    const rawKey = db.ai_settings?.api_key?.trim();
+    if (rawKey) {
+      void setSecureSecret('ai_api_key', rawKey);
+    }
+
+    const fullCopy = {
+      ...db,
+      ai_settings: {
+        ...db.ai_settings,
+        has_api_key: Boolean(db.ai_settings?.has_api_key || rawKey),
+        api_key: undefined,
+      },
+    };
+    void mirrorDbSnapshotToIdb(LOCAL_DB_STORAGE_KEY, JSON.stringify(fullCopy));
+
     if (typeof window === 'undefined' || !window.localStorage) return;
-    window.localStorage.setItem(LOCAL_DB_STORAGE_KEY, JSON.stringify(db));
+
+    let lsCopy = buildCompactLocalStorageCopy(db);
+    let serialized = JSON.stringify(lsCopy);
+    if (serialized.length > 3_000_000) {
+      lsCopy = offloadHeavyBlobsToIdb(lsCopy);
+      serialized = JSON.stringify(lsCopy);
+    }
+
+    try {
+      window.localStorage.setItem(LOCAL_DB_STORAGE_KEY, serialized);
+    } catch {
+      lsCopy = offloadHeavyBlobsToIdb(lsCopy);
+      window.localStorage.setItem(LOCAL_DB_STORAGE_KEY, JSON.stringify(lsCopy));
+    }
+
+    if (!options?.skipSyncBroadcast && typeof window.dispatchEvent === 'function') {
+      window.dispatchEvent(new CustomEvent('kb:local-db-saved'));
+    }
   } catch {
     // Ignore storage quota overflow in restricted environments
+  }
+}
+
+export async function hydrateOfflineStorage(): Promise<void> {
+  await hydrateSecureVault(['ai_api_key', 'e2ee_passphrase']);
+  if (typeof window === 'undefined' || !window.localStorage) return;
+
+  try {
+    const existingRaw = window.localStorage.getItem(LOCAL_DB_STORAGE_KEY);
+    if (!existingRaw) {
+      const mirrored = await readMirroredDbSnapshot(LOCAL_DB_STORAGE_KEY);
+      if (mirrored) {
+        window.localStorage.setItem(LOCAL_DB_STORAGE_KEY, mirrored);
+      }
+      return;
+    }
+
+    // Migrate any legacy plaintext api_key out of localStorage into SecureVault
+    const parsed = JSON.parse(existingRaw) as Partial<LocalDatabase>;
+    const legacyKey = parsed.ai_settings?.api_key?.trim();
+    if (legacyKey) {
+      await setSecureSecret('ai_api_key', legacyKey);
+      saveLocalDB(loadLocalDB());
+    }
+  } catch {
+    // Ignore malformed local snapshot during hydration
   }
 }
 
@@ -616,11 +737,15 @@ function getDeveloperEnvAISettings(): Partial<LocalAISettings> {
 export function getHybridAISettings(): LocalAISettings {
   const localDbSettings = loadLocalDB().ai_settings;
   const devEnvSettings = getDeveloperEnvAISettings();
+  const cachedSecret = getCachedSecret('ai_api_key');
   const base: LocalAISettings = {
     ...localDbSettings,
     ...devEnvSettings,
-    api_key: localDbSettings.api_key || devEnvSettings.api_key,
-    has_api_key: Boolean((localDbSettings.api_key || devEnvSettings.api_key)?.trim()),
+    api_key: cachedSecret || localDbSettings.api_key || devEnvSettings.api_key,
+    has_api_key: Boolean(
+      (cachedSecret || localDbSettings.api_key || devEnvSettings.api_key)?.trim() ||
+        localDbSettings.has_api_key
+    ),
   };
   try {
     if (typeof window === 'undefined' || !window.localStorage) {
@@ -630,11 +755,14 @@ export function getHybridAISettings(): LocalAISettings {
     if (!raw) return base;
     const parsed = JSON.parse(raw) as Partial<LocalAISettings>;
     const mergedKey = parsed.api_key !== undefined ? parsed.api_key : base.api_key;
+    if (parsed.api_key?.trim() && !cachedSecret) {
+      void setSecureSecret('ai_api_key', parsed.api_key.trim());
+    }
     return {
       ...base,
       ...parsed,
       api_key: mergedKey,
-      has_api_key: Boolean(mergedKey?.trim()),
+      has_api_key: Boolean(mergedKey?.trim() || parsed.has_api_key || base.has_api_key),
     };
   } catch {
     return base;
@@ -644,16 +772,28 @@ export function getHybridAISettings(): LocalAISettings {
 export function saveHybridAISettings(patch: Partial<LocalAISettings>): LocalAISettings {
   const current = getHybridAISettings();
   const nextApiKey = patch.api_key !== undefined ? patch.api_key.trim() : current.api_key;
+  if (patch.api_key !== undefined) {
+    if (nextApiKey) {
+      void setSecureSecret('ai_api_key', nextApiKey);
+    } else {
+      void removeSecureSecret('ai_api_key');
+    }
+  }
+
   const next: LocalAISettings = {
     ...current,
     ...patch,
     api_key: nextApiKey,
     has_api_key: Boolean(nextApiKey),
   };
+  const persistedSafeCopy: LocalAISettings = {
+    ...next,
+    api_key: undefined,
+  };
 
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(HYBRID_AI_SETTINGS_KEY, JSON.stringify(next));
+      window.localStorage.setItem(HYBRID_AI_SETTINGS_KEY, JSON.stringify(persistedSafeCopy));
       const rawDb = window.localStorage.getItem(LOCAL_DB_STORAGE_KEY);
       if (rawDb) {
         const db = loadLocalDB();
