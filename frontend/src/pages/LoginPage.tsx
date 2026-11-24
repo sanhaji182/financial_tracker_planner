@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation, Link } from 'react-router-dom';
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Moon, Sun, ArrowRight, Smartphone } from 'lucide-react';
+import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Moon, Sun, ArrowRight, Smartphone, Fingerprint } from 'lucide-react';
 import { authService } from '../services/auth';
 import { useAuthStore } from '../stores/authStore';
 import { useThemeStore } from '../stores/useThemeStore';
+import { isPasskeySupported } from '../stores/useSecurityStore';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 
@@ -18,6 +19,8 @@ export const LoginPage: React.FC = () => {
   const [rememberMe, setRememberMe] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isPasskeyLoading, setIsPasskeyLoading] = useState(false);
+  const passkeyAvailable = isPasskeySupported();
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
@@ -228,6 +231,34 @@ export const LoginPage: React.FC = () => {
           </div>
 
           <div className="space-y-2">
+            {passkeyAvailable && (
+              <Button
+                type="button"
+                variant="secondary"
+                isLoading={isPasskeyLoading}
+                className="w-full flex items-center justify-center gap-2 border-indigo-200 bg-indigo-50/70 text-indigo-800 hover:bg-indigo-100 dark:border-indigo-900/60 dark:bg-indigo-950/40 dark:text-indigo-200"
+                onClick={async () => {
+                  setErrorMsg(null);
+                  setIsPasskeyLoading(true);
+                  try {
+                    const data = await authService.loginWithPasskey(email);
+                    setAuth(data.user, data.access_token);
+                    navigate(from, { replace: true });
+                  } catch (err) {
+                    const msg =
+                      (err as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error
+                        ?.message ||
+                      (err instanceof Error ? err.message : 'Login Passkey gagal');
+                    setErrorMsg(msg);
+                  } finally {
+                    setIsPasskeyLoading(false);
+                  }
+                }}
+              >
+                <Fingerprint className="h-4 w-4 shrink-0" />
+                <span>Masuk dengan Passkey (Sidik Jari / Face ID)</span>
+              </Button>
+            )}
             <Button
               type="button"
               variant="secondary"

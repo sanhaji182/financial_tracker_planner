@@ -1,8 +1,9 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot, Send, Loader2, ChevronDown, MessageSquare, CheckCircle2, Sparkles, X } from 'lucide-react';
-import { aiSettingsService, type AISettings, type AgenticAction } from '../../services/aiSettings';
+import { Bot, Send, Loader2, ChevronDown, MessageSquare, CheckCircle2, Sparkles, X, Radio } from 'lucide-react';
+import { aiSettingsService, type AISettings, type AgenticAction, type AIChatTurn } from '../../services/aiSettings';
+import { isAudioRecordingSupported, VoiceNoteRecorder } from '../../utils/voiceRecorder';
 import { transactionsService, type CreateTransactionRequest } from '../../services/transactions';
 import { transfersService, type TransferRequest } from '../../services/transfers';
 import { budgetsService } from '../../services/budgets';
@@ -26,14 +27,31 @@ const QUICK_QUESTIONS = [
   'Bagaimana cara melunasi utang lebih cepat?',
 ];
 
+const CHAT_HISTORY_KEY = 'kb_advisor_chat_history_v1';
+
+function loadSavedChatHistory(): ChatMessage[] {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return [];
+    const raw = window.localStorage.getItem(CHAT_HISTORY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as ChatMessage[]).slice(-20) : [];
+  } catch {
+    return [];
+  }
+}
+
 export const AdvisorChatDrawer: React.FC = () => {
   const queryClient = useQueryClient();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const user = useAuthStore((s) => s.user);
   const [isOpen, setIsOpen] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() => loadSavedChatHistory());
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [isTranscribingVoice, setIsTranscribingVoice] = useState(false);
   const [advisorEnabled, setAdvisorEnabled] = useState(false);
   const [settingsLoaded, setSettingsLoaded] = useState(false);
   const [actionStates, setActionStates] = useState<
@@ -41,6 +59,40 @@ export const AdvisorChatDrawer: React.FC = () => {
   >({});
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const voiceRecorderRef = useRef<VoiceNoteRecorder | null>(null);
+  const voiceSupported = isAudioRecordingSupported();
+
+  useEffect(() => {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
+        const clean = messages.filter((m) => m.text.trim().length > 0).slice(-20);
+        window.localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(clean));
+      }
+    } catch {
+      // Ignore storage quota
+    }
+  }, [messages]);
+
+  useEffect(() => {
+    if (!isRecordingVoice) {
+      setVoiceSeconds(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setVoiceSeconds((prev) => Math.min(25, prev + 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isRecordingVoice]);
+
+  useEffect(() => {
+    return () => voiceRecorderRef.current?.cancel();
+  }, []);
+
+  const handleCancelVoiceChat = () => {
+    voiceRecorderRef.current?.cancel();
+    setIsRecordingVoice(false);
+    setVoiceSeconds(0);
+  };
 
   const checkAdvisorEnabled = useCallback(async () => {
     if (!isAuthenticated || (user?.role !== 'owner' && user?.role !== 'spouse_co_owner')) {
@@ -83,28 +135,138 @@ export const AdvisorChatDrawer: React.FC = () => {
     const messageText = text || inputText.trim();
     if (!messageText || isLoading) return;
 
+    const historyTurns: AIChatTurn[] = messages
+      .filter((m) => m.text.trim().length > 0)
+      .slice(-10)
+      .map((m) => ({ role: m.role, content: m.text }));
+
     const userMessage: ChatMessage = { role: 'user', text: messageText };
-    setMessages((prev) => [...prev, userMessage]);
+    const assistantIndex = messages.length + 1;
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      { role: 'assistant', text: '' },
+    ]);
     setInputText('');
     setIsLoading(true);
 
     try {
-      const result = await aiSettingsService.chat(messageText);
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        text: result.response,
-        reason: result.reason,
-        proposed_actions: result.proposed_actions,
-      };
-      setMessages((prev) => [...prev, assistantMessage]);
+      if (typeof aiSettingsService.chatStream === 'function') {
+        await aiSettingsService.chatStream(messageText, historyTurns, {
+          onMeta: (meta) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              if (next[assistantIndex]) {
+                next[assistantIndex] = {
+                  ...next[assistantIndex],
+                  reason: meta.reason,
+                  proposed_actions: meta.proposed_actions,
+                };
+              }
+              return next;
+            });
+          },
+          onDelta: (chunk) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              if (next[assistantIndex]) {
+                next[assistantIndex] = {
+                  ...next[assistantIndex],
+                  text: next[assistantIndex].text + chunk,
+                };
+              }
+              return next;
+            });
+          },
+          onDone: (finalRes) => {
+            setMessages((prev) => {
+              const next = [...prev];
+              if (next[assistantIndex]) {
+                next[assistantIndex] = {
+                  role: 'assistant',
+                  text: next[assistantIndex].text || finalRes.response,
+                  reason: finalRes.reason ?? next[assistantIndex].reason,
+                  proposed_actions:
+                    finalRes.proposed_actions ?? next[assistantIndex].proposed_actions,
+                };
+              }
+              return next;
+            });
+          },
+        });
+      } else {
+        const result = await aiSettingsService.chat(messageText, historyTurns);
+        setMessages((prev) => {
+          const next = [...prev];
+          next[assistantIndex] = {
+            role: 'assistant',
+            text: result.response,
+            reason: result.reason,
+            proposed_actions: result.proposed_actions,
+          };
+          return next;
+        });
+      }
     } catch {
-      const errorMessage: ChatMessage = {
-        role: 'assistant',
-        text: 'Gagal mendapatkan respons dari asisten AI. Silakan coba lagi.',
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => {
+        const next = [...prev];
+        next[assistantIndex] = {
+          role: 'assistant',
+          text: 'Gagal mendapatkan respons dari asisten AI. Silakan coba lagi.',
+        };
+        return next;
+      });
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleToggleVoiceChat = async () => {
+    if (isRecordingVoice) {
+      setIsRecordingVoice(false);
+      setIsTranscribingVoice(true);
+      setIsLoading(true);
+      try {
+        const audioFile = await voiceRecorderRef.current?.stop();
+        if (audioFile) {
+          const res = await aiSettingsService.transcribeVoiceNote(audioFile);
+          if (res.transcript) {
+            setIsLoading(false);
+            setIsTranscribingVoice(false);
+            await handleSendMessage(res.transcript);
+            return;
+          }
+          toast.info('Aktifkan OpenAI/Gemini Key agar voice note ditranskripsi otomatis.');
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Gagal membaca voice note');
+      } finally {
+        setIsLoading(false);
+        setIsTranscribingVoice(false);
+      }
+      return;
+    }
+
+    try {
+      const rec = new VoiceNoteRecorder();
+      voiceRecorderRef.current = rec;
+      setIsRecordingVoice(true);
+      await rec.start(25_000, async (file) => {
+        setIsRecordingVoice(false);
+        setIsTranscribingVoice(true);
+        try {
+          const res = await aiSettingsService.transcribeVoiceNote(file);
+          if (res.transcript) {
+            setIsTranscribingVoice(false);
+            await handleSendMessage(res.transcript);
+          }
+        } finally {
+          setIsTranscribingVoice(false);
+        }
+      });
+    } catch (err) {
+      setIsRecordingVoice(false);
+      toast.error(err instanceof Error ? err.message : 'Mikrofon tidak tersedia');
     }
   };
 
@@ -141,6 +303,11 @@ export const AdvisorChatDrawer: React.FC = () => {
 
   const handleClearChat = () => {
     setMessages([]);
+    try {
+      window.localStorage.removeItem(CHAT_HISTORY_KEY);
+    } catch {
+      // Ignore
+    }
   };
 
   useEffect(() => {
@@ -369,7 +536,26 @@ export const AdvisorChatDrawer: React.FC = () => {
             )}
           </div>
 
-          <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-900">
+          <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-900 space-y-2">
+            {(isRecordingVoice || isTranscribingVoice) && (
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
+                <span className="font-medium">
+                  {isTranscribingVoice
+                    ? 'Mentranskripsi suara...'
+                    : `Merekam 00:${String(voiceSeconds).padStart(2, '0')} / 00:25`}
+                </span>
+                {isRecordingVoice && (
+                  <button
+                    type="button"
+                    aria-label="Batalkan rekaman voice note chat"
+                    onClick={handleCancelVoiceChat}
+                    className="font-semibold text-rose-600 dark:text-rose-400 hover:underline shrink-0"
+                  >
+                    Batal
+                  </button>
+                )}
+              </div>
+            )}
             <div className="flex gap-2 items-end">
               <textarea
                 ref={inputRef}
@@ -381,6 +567,22 @@ export const AdvisorChatDrawer: React.FC = () => {
                 rows={2}
                 className="flex-1 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 resize-none text-slate-900 dark:text-white placeholder:text-slate-400 disabled:opacity-60"
               />
+              {voiceSupported && (
+                <button
+                  type="button"
+                  onClick={() => void handleToggleVoiceChat()}
+                  disabled={isLoading}
+                  aria-label="Rekam voice note chat"
+                  title={isRecordingVoice ? 'Hentikan rekaman & kirim' : 'Rekam voice note ke AI'}
+                  className={`p-2.5 rounded-xl border transition-colors shrink-0 mb-0.5 ${
+                    isRecordingVoice
+                      ? 'bg-rose-600 text-white border-rose-600 animate-pulse'
+                      : 'border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-amber-600 dark:text-amber-400 hover:bg-amber-50'
+                  }`}
+                >
+                  <Radio className="w-5 h-5" />
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void handleSendMessage()}

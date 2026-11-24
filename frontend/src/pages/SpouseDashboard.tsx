@@ -11,6 +11,7 @@ import { Card } from '../components/ui/Card';
 import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { StatCard } from '../components/ui/StatCard';
+import { JointApprovalInboxCard } from '../components/shared/JointApprovalInboxCard';
 import {
   Eye,
   Home,
@@ -121,6 +122,8 @@ export const SpouseDashboard: React.FC = () => {
           Spouse Viewer Mode
         </Badge>
       </div>
+
+      <JointApprovalInboxCard />
 
       {/* Tabs */}
       <div className="inline-flex flex-wrap rounded-xl bg-slate-100 dark:bg-slate-800/80 p-1 gap-1 max-w-full overflow-x-auto">

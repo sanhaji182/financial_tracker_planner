@@ -13,6 +13,8 @@ import { Badge } from '../components/ui/Badge';
 import { Button } from '../components/ui/Button';
 import { StatCard } from '../components/ui/StatCard';
 import { MetricHelp } from '../components/ui/MetricHelp';
+import { JointApprovalInboxCard } from '../components/shared/JointApprovalInboxCard';
+import { ONBOARDING_DONE_KEY, OnboardingWizardModal } from '../components/modals/OnboardingWizardModal';
 import {
   TrendingUp,
   TrendingDown,
@@ -49,8 +51,15 @@ import {
 export const DashboardPage: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
-  const { openQuickTx, openQuickTransfer, uiMode, setUiMode } = useQuickActionStore();
+  const { openQuickTx, openQuickTransfer, uiMode, setUiMode, isOnboardingOpen, setOnboardingOpen } = useQuickActionStore();
   const privacyMasked = useSecurityStore((s) => s.privacyMasked);
+  const [onboardingDismissed, setOnboardingDismissed] = useState<boolean>(() => {
+    try {
+      return typeof window !== 'undefined' && window.localStorage?.getItem(ONBOARDING_DONE_KEY) === '1';
+    } catch {
+      return true;
+    }
+  });
 
   // Call ALL hooks unconditionally before role checks
   const { data: dash, isLoading, isError, refetch } = useDashboardData();
@@ -249,6 +258,16 @@ export const DashboardPage: React.FC = () => {
   const upcomingBills = dash.upcoming_bills || [];
   const upcomingBillsTotal = upcomingBills.reduce((acc, b) => acc + b.amount, 0);
   const recentAlerts = dash.recent_alerts || [];
+
+  const isBrandNewZeroDashboard =
+    !onboardingDismissed &&
+    user?.role === 'owner' &&
+    dash.net_worth.value === 0 &&
+    dash.cash_available.value === 0 &&
+    (dash.total_debts?.total_outstanding || 0) === 0 &&
+    trendPoints.length === 0 &&
+    upcomingBills.length === 0;
+  const showOnboardingWizard = isOnboardingOpen || isBrandNewZeroDashboard;
 
   const netWorthChartCard = (
     <Card
@@ -485,6 +504,9 @@ export const DashboardPage: React.FC = () => {
           </Link>
         </Card>
       )}
+
+      {/* Real-Time Joint Spending Approvals (only renders if pending approvals exist) */}
+      <JointApprovalInboxCard />
 
       {/* Row 1 — Top Summary Bar */}
       <div
@@ -916,6 +938,16 @@ export const DashboardPage: React.FC = () => {
             </Card>
           </div>
         </>
+      )}
+
+      {showOnboardingWizard && (
+        <OnboardingWizardModal
+          isOpen
+          onClose={() => {
+            setOnboardingDismissed(true);
+            setOnboardingOpen(false);
+          }}
+        />
       )}
     </div>
   );

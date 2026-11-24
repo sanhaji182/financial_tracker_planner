@@ -18,22 +18,44 @@ import {
   UploadCloud,
   DownloadCloud,
   Lock,
+  Bot,
+  Mail,
+  Bell,
+  Copy,
+  Smartphone,
+  Sparkles,
+  Activity,
 } from 'lucide-react';
 import { useAuthStore } from '../stores/authStore';
 import { isPasskeySupported, useSecurityStore } from '../stores/useSecurityStore';
 import { useQuickActionStore } from '../stores/useQuickActionStore';
 import { invalidateFinancialData } from '../hooks/invalidateFinancialQueries';
-import { authService } from '../services/auth';
+import { authService, type ServerPasskeyInfo } from '../services/auth';
+import { approvalsService } from '../services/approvals';
+import { channelsService, type ChannelStatusResponse } from '../services/channels';
 import { isLocalOfflineMode } from '../utils/appMode';
 import { localOcrBridge } from '../offline/nativeOcr';
 import {
+  buildDevicePairingCode,
   disableAutoE2eeSync,
   enableAutoE2eeSync,
+  generateRecoveryKey,
   getAutoSyncState,
+  getSavedRecoveryKey,
+  parseDevicePairingCode,
   pullAndMergeEncryptedSync,
   pushEncryptedSync,
   type AutoSyncState,
 } from '../offline/e2eeSync';
+import {
+  getNotificationPermissionStatus,
+  isIosDevice,
+  isStandalonePwa,
+  requestProactiveNotificationPermission,
+  sendProactiveNotification,
+} from '../utils/pwa';
+import { clearClientDiagnostics, getClientDiagnostics } from '../utils/telemetry';
+import { ONBOARDING_DONE_KEY, OnboardingWizardModal } from '../components/modals/OnboardingWizardModal';
 import { toast } from '../stores/useToastStore';
 import { Button } from '../components/ui/Button';
 import { CurrencyInput } from '../components/ui/CurrencyInput';
@@ -69,6 +91,28 @@ export const AccountSettingsPage: React.FC = () => {
   const [thresholdStr, setThresholdStr] = useState(String(jointApprovalThresholdIdr || ''));
   const passkeySupported = isPasskeySupported();
 
+  const [recoveryKey, setRecoveryKey] = useState<string | null>(() => getSavedRecoveryKey());
+  const [pairingCodeOut, setPairingCodeOut] = useState('');
+  const [pairingPinOut, setPairingPinOut] = useState('');
+  const [pairingExpiresOut, setPairingExpiresOut] = useState('');
+  const [pairingCodeIn, setPairingCodeIn] = useState('');
+  const [pairingPinIn, setPairingPinIn] = useState('');
+  const [isPairingBusy, setIsPairingBusy] = useState(false);
+  const [serverPasskeys, setServerPasskeys] = useState<ServerPasskeyInfo[]>([]);
+  const [isPasskeyBusy, setIsPasskeyBusy] = useState(false);
+
+  const [channelStatus, setChannelStatus] = useState<ChannelStatusResponse | null>(null);
+  const [tgLinkCode, setTgLinkCode] = useState('');
+  const [inboundSimText, setInboundSimText] = useState('Kopi Kenangan 32rb pakai GoPay');
+  const [inboundSimResult, setInboundSimResult] = useState('');
+  const [isSimBusy, setIsSimBusy] = useState(false);
+
+  const [notifPerm, setNotifPerm] = useState('default');
+  const [diagErrors, setDiagErrors] = useState(() => getClientDiagnostics());
+  const [showOnboardingModal, setShowOnboardingModal] = useState(false);
+  const iosDevice = isIosDevice();
+  const standalonePwa = isStandalonePwa();
+
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -83,6 +127,11 @@ export const AccountSettingsPage: React.FC = () => {
     void localOcrBridge.isBiometricAvailable().then((res) => {
       setBiometricSupported(Boolean(res?.available));
     });
+    void getNotificationPermissionStatus().then(setNotifPerm).catch(() => {});
+    if (!isLocalOfflineMode()) {
+      void authService.listPasskeys().then(setServerPasskeys).catch(() => {});
+    }
+    void channelsService.getStatus().then(setChannelStatus).catch(() => {});
     const onSyncStatus = (e: Event) => {
       const custom = e as CustomEvent<AutoSyncState>;
       if (custom.detail) setAutoSyncState(custom.detail);
@@ -440,37 +489,215 @@ export const AccountSettingsPage: React.FC = () => {
                 <p className="text-[11px] text-slate-500">
                   Status Auto-Sync: <strong>{autoSyncState.enabled ? autoSyncState.status : 'nonaktif'}</strong> · Revisi #{autoSyncState.revision}
                 </p>
+
+                <div className="pt-2 border-t border-indigo-200/60 dark:border-indigo-900/40 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => {
+                        const key = generateRecoveryKey();
+                        setRecoveryKey(key);
+                        toast.success('Recovery Key E2EE dibuat — simpan di tempat aman');
+                      }}
+                    >
+                      Buat Recovery Key
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={isPairingBusy || syncPassphrase.trim().length < 6}
+                      onClick={async () => {
+                        setIsPairingBusy(true);
+                        try {
+                          const generated = await buildDevicePairingCode(
+                            syncPassphrase.trim(),
+                            user?.name || 'Keluarga'
+                          );
+                          setPairingCodeOut(generated.code);
+                          setPairingPinOut(generated.pin);
+                          setPairingExpiresOut(generated.expiresAt);
+                          toast.success('Kode Pairing terenkripsi + PIN 6 digit siap (berlaku 10 menit)');
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : 'Gagal membuat kode pairing');
+                        } finally {
+                          setIsPairingBusy(false);
+                        }
+                      }}
+                    >
+                      Kode Pairing Android ↔ iPhone
+                    </Button>
+                  </div>
+                  {recoveryKey && (
+                    <p className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 px-2.5 py-1.5 font-mono text-[11px] text-slate-800 dark:text-slate-200 select-all">
+                      Recovery Key: {recoveryKey}
+                    </p>
+                  )}
+                  {pairingCodeOut && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center gap-2">
+                        <input
+                          readOnly
+                          value={pairingCodeOut}
+                          aria-label="Kode pairing perangkat"
+                          className="flex-1 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 px-2.5 text-[11px] font-mono"
+                        />
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          onClick={() => {
+                            void navigator.clipboard?.writeText(pairingCodeOut);
+                            toast.success('Kode pairing terenkripsi disalin');
+                          }}
+                        >
+                          <Copy className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      {pairingPinOut && (
+                        <div className="rounded-lg bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 px-2.5 py-1.5 text-[11px] text-amber-900 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+                          <span>
+                            PIN Pairing 6 Digit: <strong className="font-mono text-xs tracking-wider select-all">{pairingPinOut}</strong>
+                          </span>
+                          <span className="text-[10px] opacity-80">
+                            Sebutkan PIN terpisah dari kode · Berlaku s/d{' '}
+                            {pairingExpiresOut
+                              ? new Date(pairingExpiresOut).toLocaleTimeString('id-ID', {
+                                  hour: '2-digit',
+                                  minute: '2-digit',
+                                })
+                              : '10 menit'}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      type="text"
+                      value={pairingCodeIn}
+                      onChange={(e) => setPairingCodeIn(e.target.value)}
+                      placeholder="Tempel kode pairing KBPAIR2:... dari pasangan"
+                      className="flex-1 min-w-[180px] h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-[11px]"
+                    />
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={pairingPinIn}
+                      onChange={(e) => setPairingPinIn(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      placeholder="PIN 6 digit"
+                      aria-label="PIN pairing 6 digit"
+                      className="w-24 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 text-[11px] font-mono text-center"
+                    />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      disabled={isPairingBusy || !pairingCodeIn.trim() || pairingPinIn.trim().length !== 6}
+                      onClick={async () => {
+                        setIsPairingBusy(true);
+                        try {
+                          const decoded = await parseDevicePairingCode(pairingCodeIn, pairingPinIn);
+                          setSyncPassphrase(decoded.passphrase);
+                          setPairingCodeIn('');
+                          setPairingPinIn('');
+                          toast.success(`Passphrase dari "${decoded.label}" terpasang — siap Pull E2EE`);
+                        } catch (err) {
+                          toast.error(err instanceof Error ? err.message : 'Kode pairing tidak valid');
+                        } finally {
+                          setIsPairingBusy(false);
+                        }
+                      }}
+                    >
+                      Pasangkan
+                    </Button>
+                  </div>
+                </div>
               </div>
 
               {passkeySupported && (
-                <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 dark:border-slate-800 p-3">
-                  <div>
-                    <p className="font-semibold text-slate-800 dark:text-slate-100">
-                      Passkey Browser (WebAuthn)
-                    </p>
-                    <p className="text-[11px] text-slate-500">
-                      {passkeyCredentialId
-                        ? 'Passkey terdaftar di perangkat ini untuk buka kunci instan.'
-                        : 'Daftarkan sidik jari / Windows Hello / Touch ID browser.'}
-                    </p>
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-3 space-y-2.5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="font-semibold text-slate-800 dark:text-slate-100">
+                        Passkey Browser &amp; Cloud Login (WebAuthn)
+                      </p>
+                      <p className="text-[11px] text-slate-500">
+                        {passkeyCredentialId
+                          ? 'Passkey lokal aktif; daftar juga ke server untuk login tanpa password.'
+                          : 'Daftarkan sidik jari / Windows Hello / Touch ID / Face ID.'}
+                      </p>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={passkeyCredentialId ? 'danger' : 'secondary'}
+                        onClick={async () => {
+                          if (passkeyCredentialId) {
+                            clearPasskey();
+                            toast.info('Passkey lokal dihapus dari perangkat');
+                          } else {
+                            const ok = await registerLocalPasskey(user?.name || 'Keluarga');
+                            if (ok) toast.success('Passkey lokal berhasil didaftarkan');
+                            else toast.error('Perangkat atau browser menolak pendaftaran Passkey');
+                          }
+                        }}
+                      >
+                        {passkeyCredentialId ? 'Hapus Passkey' : 'Daftar Passkey'}
+                      </Button>
+                      {!isLocalOfflineMode() && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          isLoading={isPasskeyBusy}
+                          onClick={async () => {
+                            setIsPasskeyBusy(true);
+                            try {
+                              const created = await authService.registerServerPasskey(
+                                iosDevice ? 'iPhone/iPad Face ID' : 'Browser Passkey'
+                              );
+                              setServerPasskeys((prev) => [created, ...prev]);
+                              toast.success('Passkey login Cloud berhasil didaftarkan');
+                            } catch (err) {
+                              toast.error(
+                                err instanceof Error ? err.message : 'Gagal mendaftarkan Passkey Cloud'
+                              );
+                            } finally {
+                              setIsPasskeyBusy(false);
+                            }
+                          }}
+                        >
+                          Daftar Login Cloud
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant={passkeyCredentialId ? 'danger' : 'secondary'}
-                    onClick={async () => {
-                      if (passkeyCredentialId) {
-                        clearPasskey();
-                        toast.info('Passkey dihapus dari perangkat');
-                      } else {
-                        const ok = await registerLocalPasskey(user?.name || 'Keluarga');
-                        if (ok) toast.success('Passkey berhasil didaftarkan');
-                        else toast.error('Perangkat atau browser menolak pendaftaran Passkey');
-                      }
-                    }}
-                  >
-                    {passkeyCredentialId ? 'Hapus Passkey' : 'Daftar Passkey'}
-                  </Button>
+                  {serverPasskeys.length > 0 && (
+                    <div className="space-y-1 pt-2 border-t border-slate-100 dark:border-slate-800">
+                      {serverPasskeys.map((pk) => (
+                        <div key={pk.id} className="flex items-center justify-between text-[11px]">
+                          <span className="text-slate-700 dark:text-slate-300">
+                            🔑 {pk.device_name} ({pk.algorithm})
+                          </span>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await authService.deleteServerPasskey(pk.id);
+                              setServerPasskeys((prev) => prev.filter((item) => item.id !== pk.id));
+                              toast.info('Passkey cloud dihapus');
+                            }}
+                            className="text-rose-600 hover:underline font-medium"
+                          >
+                            Cabut
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -493,6 +720,7 @@ export const AccountSettingsPage: React.FC = () => {
                     onClick={() => {
                       const val = Number(thresholdStr) || 0;
                       setJointApprovalThresholdIdr(val);
+                      void approvalsService.updateSettings(val).catch(() => {});
                       toast.success(
                         val > 0
                           ? `Batas persetujuan bersama diatur ke Rp ${val.toLocaleString('id-ID')}`
@@ -551,6 +779,256 @@ export const AccountSettingsPage: React.FC = () => {
                 Akun Anda terhubung ke <strong className="text-indigo-600 dark:text-indigo-400">Mode Cloud</strong> untuk sinkronisasi pasangan. Data terbaru tetap tersimpan sebagai cache offline saat sinyal terputus.
               </p>
             )}
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm space-y-4">
+            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Bot className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              Bot Telegram 2-Arah &amp; Forward Email E-Statement
+            </h2>
+            <p className="text-xs text-slate-500 leading-relaxed">
+              Catat transaksi cukup dari chat Telegram (teks/voice note) atau forward email mutasi/PDF e-statement bank ke alamat khusus keluarga.
+            </p>
+            <div className="space-y-3 text-xs">
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800 dark:text-slate-100">
+                    Pairing Bot Telegram ({channelStatus?.telegram_linked ? 'Terhubung' : 'Belum Terhubung'})
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      try {
+                        const res = await channelsService.createTelegramLinkCode();
+                        setTgLinkCode(res.code);
+                        toast.success(`Kode pairing Telegram: ${res.code}`);
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Gagal membuat kode Telegram');
+                      }
+                    }}
+                  >
+                    Buat Kode /link
+                  </Button>
+                </div>
+                {tgLinkCode && (
+                  <p className="rounded-lg bg-slate-50 dark:bg-slate-800 px-3 py-2 font-mono text-[11px] text-indigo-700 dark:text-indigo-300">
+                    Kirim ke bot: /link {tgLinkCode}
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                    <Mail className="w-3.5 h-3.5 text-emerald-600" />
+                    Alamat Auto-Forward Email E-Statement
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={async () => {
+                      try {
+                        const rotated = await channelsService.rotateEmailToken();
+                        setChannelStatus((prev) =>
+                          prev
+                            ? { ...prev, ...rotated }
+                            : (rotated as ChannelStatusResponse)
+                        );
+                        toast.success('Alamat email forward diperbarui');
+                      } catch {
+                        toast.error('Gagal memutar alamat email');
+                      }
+                    }}
+                  >
+                    Putar Token
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    readOnly
+                    value={channelStatus?.inbound_email_address || 'stmt-keluarga@inbound.keuanganbersama.app'}
+                    aria-label="Alamat email inbound e-statement"
+                    className="flex-1 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 text-[11px] font-mono"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => {
+                      if (channelStatus?.inbound_email_address) {
+                        void navigator.clipboard?.writeText(channelStatus.inbound_email_address);
+                        toast.success('Alamat email disalin');
+                      }
+                    }}
+                  >
+                    Salin
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                <p className="font-semibold text-slate-800 dark:text-slate-100">
+                  Uji Simulasi Catat via Telegram / Email
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={inboundSimText}
+                    onChange={(e) => setInboundSimText(e.target.value)}
+                    placeholder="Kopi Kenangan 32rb pakai GoPay"
+                    className="flex-1 h-8 rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2.5 text-[11px]"
+                  />
+                  <Button
+                    type="button"
+                    size="sm"
+                    isLoading={isSimBusy}
+                    onClick={async () => {
+                      setIsSimBusy(true);
+                      try {
+                        const res = await channelsService.simulateInbound({
+                          channel: 'telegram_text',
+                          text: inboundSimText,
+                        });
+                        setInboundSimResult(res.reply);
+                        if (queryClient) invalidateFinancialData(queryClient);
+                        toast.success(res.reply);
+                      } catch (err) {
+                        toast.error(err instanceof Error ? err.message : 'Simulasi gagal');
+                      } finally {
+                        setIsSimBusy(false);
+                      }
+                    }}
+                  >
+                    Simulasi
+                  </Button>
+                </div>
+                {inboundSimResult && (
+                  <p className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
+                    {inboundSimResult}
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+
+          <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm space-y-4">
+            <h2 className="font-display text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+              <Bell className="w-4 h-4 text-indigo-600 dark:text-indigo-400" />
+              Notifikasi Proaktif, iOS PWA &amp; Diagnostik
+            </h2>
+            <div className="space-y-3 text-xs">
+              <div className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 dark:border-slate-700 p-3">
+                <div>
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">
+                    Notifikasi Tagihan &amp; Watchdog ({notifPerm})
+                  </p>
+                  <p className="text-[11px] text-slate-500">
+                    Kirim pengingat proaktif saat ada tagihan jatuh tempo atau anomali anggaran.
+                  </p>
+                </div>
+                <div className="flex gap-1.5 shrink-0">
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="secondary"
+                    onClick={async () => {
+                      const st = await requestProactiveNotificationPermission();
+                      setNotifPerm(st);
+                      toast.info(`Izin notifikasi: ${st}`);
+                    }}
+                  >
+                    Izinkan
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    onClick={async () => {
+                      const ok = await sendProactiveNotification(
+                        'Keuangan Bersama',
+                        'Pengingat Proaktif aktif di perangkat Anda.',
+                        '/alerts',
+                        9999
+                      );
+                      if (ok) toast.success('Notifikasi uji terkirim');
+                      else toast.info('Aktifkan izin notifikasi browser/Android terlebih dahulu');
+                    }}
+                  >
+                    Uji Notif
+                  </Button>
+                </div>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 flex items-center justify-between gap-2">
+                <div className="flex items-start gap-2">
+                  <Smartphone className="w-4 h-4 text-indigo-500 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold text-slate-800 dark:text-slate-100">
+                      PWA Offline &amp; Panduan Pasangan iPhone / iOS
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      {standalonePwa
+                        ? 'Aplikasi berjalan dalam mode PWA Standalone.'
+                        : iosDevice
+                          ? 'Di Safari iPhone: ketuk Bagikan (Share) → Tambah ke Layar Utama (Add to Home Screen).'
+                          : 'Pasangan pengguna iPhone dapat memasang PWA offline via Safari → Add to Home Screen & sinkron E2EE.'}
+                    </p>
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    try {
+                      window.localStorage.removeItem(ONBOARDING_DONE_KEY);
+                    } catch {
+                      // Ignore
+                    }
+                    setShowOnboardingModal(true);
+                  }}
+                >
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Panduan Awal
+                </Button>
+              </div>
+
+              <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-800 dark:text-slate-100 flex items-center gap-1.5">
+                    <Activity className="w-3.5 h-3.5 text-amber-500" />
+                    Diagnostik Error Perangkat ({diagErrors.length})
+                  </span>
+                  {diagErrors.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        clearClientDiagnostics();
+                        setDiagErrors([]);
+                        toast.info('Log diagnostik perangkat dibersihkan');
+                      }}
+                      className="text-[11px] font-semibold text-indigo-600 hover:underline"
+                    >
+                      Bersihkan
+                    </button>
+                  )}
+                </div>
+                {diagErrors.length === 0 ? (
+                  <p className="text-[11px] text-slate-400">Tidak ada crash atau error klien tercatat.</p>
+                ) : (
+                  <ul className="space-y-1 max-h-28 overflow-y-auto text-[11px] text-rose-600 dark:text-rose-300 font-mono">
+                    {diagErrors.slice(0, 5).map((e) => (
+                      <li key={e.id} className="truncate">
+                        [{e.route}] {e.message}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
           </section>
 
           <section className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-5 sm:p-6 shadow-sm space-y-3">
@@ -655,6 +1133,13 @@ export const AccountSettingsPage: React.FC = () => {
           />
         </form>
       </Modal>
+
+      {showOnboardingModal && (
+        <OnboardingWizardModal
+          isOpen
+          onClose={() => setShowOnboardingModal(false)}
+        />
+      )}
     </div>
   );
 };

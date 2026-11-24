@@ -6,6 +6,7 @@ import { ProtectedRoute } from './components/shared/ProtectedRoute';
 import { OfflineBanner } from './components/shared/OfflineBanner';
 import { MobileRuntimeBridge } from './components/shared/MobileRuntimeBridge';
 import { AppLockGate } from './components/shared/AppLockGate';
+import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { Toaster } from './components/ui/Toaster';
 import { authService } from './services/auth';
 import { hydrateOfflineStorage } from './offline/storage';
@@ -130,6 +131,7 @@ const App: React.FC = () => {
   return (
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
+        <ErrorBoundary>
         <MobileRuntimeBridge />
         <OfflineBanner />
         <React.Suspense
@@ -295,6 +297,7 @@ const App: React.FC = () => {
         <React.Suspense fallback={null}>
           <AdvisorChatDrawer />
         </React.Suspense>
+        </ErrorBoundary>
       </BrowserRouter>
     </QueryClientProvider>
   );

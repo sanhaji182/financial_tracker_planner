@@ -1,4 +1,5 @@
-import React, { useEffect, useId, useRef, useState } from 'react';
+import React, { useContext, useEffect, useId, useRef, useState } from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
 import {
   useCreateTransaction,
   useUpdateTransaction,
@@ -7,7 +8,10 @@ import {
 } from '../../hooks/useTransactions';
 import { useAccounts } from '../../hooks/useAccounts';
 import { useDebts } from '../../hooks/useDebts';
+import { invalidateFinancialData } from '../../hooks/invalidateFinancialQueries';
 import { useSecurityStore } from '../../stores/useSecurityStore';
+import { aiSettingsService } from '../../services/aiSettings';
+import { approvalsService } from '../../services/approvals';
 import type { Transaction, CreateTransactionRequest } from '../../services/transactions';
 import { Modal } from '../ui/Modal';
 import { Button } from '../ui/Button';
@@ -22,7 +26,8 @@ import {
 import { getHybridAISettings } from '../../offline/storage';
 import { captureReceiptPhoto, isNativeMobile } from '../../utils/mobile';
 import { parseIndonesianFinancialCommand } from '../../utils/indonesianNlpParser';
-import { Loader2, AlertCircle, Upload, X, FileImage, Camera, Sparkles, Mic, MicOff } from 'lucide-react';
+import { isAudioRecordingSupported, VoiceNoteRecorder } from '../../utils/voiceRecorder';
+import { Loader2, AlertCircle, Upload, X, FileImage, Camera, Sparkles, Mic, MicOff, Radio, Send } from 'lucide-react';
 
 interface BrowserSpeechRecognition {
   lang: string;
@@ -49,6 +54,7 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   initialVoiceMode = false,
 }) => {
   const formId = useId();
+  const queryClient = useContext(QueryClientContext);
   const isEditMode = Boolean(editTransaction);
   const createMutation = useCreateTransaction();
   const updateMutation = useUpdateTransaction();
@@ -59,13 +65,19 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   const { data: debts = [] } = useDebts();
   const jointApprovalThresholdIdr = useSecurityStore((s) => s.jointApprovalThresholdIdr);
   const [jointApproved, setJointApproved] = useState(false);
+  const [isSubmittingApproval, setIsSubmittingApproval] = useState(false);
 
   const scanInputRef = useRef<HTMLInputElement | null>(null);
   const quickVoiceInputRef = useRef<HTMLInputElement | null>(null);
   const recognitionRef = useRef<BrowserSpeechRecognition | null>(null);
+  const voiceRecorderRef = useRef<VoiceNoteRecorder | null>(null);
   const [isScanningReceipt, setIsScanningReceipt] = useState(false);
   const [quickCommandText, setQuickCommandText] = useState('');
   const [isListeningVoice, setIsListeningVoice] = useState(false);
+  const [isRecordingAudio, setIsRecordingAudio] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [isTranscribingAudio, setIsTranscribingAudio] = useState(false);
+  const audioRecordingSupported = isAudioRecordingSupported();
 
   const [type, setType] = useState<'income' | 'expense' | 'transfer'>('expense');
   const [date, setDate] = useState('');
@@ -128,14 +140,88 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
   }, [editTransaction, initialVoiceMode, isOpen]);
 
   useEffect(() => {
+    if (!isRecordingAudio) {
+      setRecordingSeconds(0);
+      return;
+    }
+    const timer = setInterval(() => {
+      setRecordingSeconds((prev) => Math.min(25, prev + 1));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [isRecordingAudio]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      voiceRecorderRef.current?.cancel();
+      setIsRecordingAudio(false);
+    }
+  }, [isOpen]);
+
+  useEffect(() => {
     return () => {
       try {
         recognitionRef.current?.stop();
       } catch {
         // Ignore cleanup errors
       }
+      voiceRecorderRef.current?.cancel();
     };
   }, []);
+
+  const handleCancelAudioVoiceNote = () => {
+    voiceRecorderRef.current?.cancel();
+    setIsRecordingAudio(false);
+    setRecordingSeconds(0);
+  };
+
+  const handleToggleAudioVoiceNote = async () => {
+    if (isRecordingAudio) {
+      setIsRecordingAudio(false);
+      setIsTranscribingAudio(true);
+      try {
+        const audioFile = await voiceRecorderRef.current?.stop();
+        if (audioFile) {
+          const res = await aiSettingsService.transcribeVoiceNote(audioFile);
+          if (res.transcript) {
+            setQuickCommandText(res.transcript);
+            applyQuickVoiceOrText(res.transcript);
+          } else {
+            quickVoiceInputRef.current?.focus();
+            toast.info(
+              'Audio terekam. Aktifkan OpenAI/Gemini Key di Pengaturan AI atau ketik nominal langsung di kolom cepat.'
+            );
+          }
+        }
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Gagal memproses Voice Note');
+      } finally {
+        setIsTranscribingAudio(false);
+      }
+      return;
+    }
+
+    try {
+      const rec = new VoiceNoteRecorder();
+      voiceRecorderRef.current = rec;
+      setIsRecordingAudio(true);
+      await rec.start(25_000, async (file) => {
+        setIsRecordingAudio(false);
+        setIsTranscribingAudio(true);
+        try {
+          const res = await aiSettingsService.transcribeVoiceNote(file);
+          if (res.transcript) {
+            setQuickCommandText(res.transcript);
+            applyQuickVoiceOrText(res.transcript);
+          }
+        } finally {
+          setIsTranscribingAudio(false);
+        }
+      });
+    } catch (err) {
+      setIsRecordingAudio(false);
+      toast.error(err instanceof Error ? err.message : 'Izin mikrofon ditolak atau tidak tersedia');
+    }
+  };
 
   const applyQuickVoiceOrText = (rawText: string) => {
     const clean = rawText.trim();
@@ -573,7 +659,8 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
       )}
 
       {!isEditMode && (
-        <div className="mb-4 flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-2">
+        <div className="mb-4 space-y-1.5">
+        <div className="flex items-center gap-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/50 px-2.5 py-2">
           <button
             type="button"
             onClick={handleToggleVoiceInput}
@@ -587,6 +674,26 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
           >
             {isListeningVoice ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
           </button>
+          {audioRecordingSupported && (
+            <button
+              type="button"
+              disabled={isTranscribingAudio}
+              onClick={() => void handleToggleAudioVoiceNote()}
+              aria-label="Rekam voice note audio"
+              title={isRecordingAudio ? 'Hentikan & transkripsi voice note' : 'Rekam voice note (audio)'}
+              className={`p-2 rounded-lg shrink-0 transition-colors ${
+                isRecordingAudio
+                  ? 'bg-amber-600 text-white animate-pulse'
+                  : 'bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 text-amber-600 dark:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-950/30'
+              }`}
+            >
+              {isTranscribingAudio ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Radio className="w-4 h-4" />
+              )}
+            </button>
+          )}
           <input
             ref={quickVoiceInputRef}
             id="tx-quick-voice-input"
@@ -613,6 +720,26 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
           >
             Isi Otomatis
           </Button>
+        </div>
+        {(isRecordingAudio || isTranscribingAudio) && (
+          <div className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
+            <span className="font-medium">
+              {isTranscribingAudio
+                ? 'Mentranskripsi suara...'
+                : `Merekam 00:${String(recordingSeconds).padStart(2, '0')} / 00:25 (tap tombol oranye untuk kirim)`}
+            </span>
+            {isRecordingAudio && (
+              <button
+                type="button"
+                aria-label="Batalkan rekaman voice note"
+                onClick={handleCancelAudioVoiceNote}
+                className="font-semibold text-rose-600 dark:text-rose-400 hover:underline shrink-0"
+              >
+                Batal
+              </button>
+            )}
+          </div>
+        )}
         </div>
       )}
 
@@ -667,7 +794,7 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
         />
 
         {needsJointApproval && (
-          <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 p-3 space-y-2 text-xs">
+          <div className="rounded-xl border border-amber-300 dark:border-amber-800 bg-amber-50/80 dark:bg-amber-950/30 p-3 space-y-2.5 text-xs">
             <p className="font-bold text-amber-800 dark:text-amber-300">
               Melebihi Batas Persetujuan Bersama (Rp {jointApprovalThresholdIdr.toLocaleString('id-ID')})
             </p>
@@ -683,6 +810,45 @@ export const TransactionFormModal: React.FC<TransactionFormModalProps> = ({
               />
               <span>Sudah disetujui bersama pasangan</span>
             </label>
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-amber-200/70 dark:border-amber-800/50">
+              <span className="text-[11px] text-amber-800 dark:text-amber-300">
+                Belum konfirmasi langsung? Kirim ke inbox pasangan:
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                isLoading={isSubmittingApproval}
+                onClick={async () => {
+                  if (!accountId || parsedAmountNum <= 0) return;
+                  setIsSubmittingApproval(true);
+                  try {
+                    await approvalsService.createApproval({
+                      account_id: accountId,
+                      category_id: categoryId || null,
+                      tx_type: 'expense',
+                      amount: parsedAmountNum,
+                      date: date || getTodayLocalDate(),
+                      description: description.trim() || 'Pengeluaran Rekening Bersama',
+                      notes: notes || undefined,
+                    });
+                    if (typeof window !== 'undefined') {
+                      window.dispatchEvent(new CustomEvent('kb:approvals-updated'));
+                    }
+                    if (queryClient) invalidateFinancialData(queryClient);
+                    toast.success('Permintaan persetujuan dikirim ke Pasangan & Owner');
+                    onClose();
+                  } catch (err) {
+                    toast.error(err instanceof Error ? err.message : 'Gagal mengajukan persetujuan');
+                  } finally {
+                    setIsSubmittingApproval(false);
+                  }
+                }}
+              >
+                <Send className="w-3.5 h-3.5" />
+                Ajukan Persetujuan Pasangan
+              </Button>
+            </div>
           </div>
         )}
 

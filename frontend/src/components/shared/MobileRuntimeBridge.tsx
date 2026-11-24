@@ -8,6 +8,10 @@ import {
   scheduleAutoE2eePush,
   triggerAutoE2eePullIfEnabled,
 } from '../../offline/e2eeSync';
+import { loadLocalDB } from '../../offline/storage';
+import { runProactiveWatchdog } from '../../offline/proactiveWatchdog';
+import { approvalsService } from '../../services/approvals';
+import { sendProactiveNotification } from '../../utils/pwa';
 import { toast } from '../../stores/useToastStore';
 import {
   hideNativeSplash,
@@ -54,12 +58,23 @@ export const MobileRuntimeBridge: React.FC = () => {
     if (!isAuthenticated) return;
     let removeQuickListener: () => void = () => {};
     let removeNotifListener: () => void = () => {};
+    let removeRouteListener: () => void = () => {};
     let active = true;
+
+    const navigateIfValid = (route?: string | null) => {
+      if (active && route && route.startsWith('/')) {
+        navigate(route);
+      }
+    };
 
     void localOcrBridge.consumePendingQuickAction().then((res) => {
       if (active && res?.action) {
         dispatchQuickAction(res.action);
       }
+    });
+
+    void localOcrBridge.consumePendingNotificationRoute().then((res) => {
+      navigateIfValid(res?.route);
     });
 
     void localOcrBridge
@@ -71,6 +86,18 @@ export const MobileRuntimeBridge: React.FC = () => {
       .then((handle) => {
         if (active) {
           removeQuickListener = () => void handle.remove();
+        } else {
+          void handle.remove();
+        }
+      });
+
+    void localOcrBridge
+      .addNotificationRouteListener((data) => {
+        navigateIfValid(data?.route);
+      })
+      .then((handle) => {
+        if (active) {
+          removeRouteListener = () => void handle.remove();
         } else {
           void handle.remove();
         }
@@ -91,15 +118,57 @@ export const MobileRuntimeBridge: React.FC = () => {
         }
       });
 
+    const onSwMessage = (ev: MessageEvent) => {
+      const payload = ev?.data as { type?: string; route?: string } | undefined;
+      if (payload?.type === 'KB_NAVIGATE') {
+        navigateIfValid(payload.route);
+      }
+    };
+    const sw = typeof navigator !== 'undefined' ? navigator.serviceWorker : undefined;
+    sw?.addEventListener?.('message', onSwMessage);
+
     return () => {
       active = false;
       removeQuickListener();
       removeNotifListener();
+      removeRouteListener();
+      sw?.removeEventListener?.('message', onSwMessage);
     };
-  }, [dispatchQuickAction, isAuthenticated]);
+  }, [dispatchQuickAction, isAuthenticated, navigate]);
 
   useEffect(() => {
     if (!isAuthenticated) return;
+
+    const WATCHDOG_NOTIF_COOLDOWN_KEY = 'kb_last_auto_watchdog_notif_v1';
+
+    const checkProactiveNotifications = async () => {
+      try {
+        if (typeof window === 'undefined' || !window.localStorage) return;
+        const lastRun = Number(window.localStorage.getItem(WATCHDOG_NOTIF_COOLDOWN_KEY) || '0');
+        if (Date.now() - lastRun < 30 * 60 * 1000) return;
+        window.localStorage.setItem(WATCHDOG_NOTIF_COOLDOWN_KEY, String(Date.now()));
+
+        const pendingApprovals = await approvalsService.listApprovals('pending').catch(() => []);
+        if (pendingApprovals.length > 0) {
+          await sendProactiveNotification(
+            `Persetujuan Pengeluaran Menunggu (${pendingApprovals.length})`,
+            `${pendingApprovals[0].description} sebesar Rp ${Number(pendingApprovals[0].amount).toLocaleString('id-ID')} butuh konfirmasi.`,
+            '/'
+          );
+          return;
+        }
+
+        const watchdog = runProactiveWatchdog(loadLocalDB());
+        const topFinding =
+          watchdog.findings.find((f) => f.severity === 'danger') ||
+          watchdog.findings.find((f) => f.severity === 'warning');
+        if (topFinding) {
+          await sendProactiveNotification(topFinding.title, topFinding.message, topFinding.action_url);
+        }
+      } catch {
+        // Silent best-effort notification check
+      }
+    };
 
     const onLocalDbSaved = () => {
       scheduleAutoE2eePush(4000);
@@ -107,9 +176,11 @@ export const MobileRuntimeBridge: React.FC = () => {
     const onOnlineOrVisible = () => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
         void triggerAutoE2eePullIfEnabled();
+        void checkProactiveNotifications();
       }
     };
 
+    void checkProactiveNotifications();
     window.addEventListener('kb:local-db-saved', onLocalDbSaved);
     window.addEventListener('online', onOnlineOrVisible);
     document.addEventListener('visibilitychange', onOnlineOrVisible);

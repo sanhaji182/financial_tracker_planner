@@ -1,13 +1,17 @@
-import React, { useMemo, useState } from 'react';
+import React, { useContext, useMemo, useState } from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
 import {
   useAccounts,
   useAccountSummary,
   useDeleteAccount,
 } from '../hooks/useAccounts';
+import { invalidateFinancialData } from '../hooks/invalidateFinancialQueries';
 import type { Account } from '../services/accounts';
+import { channelsService, type SnapSyncResponse } from '../services/channels';
 import { MoneyDisplay } from '../components/ui/MoneyDisplay';
 import { Button } from '../components/ui/Button';
 import { Badge } from '../components/ui/Badge';
+import { Modal } from '../components/ui/Modal';
 import { PageHeader } from '../components/ui/PageHeader';
 import { StatCard } from '../components/ui/StatCard';
 import { EmptyState } from '../components/ui/EmptyState';
@@ -32,6 +36,7 @@ import {
   FolderOpen,
   ArrowLeftRight,
   CheckCircle,
+  RefreshCw,
 } from 'lucide-react';
 
 type AccountFilterType = 'all' | 'bank' | 'e_wallet' | 'cash' | 'investment' | 'deposit';
@@ -47,11 +52,18 @@ const FILTER_OPTIONS: Array<{ value: AccountFilterType; label: string }> = [
 ];
 
 export const AccountsPage: React.FC = () => {
+  const queryClient = useContext(QueryClientContext);
   const { data: accounts, isLoading: isAccountsLoading } = useAccounts();
   const { data: summary, isLoading: isSummaryLoading } = useAccountSummary();
   const deleteMutation = useDeleteAccount();
   const { user } = useAuthStore();
   const isOwner = user?.role === 'owner';
+
+  const [snapModalOpen, setSnapModalOpen] = useState(false);
+  const [snapBusy, setSnapBusy] = useState(false);
+  const [snapMode, setSnapMode] = useState('sandbox');
+  const [snapImportDrafts, setSnapImportDrafts] = useState(false);
+  const [snapSyncData, setSnapSyncData] = useState<SnapSyncResponse | null>(null);
 
   const [typeFilter, setTypeFilter] = useState<AccountFilterType>('all');
   const [ownershipFilter, setOwnershipFilter] = useState<OwnershipFilter>('all');
@@ -176,6 +188,21 @@ export const AccountsPage: React.FC = () => {
         actions={
           isOwner && (
             <>
+              <Button
+                variant="secondary"
+                onClick={async () => {
+                  setSnapModalOpen(true);
+                  try {
+                    const st = await channelsService.getSnapStatus();
+                    setSnapMode(st.mode || 'sandbox');
+                  } catch {
+                    // Fallback to sandbox indicator
+                  }
+                }}
+              >
+                <RefreshCw className="h-4 w-4" />
+                SNAP BI Sync
+              </Button>
               <Button
                 variant="secondary"
                 onClick={() => {
@@ -493,6 +520,104 @@ export const AccountsPage: React.FC = () => {
         onClose={() => setReconOpen(false)}
         defaultAccountId={reconAccountId}
       />
+
+      <Modal
+        isOpen={snapModalOpen}
+        onClose={() => !snapBusy && setSnapModalOpen(false)}
+        title="Konektor Bank Open API (SNAP BI)"
+        size="md"
+        footerActions={
+          <>
+            <Button variant="ghost" onClick={() => setSnapModalOpen(false)} disabled={snapBusy}>
+              Tutup
+            </Button>
+            <Button
+              type="button"
+              isLoading={snapBusy}
+              onClick={async () => {
+                setSnapBusy(true);
+                try {
+                  const res = await channelsService.syncSnap({
+                    bank_name: 'SNAP-BI-Sandbox',
+                    import_drafts: snapImportDrafts,
+                  });
+                  setSnapSyncData(res);
+                  if (snapImportDrafts && queryClient) {
+                    invalidateFinancialData(queryClient);
+                  }
+                  toast.success(
+                    snapImportDrafts
+                      ? `SNAP BI sync selesai (${res.transactions.length} mutasi diperiksa, ${res.imported_count} diimpor)`
+                      : `Pratinjau SNAP BI selesai (${res.transactions.length} mutasi ditemukan)`
+                  );
+                } catch (err) {
+                  toast.error(err instanceof Error ? err.message : 'Gagal terhubung ke SNAP BI');
+                } finally {
+                  setSnapBusy(false);
+                }
+              }}
+            >
+              <RefreshCw className="w-4 h-4" />
+              Sinkronisasi Sekarang
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-4 text-xs">
+          <div className="rounded-xl border border-indigo-200/80 dark:border-indigo-900/50 bg-indigo-50/50 dark:bg-indigo-950/20 p-3 space-y-1">
+            <p className="font-bold text-slate-900 dark:text-white">
+              Status Konektor: {snapMode === 'configured' ? 'Terhubung Kredensial Bank' : 'Mode Sandbox BI SNAP'}
+            </p>
+            <p className="text-[11px] text-slate-600 dark:text-slate-300">
+              Menggunakan tanda tangan HMAC-SHA512 standar Bank Indonesia SNAP Open API (QRIS Tap, BI-FAST &amp; Transfer).
+            </p>
+          </div>
+
+          <label className="flex items-center gap-2 text-slate-700 dark:text-slate-200 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={snapImportDrafts}
+              onChange={(e) => setSnapImportDrafts(e.target.checked)}
+              className="h-4 w-4 rounded border-slate-300 text-indigo-600"
+            />
+            <span>Impor mutasi SNAP BI ke Draf Transaksi / Ledger otomatis</span>
+          </label>
+
+          {snapSyncData && (
+            <div className="rounded-xl border border-slate-200 dark:border-slate-700 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-slate-900 dark:text-white">
+                  {snapSyncData.balance.account_name} ({snapSyncData.provider})
+                </span>
+                <span className="font-mono font-bold text-indigo-600 dark:text-indigo-400">
+                  Rp {Number(snapSyncData.balance.available).toLocaleString('id-ID')}
+                </span>
+              </div>
+              <div className="divide-y divide-slate-100 dark:divide-slate-800">
+                {snapSyncData.transactions.map((tx) => (
+                  <div key={tx.reference_no} className="py-1.5 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-800 dark:text-slate-200 truncate">
+                        {tx.description}
+                      </p>
+                      <p className="text-[10px] text-slate-400">
+                        {tx.channel} · {tx.reference_no}
+                      </p>
+                    </div>
+                    <span
+                      className={`font-mono font-semibold shrink-0 ${
+                        tx.direction === 'CR' ? 'text-emerald-600' : 'text-rose-600'
+                      }`}
+                    >
+                      {tx.direction === 'CR' ? '+' : '-'}Rp {Number(tx.amount).toLocaleString('id-ID')}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </Modal>
     </div>
   );
 };
