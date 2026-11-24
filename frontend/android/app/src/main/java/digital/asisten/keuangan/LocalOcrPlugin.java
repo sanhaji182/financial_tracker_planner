@@ -1,12 +1,17 @@
 package digital.asisten.keuangan;
 
+import android.Manifest;
 import android.app.KeyguardManager;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
+import android.app.PendingIntent;
 import android.content.ClipData;
 import android.content.ComponentName;
 import android.content.ContentResolver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.pm.PackageManager;
 import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -36,15 +41,20 @@ import android.util.Base64;
 import android.view.Window;
 import android.view.WindowManager;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.app.NotificationCompat;
+import androidx.core.app.NotificationManagerCompat;
 import androidx.core.content.ContextCompat;
 import androidx.core.view.WindowCompat;
 import androidx.core.view.WindowInsetsControllerCompat;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
+import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
 import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import com.getcapacitor.annotation.Permission;
+import com.getcapacitor.annotation.PermissionCallback;
 import com.google.android.gms.tasks.Tasks;
 import com.google.mlkit.vision.common.InputImage;
 import com.google.mlkit.vision.text.Text;
@@ -73,7 +83,13 @@ import javax.crypto.spec.GCMParameterSpec;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-@CapacitorPlugin(name = "LocalOcr")
+@CapacitorPlugin(
+    name = "LocalOcr",
+    permissions = {
+        @Permission(alias = "audio", strings = { Manifest.permission.RECORD_AUDIO }),
+        @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS })
+    }
+)
 public class LocalOcrPlugin extends Plugin {
     private static final int MAX_IMAGE_DIMENSION = 2200;
     private static final int MAX_PDF_PAGES_LIMIT = 30;
@@ -81,6 +97,7 @@ public class LocalOcrPlugin extends Plugin {
     private static final int MAX_SHARED_FILE_BYTES = 15 * 1024 * 1024;
     private static final String SHARE_CONSUMED_EXTRA = "kb_share_consumed";
     private static final String QUICK_CONSUMED_EXTRA = "kb_quick_consumed";
+    private static final String ROUTE_CONSUMED_EXTRA = "kb_route_consumed";
     private static final String SECURE_VAULT_PREFS = "kb_secure_vault";
     private static final String KEYSTORE_ALIAS = "kb_master_keystore_key_v1";
     private static final String ANDROID_KEYSTORE = "AndroidKeyStore";
@@ -92,6 +109,7 @@ public class LocalOcrPlugin extends Plugin {
             Collections.synchronizedList(new ArrayList<>());
     private static final ExecutorService SHARE_EXECUTOR = Executors.newSingleThreadExecutor();
     private static volatile String pendingQuickAction = null;
+    private static volatile String pendingNotificationRoute = null;
     private static volatile LocalOcrPlugin activeInstance;
 
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -138,6 +156,21 @@ public class LocalOcrPlugin extends Plugin {
                 LocalOcrPlugin live = activeInstance;
                 if (live != null) {
                     live.notifyListeners("quickActionReceived", quickPayload);
+                }
+            });
+        }
+
+        String notifRoute = intent.getStringExtra("kb_route");
+        if (notifRoute != null && !notifRoute.trim().isEmpty()
+                && !intent.getBooleanExtra(ROUTE_CONSUMED_EXTRA, false)) {
+            intent.putExtra(ROUTE_CONSUMED_EXTRA, true);
+            pendingNotificationRoute = notifRoute.trim();
+            final JSObject routePayload = new JSObject();
+            routePayload.put("route", pendingNotificationRoute);
+            new Handler(Looper.getMainLooper()).post(() -> {
+                LocalOcrPlugin live = activeInstance;
+                if (live != null) {
+                    live.notifyListeners("notificationRouteReceived", routePayload);
                 }
             });
         }
@@ -1153,6 +1186,132 @@ public class LocalOcrPlugin extends Plugin {
         pendingQuickAction = null;
         JSObject ret = new JSObject();
         ret.put("action", action != null ? action : JSObject.NULL);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void checkNotificationPermission(PluginCall call) {
+        boolean granted = true;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            granted = ContextCompat.checkSelfPermission(
+                    getContext(), Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED;
+        }
+        JSObject ret = new JSObject();
+        ret.put("granted", granted);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void showLocalNotification(PluginCall call) {
+        String title = call.getString("title", "Keuangan Bersama");
+        String body = call.getString("body", "");
+        String route = call.getString("route", "/alerts");
+        Integer idObj = call.getInt("id", (int) (System.currentTimeMillis() % 100000));
+        int notifId = idObj != null ? idObj : 1001;
+
+        Context ctx = getContext();
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (ContextCompat.checkSelfPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)
+                    != PackageManager.PERMISSION_GRANTED) {
+                JSObject denied = new JSObject();
+                denied.put("shown", false);
+                denied.put("reason", "permission_denied");
+                call.resolve(denied);
+                return;
+            }
+        }
+
+        String channelId = "kb_proactive_alerts";
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            NotificationChannel channel = new NotificationChannel(
+                    channelId,
+                    "Pengingat Proaktif Keuangan",
+                    NotificationManager.IMPORTANCE_DEFAULT);
+            channel.setDescription("Notifikasi tagihan jatuh tempo, watchdog anggaran, dan persetujuan pasangan");
+            NotificationManager nm = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+            if (nm != null) {
+                nm.createNotificationChannel(channel);
+            }
+        }
+
+        Intent intent = new Intent(ctx, MainActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        if (route != null && !route.isEmpty()) {
+            intent.putExtra("kb_route", route);
+        }
+        int piFlags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pendingIntent = PendingIntent.getActivity(ctx, notifId, intent, piFlags);
+
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(ctx, channelId)
+                .setSmallIcon(R.drawable.ic_tile_quick_entry)
+                .setContentTitle(title)
+                .setContentText(body)
+                .setStyle(new NotificationCompat.BigTextStyle().bigText(body))
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .setAutoCancel(true)
+                .setContentIntent(pendingIntent);
+
+        NotificationManagerCompat.from(ctx).notify(notifId, builder.build());
+
+        JSObject ret = new JSObject();
+        ret.put("shown", true);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void consumePendingNotificationRoute(PluginCall call) {
+        String route = pendingNotificationRoute;
+        pendingNotificationRoute = null;
+        JSObject ret = new JSObject();
+        ret.put("route", route != null ? route : JSObject.NULL);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void requestAudioPermission(PluginCall call) {
+        if (getPermissionState("audio") == PermissionState.GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED) {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
+        requestPermissionForAlias("audio", call, "audioPermsCallback");
+    }
+
+    @PermissionCallback
+    private void audioPermsCallback(PluginCall call) {
+        boolean granted = getPermissionState("audio") == PermissionState.GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED;
+        JSObject ret = new JSObject();
+        ret.put("granted", granted);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void requestNotificationPermission(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || getPermissionState("notifications") == PermissionState.GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED) {
+            JSObject ret = new JSObject();
+            ret.put("granted", true);
+            call.resolve(ret);
+            return;
+        }
+        requestPermissionForAlias("notifications", call, "notificationsPermsCallback");
+    }
+
+    @PermissionCallback
+    private void notificationsPermsCallback(PluginCall call) {
+        boolean granted = Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU
+                || getPermissionState("notifications") == PermissionState.GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.POST_NOTIFICATIONS)
+                        == PackageManager.PERMISSION_GRANTED;
+        JSObject ret = new JSObject();
+        ret.put("granted", granted);
         call.resolve(ret);
     }
 
