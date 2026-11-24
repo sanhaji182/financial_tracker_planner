@@ -1,11 +1,12 @@
 from datetime import datetime
+import asyncio
 import json
 import logging
 import base64
 import os
 import re
 import uuid
-from typing import Dict, Any, List, Optional, Tuple
+from typing import AsyncGenerator, Dict, Any, List, Optional, Tuple
 import httpx
 
 logger = logging.getLogger("worker.ai")
@@ -789,12 +790,76 @@ def parse_indonesian_action_command(
     return None
 
 
+def _normalize_history_turns(history: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
+    turns: List[Dict[str, str]] = []
+    if not isinstance(history, list):
+        return turns
+    for item in history:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get("role") or "").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if role in ("user", "assistant") and content:
+            turns.append({"role": role, "content": content[:1500]})
+    return turns[-10:]
+
+
+def _resolve_followup_command(
+    message: str, history: Optional[List[Dict[str, str]]]
+) -> str:
+    """
+    Combines short follow-up refinements (e.g. 'ubah jadi 45rb', 'pakai BCA')
+    with the most recent user command in conversation history.
+    """
+    clean = (message or "").strip()
+    if not clean or not history:
+        return clean
+    low = clean.lower()
+    is_followup = bool(
+        re.search(
+            r"\b(ubah|ganti|revisi|koreksi|jadikan|jadi|pakai|pake|via|dari|ke)\b",
+            low,
+        )
+    )
+    if not is_followup or len(clean.split()) > 8:
+        return clean
+
+    turns = _normalize_history_turns(history)
+    prev_user_msgs = [t["content"] for t in turns if t["role"] == "user"]
+    if not prev_user_msgs:
+        return clean
+    prev_msg = prev_user_msgs[-1]
+    if not re.search(
+        r"\b(catat|catatkan|beli|bayar|transfer|kirim|budget|anggaran|target|goal)\b",
+        prev_msg.lower(),
+    ):
+        return clean
+
+    new_amt = parse_indonesian_amount(clean)
+    merged = prev_msg
+    if new_amt > 0:
+        # Remove numeric/shorthand amount from previous command before appending the updated amount
+        stripped_prev = re.sub(
+            r"(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:jt|juta|m|miliar|milyar|rb|ribu|k)?\b",
+            "",
+            prev_msg,
+            flags=re.IGNORECASE,
+        )
+        stripped_prev = re.sub(r"\s+", " ", stripped_prev).strip()
+        merged = f"{stripped_prev} {int(new_amt)}"
+    elif re.search(r"\b(pakai|pake|via)\b", low):
+        stripped_prev = re.sub(r"\b(pakai|pake|via)\s+[a-z0-9\s]+$", "", prev_msg, flags=re.IGNORECASE).strip()
+        merged = f"{stripped_prev} {clean}"
+    return merged
+
+
 async def chat_advisor(
     message: str,
     context_data: Dict[str, Any],
     provider: str,
     model_name: str,
-    api_key: Optional[str]
+    api_key: Optional[str],
+    history: Optional[List[Dict[str, str]]] = None,
 ) -> Dict[str, Any]:
     """
     Chats with the AI Financial Advisor.
@@ -807,7 +872,9 @@ async def chat_advisor(
     budget = context_data.get("budget", {}) or {}
     accounts = context_data.get("accounts", []) or []
     categories = context_data.get("categories", []) or []
-    deterministic_action = parse_indonesian_action_command(message, accounts, categories)
+    normalized_history = _normalize_history_turns(history)
+    effective_message = _resolve_followup_command(message, normalized_history)
+    deterministic_action = parse_indonesian_action_command(effective_message, accounts, categories)
     fallback_actions = [deterministic_action] if deterministic_action else []
 
     # Helper to safely extract float from plain number or MoneyValue dict
@@ -884,7 +951,7 @@ async def chat_advisor(
 
     if not api_key or provider == "local":
         logger.info("Using mock advisor response")
-        return generate_mock_chat_response(message, context_data)
+        return generate_mock_chat_response(effective_message, context_data, deterministic_action=deterministic_action)
 
     try:
         headers = {
@@ -895,13 +962,13 @@ async def chat_advisor(
 
         if provider == "openai":
             llm_model = model_name if model_name != "default" else "gpt-4o-mini"
+            oai_messages = [{"role": "system", "content": system_prompt}]
+            oai_messages.extend(normalized_history)
+            oai_messages.append({"role": "user", "content": message})
             content = await call_openai_chat(
                 api_key=api_key,
                 model=llm_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": message},
-                ],
+                messages=oai_messages,
                 temperature=0.7,
                 timeout=60.0,
             )
@@ -909,11 +976,12 @@ async def chat_advisor(
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
             llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
+            anth_messages = list(normalized_history) + [{"role": "user", "content": message}]
             payload = {
                 "model": llm_model,
                 "max_tokens": 1500,
                 "system": system_prompt,
-                "messages": [{"role": "user", "content": message}],
+                "messages": anth_messages,
                 "temperature": 0.7
             }
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -924,9 +992,17 @@ async def chat_advisor(
         elif provider == "gemini":
             llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
+            gem_contents = [
+                {
+                    "role": "model" if t["role"] == "assistant" else "user",
+                    "parts": [{"text": t["content"]}],
+                }
+                for t in normalized_history
+            ]
+            gem_contents.append({"role": "user", "parts": [{"text": message}]})
             payload = {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": [{"parts": [{"text": message}]}],
+                "contents": gem_contents,
                 "generationConfig": {"temperature": 0.7},
             }
             async with httpx.AsyncClient(timeout=30.0) as client:
@@ -936,9 +1012,51 @@ async def chat_advisor(
                 return parse_advisor_response(content, fallback_actions=fallback_actions)
     except Exception as e:
         logger.error(f"Error calling {provider} for advisor chat: {str(e)}")
-        return generate_mock_chat_response(message, context_data)
+        return generate_mock_chat_response(effective_message, context_data, deterministic_action=deterministic_action)
 
-    return generate_mock_chat_response(message, context_data)
+    return generate_mock_chat_response(effective_message, context_data, deterministic_action=deterministic_action)
+
+
+async def stream_chat_advisor(
+    message: str,
+    context_data: Dict[str, Any],
+    provider: str,
+    model_name: str,
+    api_key: Optional[str],
+    history: Optional[List[Dict[str, str]]] = None,
+) -> AsyncGenerator[str, None]:
+    """
+    Streams advisor chat responses as Server-Sent Events (SSE):
+      1. `meta` frame carrying `reason` and sanitized `proposed_actions`
+      2. `delta` frames streaming 5-word response chunks
+      3. `done` frame signaling completion
+    """
+    result = await chat_advisor(
+        message=message,
+        context_data=context_data,
+        provider=provider,
+        model_name=model_name,
+        api_key=api_key,
+        history=history,
+    )
+    meta_event = {
+        "type": "meta",
+        "reason": result.get("reason", ""),
+        "proposed_actions": result.get("proposed_actions") or [],
+    }
+    yield f"data: {json.dumps(meta_event, ensure_ascii=False)}\n\n"
+
+    full_text = str(result.get("response") or "")
+    words = full_text.split(" ")
+    chunk_size = 5
+    for idx in range(0, len(words), chunk_size):
+        piece = " ".join(words[idx : idx + chunk_size])
+        if idx + chunk_size < len(words):
+            piece += " "
+        yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
+        await asyncio.sleep(0)
+
+    yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
 def _extract_actions_block(content: str) -> Tuple[str, List[Dict[str, Any]]]:
@@ -1005,14 +1123,19 @@ def parse_advisor_response(
     return result
 
 
-def generate_mock_chat_response(message: str, context_data: Dict[str, Any]) -> Dict[str, Any]:
+def generate_mock_chat_response(
+    message: str,
+    context_data: Dict[str, Any],
+    deterministic_action: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
     dashboard = context_data.get("dashboard", {})
     ef = context_data.get("emergency_fund", {})
     budget = context_data.get("budget", {})
     accounts = context_data.get("accounts", []) or []
     categories = context_data.get("categories", []) or []
 
-    deterministic_action = parse_indonesian_action_command(message, accounts, categories)
+    if deterministic_action is None:
+        deterministic_action = parse_indonesian_action_command(message, accounts, categories)
     if deterministic_action is not None:
         return {
             "response": (

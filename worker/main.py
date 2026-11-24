@@ -1,7 +1,11 @@
+import hmac
+import json
 import os
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Header, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import StreamingResponse
+from app.services.email_statement_service import parse_inbound_email_statement
 from app.services.ocr_service import PDFPasswordError, extract_document_text, process_ocr_receipt
 from app.services.pdf_service import parse_pdf_mutasi
 from app.services.snapshot_service import (
@@ -9,6 +13,7 @@ from app.services.snapshot_service import (
     parse_debt_payment,
     parse_debt_snapshot,
 )
+from app.services.voice_service import transcribe_voice_note
 
 app = FastAPI(
     title="Financial OS - Python Worker",
@@ -17,7 +22,8 @@ app = FastAPI(
 )
 
 # CORS: restrict to known origins only (not wildcard with credentials)
-ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:5173,http://localhost:8080").split(",")
+_raw_origins = os.getenv("CORS_ALLOWED_ORIGINS") or os.getenv("CORS_ORIGINS") or "http://localhost:5173,http://localhost:8080"
+ALLOWED_ORIGINS = [o.strip() for o in _raw_origins.split(",") if o.strip()]
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,14 +33,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Service-to-service authentication
+# Service-to-service authentication (fail-closed in production + constant-time comparison)
 WORKER_SECRET = os.getenv("WORKER_SECRET", "")
 
 def verify_service_auth(x_worker_secret: str = Header(None)):
-    """Verify service-to-service authentication when WORKER_SECRET is configured."""
-    if WORKER_SECRET:
-        if not x_worker_secret or x_worker_secret != WORKER_SECRET:
-            raise HTTPException(status_code=401, detail="Unauthorized: invalid service credentials")
+    """Verify service-to-service authentication using constant-time comparison (fail-closed in production)."""
+    secret = (os.getenv("WORKER_SECRET") or WORKER_SECRET or "").strip()
+    app_env = (os.getenv("APP_ENV") or "development").strip().lower()
+    if not secret:
+        if app_env == "production":
+            raise HTTPException(
+                status_code=503,
+                detail="Service auth misconfigured: WORKER_SECRET is required in production",
+            )
+        return
+    if not x_worker_secret or not hmac.compare_digest(
+        x_worker_secret.encode("utf-8"), secret.encode("utf-8")
+    ):
+        raise HTTPException(status_code=401, detail="Unauthorized: invalid service credentials")
 
 # File size limits
 MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024  # 10MB
@@ -242,10 +258,16 @@ async def parse_account_snapshot_endpoint(
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to parse account snapshot")
 
-# Pydantic schemas for AI endpoints
+# Pydantic schemas for AI & inbound email endpoints
 from pydantic import BaseModel
 from typing import Dict, Any, List, Optional
-from app.services.ai_service import enhance_ocr_llm, categorize_transaction, chat_advisor, detect_anomalies_rule
+from app.services.ai_service import (
+    enhance_ocr_llm,
+    categorize_transaction,
+    chat_advisor,
+    stream_chat_advisor,
+    detect_anomalies_rule,
+)
 
 class EnhanceOCRRequest(BaseModel):
     ocr_result: Dict[str, Any]
@@ -260,11 +282,25 @@ class CategorizeRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
-    context: Dict[str, Any]
+    context: Dict[str, Any] = {}
+    history: List[Dict[str, str]] = []
 
 class DetectAnomalyRequest(BaseModel):
     recent_transactions: List[Dict[str, Any]]
     category_averages: List[Dict[str, Any]]
+
+class EmailAttachmentItem(BaseModel):
+    filename: str = ""
+    content_type: str = "application/pdf"
+    content_base64: str = ""
+
+class EmailStatementRequest(BaseModel):
+    subject: str = ""
+    sender: str = ""
+    body_text: str = ""
+    body_html: str = ""
+    attachments: List[EmailAttachmentItem] = []
+    pdf_password: Optional[str] = None
 
 @app.post("/ai/enhance-ocr")
 async def enhance_ocr(
@@ -326,11 +362,103 @@ async def chat(
             context_data=req.context,
             provider=x_ai_provider or "local",
             model_name=x_ai_model or "default",
-            api_key=x_ai_api_key
+            api_key=x_ai_api_key,
+            history=req.history,
         )
         return res
     except Exception:
         raise HTTPException(status_code=500, detail="Failed to process chat")
+
+@app.post("/ai/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    x_worker_secret: str = Header(None),
+    x_ai_provider: Optional[str] = Header(None),
+    x_ai_model: Optional[str] = Header(None),
+    x_ai_api_key: Optional[str] = Header(None)
+):
+    verify_service_auth(x_worker_secret)
+    return StreamingResponse(
+        stream_chat_advisor(
+            message=req.message,
+            context_data=req.context,
+            provider=x_ai_provider or "local",
+            model_name=x_ai_model or "default",
+            api_key=x_ai_api_key,
+            history=req.history,
+        ),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+@app.post("/ai/transcribe-voice")
+async def transcribe_voice_endpoint(
+    file: UploadFile = File(...),
+    context_json: Optional[str] = Form(None),
+    x_worker_secret: str = Header(None),
+    x_ai_provider: Optional[str] = Header(None),
+    x_ai_model: Optional[str] = Header(None),
+    x_ai_api_key: Optional[str] = Header(None),
+):
+    verify_service_auth(x_worker_secret)
+    content_type = (file.content_type or "").lower()
+    filename_lower = (file.filename or "").lower()
+    valid_ext = (".webm", ".ogg", ".opus", ".mp3", ".m4a", ".mp4", ".wav", ".txt")
+    if not (
+        content_type.startswith("audio/")
+        or content_type.startswith("text/")
+        or content_type == "video/webm"
+        or filename_lower.endswith(valid_ext)
+    ):
+        raise HTTPException(status_code=400, detail="Invalid file type. Must be audio or text transcript.")
+
+    audio_bytes = await read_file_with_limit(file)
+    parsed_ctx: Dict[str, Any] = {}
+    if context_json:
+        try:
+            loaded = json.loads(context_json)
+            if isinstance(loaded, dict):
+                parsed_ctx = loaded
+        except Exception:
+            parsed_ctx = {}
+
+    try:
+        return await transcribe_voice_note(
+            audio_bytes=audio_bytes,
+            filename=file.filename or "voice-note.webm",
+            mime_type=content_type or "audio/webm",
+            provider=x_ai_provider or "local",
+            model_name=x_ai_model or "default",
+            api_key=x_ai_api_key,
+            context=parsed_ctx,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to transcribe voice note")
+
+@app.post("/parse/email-statement")
+async def parse_email_statement_endpoint(
+    req: EmailStatementRequest,
+    x_worker_secret: str = Header(None),
+):
+    verify_service_auth(x_worker_secret)
+    try:
+        return parse_inbound_email_statement(
+            subject=req.subject,
+            sender=req.sender,
+            body_text=req.body_text,
+            body_html=req.body_html,
+            attachments=[a.model_dump() for a in req.attachments],
+            pdf_password=req.pdf_password,
+        )
+    except PDFPasswordError as exc:
+        raise HTTPException(status_code=422, detail={"code": exc.code, "message": exc.message})
+    except Exception:
+        raise HTTPException(status_code=500, detail="Failed to parse email statement")
 
 @app.post("/ai/detect-anomaly")
 async def detect_anomaly(
