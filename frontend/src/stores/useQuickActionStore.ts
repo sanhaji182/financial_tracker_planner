@@ -28,6 +28,9 @@ interface QuickActionState {
   uiMode: UIMode;
   setUiMode: (mode: UIMode) => void;
   toggleUiMode: () => void;
+
+  isOnboardingOpen: boolean;
+  setOnboardingOpen: (open: boolean) => void;
 }
 
 const getInitialCollapsed = (): boolean => {
@@ -88,4 +91,7 @@ export const useQuickActionStore = create<QuickActionState>((set) => ({
       }
       return { uiMode: next };
     }),
+
+  isOnboardingOpen: false,
+  setOnboardingOpen: (open) => set({ isOnboardingOpen: open }),
 }));

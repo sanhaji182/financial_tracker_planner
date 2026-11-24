@@ -62,9 +62,42 @@ export function handleAiAgentRoutes(
     });
   }
 
+  if (path === '/ai/voice-note' && method === 'POST') {
+    return makeOk(config, {
+      data: {
+        transcript: '',
+        provider: 'local',
+        needs_manual_transcript: true,
+        parsed_amount: 0,
+        proposed_actions: [],
+      },
+    });
+  }
+
   if (path === '/ai/chat' && method === 'POST') {
-    const body = parseJsonBody<{ message: string }>(config.data);
-    const message = String(body.message || '').trim();
+    const body = parseJsonBody<{
+      message: string;
+      history?: Array<{ role: string; content: string }>;
+    }>(config.data);
+    let message = String(body.message || '').trim();
+    const history = Array.isArray(body.history) ? body.history : [];
+    if (/^(ubah|ganti|revisi|jadikan|jadi|pakai|pake|via)\b/i.test(message) && history.length > 0) {
+      const prevUser = [...history].reverse().find((t) => t.role === 'user' && t.content);
+      if (prevUser) {
+        const hasNewAmount = /(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:jt|juta|m|rb|ribu|k)?\b/i.test(
+          message
+        );
+        if (hasNewAmount) {
+          const strippedPrev = prevUser.content
+            .replace(/(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:jt|juta|m|rb|ribu|k)?\b/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          message = `${strippedPrev} ${message}`;
+        } else {
+          message = `${prevUser.content} ${message}`;
+        }
+      }
+    }
     const dash = computeDashboard(db);
     const ef = computeEmergencyFundSummary(db);
     const today = getTodayLocalDate();

@@ -12,6 +12,7 @@
     "test:e2e": "playwright test",
     "preview": "vite preview",
     "cap:sync": "npm run build && npx cap sync android",
+    "ios:sync": "npm run build && npx cap sync ios",
     "android:open": "npx cap open android",
     "android:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
     "android:bundle": "npm run cap:sync && cd android && ./gradlew bundleRelease"

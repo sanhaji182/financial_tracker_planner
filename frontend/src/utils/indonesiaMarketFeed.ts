@@ -1,4 +1,5 @@
 import type { Asset } from '../services/assets';
+import api from './api';
 
 export interface IndonesiaMarketPrices {
   goldAntamPerGramIdr: number;
@@ -80,6 +81,50 @@ export function saveMarketPrices(prices: IndonesiaMarketPrices): void {
  */
 export async function refreshMarketPricesLive(): Promise<IndonesiaMarketPrices> {
   const current = loadMarketPrices();
+
+  // 1. Try authenticated backend live proxy first (returns live Emas Antam, IDX blue-chip, USD/SGD, SBN)
+  try {
+    const backendRes = await api.get<{
+      data?: {
+        gold_antam_per_gram_idr?: number;
+        usd_idr?: number;
+        sgd_idr?: number;
+        sbn_coupon_pct?: number;
+        idx_prices?: Record<string, number>;
+        updated_at?: string;
+        source?: 'benchmark' | 'live' | 'manual';
+      };
+    }>('/market/prices', { params: { refresh: 'true' }, timeout: 3500 });
+    const d = backendRes.data?.data;
+    if (d && typeof d.usd_idr === 'number' && d.usd_idr > 1000) {
+      const updated: IndonesiaMarketPrices = {
+        goldAntamPerGramIdr:
+          typeof d.gold_antam_per_gram_idr === 'number' && d.gold_antam_per_gram_idr > 0
+            ? d.gold_antam_per_gram_idr
+            : current.goldAntamPerGramIdr,
+        usdIdr: Math.round(d.usd_idr),
+        sgdIdr:
+          typeof d.sgd_idr === 'number' && d.sgd_idr > 0
+            ? Math.round(d.sgd_idr)
+            : current.sgdIdr,
+        sbnCouponPct:
+          typeof d.sbn_coupon_pct === 'number' && d.sbn_coupon_pct > 0
+            ? d.sbn_coupon_pct
+            : current.sbnCouponPct,
+        idxPrices: {
+          ...current.idxPrices,
+          ...(d.idx_prices || {}),
+        },
+        updatedAt: d.updated_at || new Date().toISOString(),
+        source: d.source || 'live',
+      };
+      saveMarketPrices(updated);
+      return updated;
+    }
+  } catch {
+    // Offline or unauthenticated: fall through to public FX fallback below
+  }
+
   if (typeof fetch !== 'function') {
     return current;
   }

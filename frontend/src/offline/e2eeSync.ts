@@ -444,3 +444,190 @@ export async function triggerAutoE2eePullIfEnabled(): Promise<boolean> {
     return false;
   }
 }
+
+// ---- E2EE Recovery Key & Cross-Device Pairing (Android <-> iPhone / Web) ----
+const RECOVERY_KEY_PREF = 'kb_e2ee_recovery_key_v1';
+const PAIRING_CODE_TTL_MS = 10 * 60 * 1000;
+const PAIRING_KDF_ITERATIONS = 100_000;
+
+export interface GeneratedDevicePairing {
+  code: string;
+  pin: string;
+  expiresAt: string;
+}
+
+export function generateRecoveryKey(): string {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const raw = new Uint8Array(20);
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    crypto.getRandomValues(raw);
+  } else {
+    for (let i = 0; i < raw.length; i += 1) {
+      raw[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  const chars: string[] = [];
+  for (let i = 0; i < 20; i += 1) {
+    chars.push(alphabet[raw[i] % alphabet.length]);
+  }
+  const grouped = chars.join('').match(/.{1,4}/g)?.join('-') || chars.join('');
+  const key = `KB-${grouped}`;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      window.localStorage.setItem(RECOVERY_KEY_PREF, key);
+    }
+  } catch {
+    // Ignore storage quota
+  }
+  return key;
+}
+
+export function getSavedRecoveryKey(): string | null {
+  try {
+    if (typeof window === 'undefined' || !window.localStorage) return null;
+    return window.localStorage.getItem(RECOVERY_KEY_PREF);
+  } catch {
+    return null;
+  }
+}
+
+function generatePairingPin(): string {
+  if (typeof crypto === 'undefined' || typeof crypto.getRandomValues !== 'function') {
+    throw new Error('WebCrypto API tidak tersedia untuk membuat PIN pairing aman.');
+  }
+  const buf = new Uint32Array(1);
+  // Rejection sampling below 4_294_000_000 guarantees uniform modulo 1_000_000
+  let val = 0;
+  do {
+    crypto.getRandomValues(buf);
+    val = buf[0];
+  } while (val >= 4_294_000_000);
+  return String(val % 1_000_000).padStart(6, '0');
+}
+
+export async function buildDevicePairingCode(
+  passphrase: string,
+  label = 'Keluarga',
+  ttlMs = PAIRING_CODE_TTL_MS
+): Promise<GeneratedDevicePairing> {
+  const cleanPass = passphrase.trim();
+  if (cleanPass.length < 6) {
+    throw new Error('Passphrase minimal 6 karakter untuk membuat kode pairing.');
+  }
+  if (typeof crypto === 'undefined' || !crypto.subtle) {
+    throw new Error('WebCrypto API tidak tersedia untuk enkripsi kode pairing.');
+  }
+
+  const pin = generatePairingPin();
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const exp = Date.now() + ttlMs;
+
+  const aesKey = await deriveAesKey(`kbpair2:${pin}`, salt, PAIRING_KDF_ITERATIONS);
+  const innerBytes = new TextEncoder().encode(
+    JSON.stringify({
+      v: 2,
+      p: cleanPass,
+      l: label.trim() || 'Keluarga',
+      exp,
+    })
+  );
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv: iv as BufferSource },
+    aesKey,
+    innerBytes
+  );
+
+  const envelopeJson = JSON.stringify({
+    v: 2,
+    s: bytesToBase64(salt),
+    i: bytesToBase64(iv),
+    c: bytesToBase64(new Uint8Array(cipherBuf)),
+    k: PAIRING_KDF_ITERATIONS,
+    exp,
+  });
+
+  return {
+    code: `KBPAIR2:${bytesToBase64(new TextEncoder().encode(envelopeJson))}`,
+    pin,
+    expiresAt: new Date(exp).toISOString(),
+  };
+}
+
+export async function parseDevicePairingCode(
+  code: string,
+  pin: string
+): Promise<{ passphrase: string; label: string }> {
+  const trimmed = code.trim();
+  if (trimmed.startsWith('KBPAIR1:')) {
+    throw new Error(
+      'Format KBPAIR1 lama tidak didukung demi keamanan. Buat kode pairing baru (KBPAIR2) yang dilindungi PIN 6 digit.'
+    );
+  }
+  if (!trimmed.startsWith('KBPAIR2:')) {
+    throw new Error('Format kode pairing tidak valid (harus diawali KBPAIR2:).');
+  }
+  const cleanPin = pin.trim();
+  if (!/^\d{6}$/.test(cleanPin)) {
+    throw new Error('PIN pairing harus berupa 6 digit angka.');
+  }
+
+  let env: {
+    v?: number;
+    s?: string;
+    i?: string;
+    c?: string;
+    k?: number;
+    exp?: number;
+  };
+  try {
+    const outerBytes = base64ToBytes(trimmed.slice('KBPAIR2:'.length));
+    env = JSON.parse(new TextDecoder().decode(outerBytes)) as typeof env;
+  } catch {
+    throw new Error('Struktur kode pairing KBPAIR2 rusak atau tidak valid.');
+  }
+
+  if (env?.v !== 2 || !env.s || !env.i || !env.c) {
+    throw new Error('Versi atau struktur kode pairing tidak didukung.');
+  }
+  if (!env.exp || Date.now() > env.exp) {
+    throw new Error('Kode pairing sudah kedaluwarsa (berlaku 10 menit). Buat kode baru.');
+  }
+
+  const salt = base64ToBytes(env.s);
+  const iv = base64ToBytes(env.i);
+  const cipher = base64ToBytes(env.c);
+  const aesKey = await deriveAesKey(
+    `kbpair2:${cleanPin}`,
+    salt,
+    env.k || PAIRING_KDF_ITERATIONS
+  );
+
+  let plainBuf: ArrayBuffer;
+  try {
+    plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: iv as BufferSource },
+      aesKey,
+      cipher as BufferSource
+    );
+  } catch {
+    throw new Error('PIN pairing salah atau kode pairing tidak valid.');
+  }
+
+  const parsed = JSON.parse(new TextDecoder().decode(plainBuf)) as {
+    v?: number;
+    p?: string;
+    l?: string;
+    exp?: number;
+  };
+  if (!parsed.exp || Date.now() > parsed.exp) {
+    throw new Error('Kode pairing sudah kedaluwarsa (berlaku 10 menit). Buat kode baru.');
+  }
+  if (!parsed?.p || parsed.p.length < 6) {
+    throw new Error('Kode pairing tidak memuat passphrase yang valid.');
+  }
+  return {
+    passphrase: parsed.p,
+    label: parsed.l || 'Perangkat Keluarga',
+  };
+}

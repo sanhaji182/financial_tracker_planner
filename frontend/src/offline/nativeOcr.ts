@@ -81,6 +81,16 @@ export interface LocalOcrPlugin {
     privacyMasked: boolean;
   }): Promise<{ updated: boolean }>;
   consumePendingQuickAction?(): Promise<{ action: string | null }>;
+  checkNotificationPermission?(): Promise<{ granted: boolean }>;
+  requestNotificationPermission?(): Promise<{ granted: boolean }>;
+  requestAudioPermission?(): Promise<{ granted: boolean }>;
+  consumePendingNotificationRoute?(): Promise<{ route: string | null }>;
+  showLocalNotification?(options: {
+    title: string;
+    body: string;
+    route?: string;
+    id?: number;
+  }): Promise<{ shown: boolean; reason?: string }>;
   addListener(
     eventName: 'sharedFilesReceived',
     listenerFunc: (data: { files: SharedFilePayload[] }) => void
@@ -92,6 +102,10 @@ export interface LocalOcrPlugin {
   addListener(
     eventName: 'quickActionReceived',
     listenerFunc: (data: { action: string }) => void
+  ): Promise<PluginListenerHandle>;
+  addListener(
+    eventName: 'notificationRouteReceived',
+    listenerFunc: (data: { route: string }) => void
   ): Promise<PluginListenerHandle>;
 }
 
@@ -238,6 +252,69 @@ export const localOcrBridge = {
     } catch {
       return { action: null };
     }
+  },
+  checkNotificationPermission: async (): Promise<{ granted: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.checkNotificationPermission) {
+      return { granted: false };
+    }
+    try {
+      return await LocalOcr.checkNotificationPermission();
+    } catch {
+      return { granted: false };
+    }
+  },
+  requestNotificationPermission: async (): Promise<{ granted: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.requestNotificationPermission) {
+      return { granted: false };
+    }
+    try {
+      return await LocalOcr.requestNotificationPermission();
+    } catch {
+      return { granted: false };
+    }
+  },
+  requestAudioPermission: async (): Promise<{ granted: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.requestAudioPermission) {
+      return { granted: true };
+    }
+    try {
+      return await LocalOcr.requestAudioPermission();
+    } catch {
+      return { granted: false };
+    }
+  },
+  consumePendingNotificationRoute: async (): Promise<{ route: string | null }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.consumePendingNotificationRoute) {
+      return { route: null };
+    }
+    try {
+      return await LocalOcr.consumePendingNotificationRoute();
+    } catch {
+      return { route: null };
+    }
+  },
+  showLocalNotification: async (options: {
+    title: string;
+    body: string;
+    route?: string;
+    id?: number;
+  }): Promise<{ shown: boolean; reason?: string }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.showLocalNotification) {
+      return { shown: false, reason: 'unavailable' };
+    }
+    try {
+      return await LocalOcr.showLocalNotification(options);
+    } catch {
+      return { shown: false, reason: 'error' };
+    }
+  },
+  addNotificationRouteListener: async (
+    listener: (data: { route: string }) => void
+  ): Promise<{ remove: () => Promise<void> | void }> => {
+    if (!hasNativeLocalOcrPlugin()) {
+      return { remove: () => {} };
+    }
+    return LocalOcr.addListener('notificationRouteReceived', listener);
   },
   addQuickActionListener: async (
     listener: (data: { action: string }) => void
