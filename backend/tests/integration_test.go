@@ -81,8 +81,7 @@ func setupTestEnv(t *testing.T) {
 
 	// Run migrations
 	if err := runTestMigrations(ctx, testDB); err != nil {
-		t.Skipf("skipping test: migration failed: %v", err)
-		return
+		t.Fatalf("migration failed: %v", err)
 	}
 
 	// Setup Redis
@@ -190,6 +189,8 @@ func cleanDatabase(t *testing.T) {
 		"alerts", "documents", "household_notes", "task_checklists", "goals",
 		"subscriptions", "monthly_insights", "scenarios", "currencies",
 		"automation_rules", "ai_settings", "vault_references",
+		"household_sync_envelopes", "household_approval_settings", "transaction_approvals",
+		"channel_links", "webauthn_credentials", "client_error_events",
 	}
 	query := fmt.Sprintf("TRUNCATE TABLE %s CASCADE;", strings.Join(tables, ", "))
 	_, err := testDB.Exec(ctx, query)

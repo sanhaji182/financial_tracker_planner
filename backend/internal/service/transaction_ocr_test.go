@@ -132,6 +132,12 @@ func (s *stubAIService) CallWorkerAI(_ context.Context, _ string, endpoint strin
 	}
 	return nil
 }
+func (s *stubAIService) StreamWorkerAI(_ context.Context, _ string, _ string, _ interface{}, _ http.ResponseWriter) error {
+	return nil
+}
+func (s *stubAIService) TranscribeVoiceWorker(_ context.Context, _ string, _ []byte, _, _, _ string) (*dto.VoiceTranscribeResponse, error) {
+	return &dto.VoiceTranscribeResponse{}, nil
+}
 func (s *stubAIService) DetectAnomalies(_ context.Context, _ string) (*dto.AnomalyCheckResponse, error) {
 	return &dto.AnomalyCheckResponse{}, nil
 }

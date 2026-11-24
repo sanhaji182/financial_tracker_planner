@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"time"
@@ -21,6 +22,8 @@ type AISettingsService interface {
 	GetSettingsRaw(ctx context.Context, userID string) (*model.AISettings, error)
 	GetAPIKey(ctx context.Context, userID string) (string, error)
 	CallWorkerAI(ctx context.Context, userID string, endpoint string, reqBody interface{}, respTarget interface{}) error
+	StreamWorkerAI(ctx context.Context, userID string, endpoint string, reqBody interface{}, dst http.ResponseWriter) error
+	TranscribeVoiceWorker(ctx context.Context, userID string, audioBytes []byte, filename, mimeType, contextJSON string) (*dto.VoiceTranscribeResponse, error)
 	DetectAnomalies(ctx context.Context, userID string) (*dto.AnomalyCheckResponse, error)
 }
 
@@ -135,29 +138,64 @@ func (s *aiSettingsService) GetAPIKey(ctx context.Context, userID string) (strin
 	return s.vaultService.RetrieveSecret(ctx, ref.VaultItemID)
 }
 
-func (s *aiSettingsService) CallWorkerAI(ctx context.Context, userID string, endpoint string, reqBody interface{}, respTarget interface{}) error {
+func (s *aiSettingsService) resolveWorkerConfig(ctx context.Context, userID string, requireEnabled bool) (*model.AISettings, string, string, error) {
 	ownerID, err := s.repo.GetOwnerID(ctx, userID)
 	if err != nil {
-		return err
+		return nil, "", "", err
 	}
 
 	settings, err := s.repo.GetByUserID(ctx, ownerID)
 	if err != nil {
-		return err
+		return nil, "", "", err
 	}
 
-	if !settings.AIEnabled {
-		return errors.New("AI features are disabled by user")
+	if requireEnabled && !settings.AIEnabled {
+		return nil, "", "", errors.New("AI features are disabled by user")
 	}
 
-	apiKey, err := s.GetAPIKey(ctx, ownerID)
-	if err != nil {
-		return err
+	apiKey := ""
+	if settings.AIEnabled {
+		apiKey, err = s.GetAPIKey(ctx, ownerID)
+		if err != nil {
+			return nil, "", "", err
+		}
 	}
 
 	workerURL := os.Getenv("WORKER_URL")
 	if workerURL == "" {
 		workerURL = "http://localhost:8081"
+	}
+	return settings, apiKey, workerURL, nil
+}
+
+func applyWorkerHeaders(req *http.Request, settings *model.AISettings, apiKey string) {
+	if workerSecret := os.Getenv("WORKER_SECRET"); workerSecret != "" {
+		req.Header.Set("X-Worker-Secret", workerSecret)
+	}
+	provider := "local"
+	modelName := "default"
+	if settings != nil && settings.AIEnabled {
+		req.Header.Set("X-AI-Enabled", "true")
+		if settings.AIProvider != "" {
+			provider = settings.AIProvider
+		}
+		if settings.AIModel != "" {
+			modelName = settings.AIModel
+		}
+	} else {
+		req.Header.Set("X-AI-Enabled", "false")
+	}
+	req.Header.Set("X-AI-Provider", provider)
+	req.Header.Set("X-AI-Model", modelName)
+	if apiKey != "" {
+		req.Header.Set("X-AI-API-Key", apiKey)
+	}
+}
+
+func (s *aiSettingsService) CallWorkerAI(ctx context.Context, userID string, endpoint string, reqBody interface{}, respTarget interface{}) error {
+	settings, apiKey, workerURL, err := s.resolveWorkerConfig(ctx, userID, true)
+	if err != nil {
+		return err
 	}
 	targetURL := workerURL + endpoint
 
@@ -175,15 +213,7 @@ func (s *aiSettingsService) CallWorkerAI(ctx context.Context, userID string, end
 	}
 
 	req.Header.Set("Content-Type", "application/json")
-	if workerSecret := os.Getenv("WORKER_SECRET"); workerSecret != "" {
-		req.Header.Set("X-Worker-Secret", workerSecret)
-	}
-	req.Header.Set("X-AI-Enabled", "true")
-	req.Header.Set("X-AI-Provider", settings.AIProvider)
-	req.Header.Set("X-AI-Model", settings.AIModel)
-	if apiKey != "" {
-		req.Header.Set("X-AI-API-Key", apiKey)
-	}
+	applyWorkerHeaders(req, settings, apiKey)
 
 	client := &http.Client{Timeout: 60 * time.Second}
 	resp, err := client.Do(req)
@@ -204,6 +234,115 @@ func (s *aiSettingsService) CallWorkerAI(ctx context.Context, userID string, end
 	}
 
 	return nil
+}
+
+func (s *aiSettingsService) StreamWorkerAI(ctx context.Context, userID string, endpoint string, reqBody interface{}, dst http.ResponseWriter) error {
+	settings, apiKey, workerURL, err := s.resolveWorkerConfig(ctx, userID, true)
+	if err != nil {
+		return err
+	}
+
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return fmt.Errorf("failed to serialize stream body: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", workerURL+endpoint, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return fmt.Errorf("failed to create stream request to worker: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	applyWorkerHeaders(req, settings, apiKey)
+
+	client := &http.Client{Timeout: 90 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to worker stream: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := ioReadAll(resp.Body)
+		return fmt.Errorf("worker stream error status %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	flusher, _ := dst.(http.Flusher)
+	buf := make([]byte, 2048)
+	for {
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := dst.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			if flusher != nil {
+				flusher.Flush()
+			}
+		}
+		if readErr != nil {
+			break
+		}
+	}
+	return nil
+}
+
+func (s *aiSettingsService) TranscribeVoiceWorker(
+	ctx context.Context,
+	userID string,
+	audioBytes []byte,
+	filename, mimeType, contextJSON string,
+) (*dto.VoiceTranscribeResponse, error) {
+	settings, apiKey, workerURL, err := s.resolveWorkerConfig(ctx, userID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	if filename == "" {
+		filename = "voice-note.webm"
+	}
+
+	var formBuf bytes.Buffer
+	mw := multipart.NewWriter(&formBuf)
+	fw, err := mw.CreateFormFile("file", filename)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := fw.Write(audioBytes); err != nil {
+		return nil, err
+	}
+	if contextJSON != "" {
+		_ = mw.WriteField("context_json", contextJSON)
+	}
+	if err := mw.Close(); err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequestWithContext(ctx, "POST", workerURL+"/ai/transcribe-voice", &formBuf)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create voice transcribe request: %w", err)
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	if mimeType != "" {
+		req.Header.Set("X-Audio-Mime-Type", mimeType)
+	}
+	applyWorkerHeaders(req, settings, apiKey)
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to reach voice transcription worker: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBytes, _ := ioReadAll(resp.Body)
+		return nil, fmt.Errorf("worker voice error %d: %s", resp.StatusCode, string(respBytes))
+	}
+
+	var out dto.VoiceTranscribeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("failed to decode voice response: %w", err)
+	}
+	return &out, nil
 }
 
 func (s *aiSettingsService) DetectAnomalies(ctx context.Context, userID string) (*dto.AnomalyCheckResponse, error) {

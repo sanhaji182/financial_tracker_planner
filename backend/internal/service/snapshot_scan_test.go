@@ -54,6 +54,12 @@ func (s *stubScanAIService) GetAPIKey(_ context.Context, _ string) (string, erro
 func (s *stubScanAIService) CallWorkerAI(_ context.Context, _ string, _ string, _ interface{}, _ interface{}) error {
 	return nil
 }
+func (s *stubScanAIService) StreamWorkerAI(_ context.Context, _ string, _ string, _ interface{}, _ http.ResponseWriter) error {
+	return nil
+}
+func (s *stubScanAIService) TranscribeVoiceWorker(_ context.Context, _ string, _ []byte, _, _, _ string) (*dto.VoiceTranscribeResponse, error) {
+	return &dto.VoiceTranscribeResponse{}, nil
+}
 func (s *stubScanAIService) DetectAnomalies(_ context.Context, _ string) (*dto.AnomalyCheckResponse, error) {
 	return &dto.AnomalyCheckResponse{}, nil
 }

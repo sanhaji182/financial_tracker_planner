@@ -61,7 +61,7 @@ func (s *PgSyncStore) ResolveHouseholdOwner(ctx context.Context, userID, role st
 	}
 	var invitedBy *string
 	err := s.db.QueryRow(ctx, `
-		SELECT invited_by FROM users WHERE id = $1 AND is_active = true
+		SELECT invited_by::text FROM users WHERE id = $1 AND is_active = true
 	`, userID).Scan(&invitedBy)
 	if err != nil || invitedBy == nil || strings.TrimSpace(*invitedBy) == "" {
 		return "", errNoLinkedHousehold

@@ -24,8 +24,22 @@ type UpdateAISettingsRequest struct {
 	APIKey                    string `json:"api_key"` // Optional
 }
 
+type AIChatTurn struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
 type AIChatRequest struct {
-	Message string `json:"message" binding:"required"`
+	Message string       `json:"message" binding:"required"`
+	History []AIChatTurn `json:"history,omitempty"`
+}
+
+type VoiceTranscribeResponse struct {
+	Transcript            string             `json:"transcript"`
+	Provider              string             `json:"provider"`
+	NeedsManualTranscript bool               `json:"needs_manual_transcript"`
+	ParsedAmount          float64            `json:"parsed_amount"`
+	ProposedActions       []AgenticActionDTO `json:"proposed_actions,omitempty"`
 }
 
 type AgenticActionDTO struct {

@@ -24,6 +24,7 @@ type AuthService interface {
 	
 	InviteSpouse(ctx context.Context, ownerID string, req dto.InviteSpouseRequest) (*dto.InviteLink, error)
 	RegisterSpouse(ctx context.Context, inviteToken string, req dto.RegisterRequest) (*dto.AuthResponse, error)
+	IssueTokensForUser(ctx context.Context, userID string) (*dto.AuthResponse, error)
 	ChangePassword(ctx context.Context, userID string, req dto.ChangePasswordRequest) error
 	DeleteAccount(ctx context.Context, userID string, req dto.DeleteAccountRequest) error
 	GetMe(ctx context.Context, userID string) (*model.User, error)
@@ -324,6 +325,28 @@ func (s *authService) generateTokenPair(ctx context.Context, user *model.User) (
 
 func (s *authService) GetMe(ctx context.Context, userID string) (*model.User, error) {
 	return s.userRepo.GetUserByID(ctx, userID)
+}
+
+func (s *authService) IssueTokensForUser(ctx context.Context, userID string) (*dto.AuthResponse, error) {
+	user, err := s.userRepo.GetUserByID(ctx, userID)
+	if err != nil || user == nil || !user.IsActive {
+		return nil, errors.New("akun tidak ditemukan atau tidak aktif")
+	}
+
+	now := time.Now()
+	user.LastLoginAt = &now
+	_ = s.userRepo.UpdateUser(ctx, user)
+
+	accessToken, refreshToken, err := s.generateTokenPair(ctx, user)
+	if err != nil {
+		return nil, err
+	}
+
+	return &dto.AuthResponse{
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+		User:         user.ToResponse(),
+	}, nil
 }
 
 func (s *authService) DeleteAccount(ctx context.Context, userID string, req dto.DeleteAccountRequest) error {

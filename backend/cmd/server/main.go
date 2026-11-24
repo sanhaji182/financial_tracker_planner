@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/user/financial-os/internal/config"
+	"github.com/user/financial-os/internal/dto"
 	"github.com/user/financial-os/internal/handler"
 	"github.com/user/financial-os/internal/middleware"
 	"github.com/user/financial-os/internal/repository"
@@ -153,6 +155,102 @@ func main() {
 	syncHandler := handler.NewSyncHandler(syncStore)
 	accountHandler.WithHouseholdResolver(syncStore.ResolveHouseholdOwner)
 	txHandler.WithHouseholdAccess(accountService, syncStore.ResolveHouseholdOwner)
+	aiSettingsHandler.WithHouseholdResolver(syncStore.ResolveHouseholdOwner)
+
+	inboundTxCreator := func(
+		ctx context.Context,
+		ownerID string,
+		amount float64,
+		txType, description, accountHint, dateStr, source string,
+	) (string, error) {
+		accs, err := accountService.GetAccounts(ctx, ownerID)
+		if err != nil {
+			return "", err
+		}
+		var accountID string
+		hint := strings.ToLower(strings.TrimSpace(accountHint))
+		for _, a := range accs {
+			if !a.IsActive {
+				continue
+			}
+			if accountID == "" {
+				accountID = a.ID
+			}
+			prov := ""
+			if a.BankProvider != nil {
+				prov = strings.ToLower(*a.BankProvider)
+			}
+			if hint != "" && (strings.Contains(strings.ToLower(a.Name), hint) || strings.Contains(prov, hint)) {
+				accountID = a.ID
+				break
+			}
+		}
+		if accountID == "" {
+			return "", errors.New("tidak ada rekening aktif di keluarga ini")
+		}
+
+		cats, err := categoryService.GetCategories(ctx, ownerID)
+		if err != nil {
+			return "", err
+		}
+		var catID string
+		for _, c := range cats {
+			if c.Type == txType {
+				catID = c.ID
+				break
+			}
+		}
+		if catID == "" {
+			return "", errors.New("kategori transaksi tidak tersedia")
+		}
+
+		parsedDate, err := time.Parse("2006-01-02", strings.TrimSpace(dateStr))
+		if err != nil {
+			parsedDate = time.Now()
+		}
+		desc := description
+		note := "Sumber: " + source
+		created, err := txService.CreateTransaction(ctx, ownerID, dto.CreateTransactionRequest{
+			Date:        parsedDate,
+			Amount:      amount,
+			Type:        txType,
+			AccountID:   accountID,
+			CategoryID:  &catID,
+			Description: &desc,
+			Notes:       &note,
+		}, nil, nil)
+		if err != nil {
+			return "", err
+		}
+		return created.ID, nil
+	}
+
+	approvalStore := handler.NewPgApprovalStore(dbPool)
+	approvalHandler := handler.NewApprovalHandler(
+		approvalStore,
+		syncStore.ResolveHouseholdOwner,
+		accountService,
+		categoryService,
+		func(ctx context.Context, ownerID string, req dto.CreateTransactionRequest) (*dto.TransactionResponse, error) {
+			return txService.CreateTransaction(ctx, ownerID, req, nil, nil)
+		},
+	).WithTelegram(telegramService)
+
+	channelStore := handler.NewPgChannelStore(dbPool)
+	channelInboundHandler := handler.NewChannelInboundHandler(
+		channelStore,
+		syncStore.ResolveHouseholdOwner,
+		telegramService,
+		inboundTxCreator,
+		rdb,
+	).WithAIService(aiSettingsService)
+
+	passkeyStore := handler.NewPgPasskeyStore(dbPool)
+	passkeyHandler := handler.NewPasskeyHandler(passkeyStore, authService, rdb)
+
+	marketSnapHandler := handler.NewMarketSnapHandler().WithImporter(inboundTxCreator)
+	telemetryStore := handler.NewPgTelemetryStore(dbPool)
+	telemetryHandler := handler.NewTelemetryHandler(telemetryStore, rdb)
 	jobRunner := service.NewJobRunner(rdb, "")
 
 	// Initialize Gin engine
@@ -203,6 +301,7 @@ func main() {
 		authGroup := v1.Group("/auth")
 		authGroup.Use(middleware.RateLimitWithRedis(rdb, 30))
 		authHandler.RegisterRoutes(authGroup)
+		passkeyHandler.RegisterRoutes(authGroup)
 
 		// Register Accounts handler
 		accountHandler.RegisterRoutes(v1)
@@ -278,6 +377,10 @@ func main() {
 		aiSettingsHandler.RegisterRoutes(v1)
 		governanceHandler.RegisterRoutes(v1)
 		syncHandler.RegisterRoutes(v1)
+		approvalHandler.RegisterRoutes(v1)
+		channelInboundHandler.RegisterRoutes(v1)
+		marketSnapHandler.RegisterRoutes(v1)
+		telemetryHandler.RegisterRoutes(v1)
 
 		// Placeholder for future endpoints
 		v1.GET("/placeholder", func(c *gin.Context) {

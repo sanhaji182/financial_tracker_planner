@@ -48,6 +48,10 @@ func (m *mockAuthService) RegisterSpouse(_ context.Context, _ string, _ dto.Regi
 	return m.loginResp, nil
 }
 
+func (m *mockAuthService) IssueTokensForUser(_ context.Context, _ string) (*dto.AuthResponse, error) {
+	return m.loginResp, nil
+}
+
 func (m *mockAuthService) ChangePassword(_ context.Context, _ string, _ dto.ChangePasswordRequest) error {
 	return nil
 }
