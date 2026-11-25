@@ -1268,6 +1268,22 @@ public class LocalOcrPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void scheduleLegacyCheckInReminder(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        boolean paused = Boolean.TRUE.equals(call.getBoolean("paused", false));
+        long nextDueMs = call.getData().optLong("nextDueEpochMs", 0L);
+        int reminderHour = call.getInt("reminderHour", 20);
+        String lastCheckinDay = call.getString("lastCheckinDay", "");
+
+        LegacyReminderReceiver.scheduleDailyReminder(
+                getContext(), enabled, paused, nextDueMs, reminderHour, lastCheckinDay);
+
+        JSObject ret = new JSObject();
+        ret.put("scheduled", enabled && !paused);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void requestAudioPermission(PluginCall call) {
         if (getPermissionState("audio") == PermissionState.GRANTED
                 || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
