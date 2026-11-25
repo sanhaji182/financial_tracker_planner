@@ -13,18 +13,74 @@ import { toast } from '../../stores/useToastStore';
 import { useAuthStore } from '../../stores/authStore';
 
 interface ChatMessage {
+  clientId?: string;
   role: 'user' | 'assistant';
   text: string;
   reason?: string;
   proposed_actions?: AgenticAction[];
 }
 
+function renderInlineMarkdown(text: string): React.ReactNode[] {
+  const tokens = text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g);
+  return tokens.map((part, idx) => {
+    if (part.startsWith('**') && part.endsWith('**') && part.length > 4) {
+      return (
+        <strong key={idx} className="font-semibold text-slate-900 dark:text-white">
+          {part.slice(2, -2)}
+        </strong>
+      );
+    }
+    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
+      return (
+        <code
+          key={idx}
+          className="px-1 py-0.5 rounded bg-slate-200/80 dark:bg-slate-700/80 text-[12px] font-mono"
+        >
+          {part.slice(1, -1)}
+        </code>
+      );
+    }
+    return <React.Fragment key={idx}>{part}</React.Fragment>;
+  });
+}
+
+const AdvisorFormattedText: React.FC<{ text: string; isUser: boolean }> = ({ text, isUser }) => {
+  if (isUser) {
+    return <p className="text-sm leading-relaxed whitespace-pre-wrap">{text}</p>;
+  }
+  const lines = text.split('\n');
+  return (
+    <div className="text-sm leading-relaxed space-y-1">
+      {lines.map((line, idx) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          return <div key={idx} className="h-1" />;
+        }
+        const bulletMatch = trimmed.match(/^(?:[-•*]|\d+\.)\s+(.*)$/);
+        if (bulletMatch) {
+          const prefix = trimmed.slice(0, trimmed.length - bulletMatch[1].length).trim();
+          return (
+            <div key={idx} className="flex items-start gap-1.5 pl-0.5">
+              <span className="text-indigo-500 dark:text-indigo-400 font-semibold shrink-0">
+                {prefix}
+              </span>
+              <span className="min-w-0">{renderInlineMarkdown(bulletMatch[1])}</span>
+            </div>
+          );
+        }
+        return <p key={idx}>{renderInlineMarkdown(line)}</p>;
+      })}
+    </div>
+  );
+};
+
 const QUICK_QUESTIONS = [
   'Bagaimana kondisi keuangan saya bulan ini?',
-  'Catat kopi 28rb',
-  'Cek anomali pengeluaran',
+  'Beli kopi 10rb, susu 6rb dan warteg 5rb',
+  'Tagihan bulan ini apa saja?',
+  'Strategi melunasi utang lebih cepat?',
+  'Cek anomali & pengeluaran terbesar',
   'Simulasi cicil 3jt/bulan aman?',
-  'Bagaimana cara melunasi utang lebih cepat?',
 ];
 
 const CHAT_HISTORY_KEY = 'kb_advisor_chat_history_v1';
@@ -140,12 +196,21 @@ export const AdvisorChatDrawer: React.FC = () => {
       .slice(-10)
       .map((m) => ({ role: m.role, content: m.text }));
 
-    const userMessage: ChatMessage = { role: 'user', text: messageText };
-    const assistantIndex = messages.length + 1;
+    const assistantId = `ast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+    const userMessage: ChatMessage = {
+      clientId: `usr-${Date.now()}`,
+      role: 'user',
+      text: messageText,
+    };
+    const updateAssistantTurn = (updater: (prevMsg: ChatMessage) => ChatMessage) => {
+      setMessages((prev) =>
+        prev.map((m) => (m.clientId === assistantId ? updater(m) : m))
+      );
+    };
     setMessages((prev) => [
       ...prev,
       userMessage,
-      { role: 'assistant', text: '' },
+      { clientId: assistantId, role: 'assistant', text: '' },
     ]);
     setInputText('');
     setIsLoading(true);
@@ -154,68 +219,44 @@ export const AdvisorChatDrawer: React.FC = () => {
       if (typeof aiSettingsService.chatStream === 'function') {
         await aiSettingsService.chatStream(messageText, historyTurns, {
           onMeta: (meta) => {
-            setMessages((prev) => {
-              const next = [...prev];
-              if (next[assistantIndex]) {
-                next[assistantIndex] = {
-                  ...next[assistantIndex],
-                  reason: meta.reason,
-                  proposed_actions: meta.proposed_actions,
-                };
-              }
-              return next;
-            });
+            updateAssistantTurn((prevMsg) => ({
+              ...prevMsg,
+              reason: meta.reason ?? prevMsg.reason,
+              proposed_actions: meta.proposed_actions ?? prevMsg.proposed_actions,
+            }));
           },
           onDelta: (chunk) => {
-            setMessages((prev) => {
-              const next = [...prev];
-              if (next[assistantIndex]) {
-                next[assistantIndex] = {
-                  ...next[assistantIndex],
-                  text: next[assistantIndex].text + chunk,
-                };
-              }
-              return next;
-            });
+            updateAssistantTurn((prevMsg) => ({
+              ...prevMsg,
+              text: prevMsg.text + chunk,
+            }));
           },
           onDone: (finalRes) => {
-            setMessages((prev) => {
-              const next = [...prev];
-              if (next[assistantIndex]) {
-                next[assistantIndex] = {
-                  role: 'assistant',
-                  text: next[assistantIndex].text || finalRes.response,
-                  reason: finalRes.reason ?? next[assistantIndex].reason,
-                  proposed_actions:
-                    finalRes.proposed_actions ?? next[assistantIndex].proposed_actions,
-                };
-              }
-              return next;
-            });
+            updateAssistantTurn((prevMsg) => ({
+              clientId: assistantId,
+              role: 'assistant',
+              text: prevMsg.text || finalRes.response,
+              reason: finalRes.reason || prevMsg.reason,
+              proposed_actions: finalRes.proposed_actions ?? prevMsg.proposed_actions,
+            }));
           },
         });
       } else {
         const result = await aiSettingsService.chat(messageText, historyTurns);
-        setMessages((prev) => {
-          const next = [...prev];
-          next[assistantIndex] = {
-            role: 'assistant',
-            text: result.response,
-            reason: result.reason,
-            proposed_actions: result.proposed_actions,
-          };
-          return next;
-        });
+        updateAssistantTurn(() => ({
+          clientId: assistantId,
+          role: 'assistant',
+          text: result.response,
+          reason: result.reason,
+          proposed_actions: result.proposed_actions,
+        }));
       }
     } catch {
-      setMessages((prev) => {
-        const next = [...prev];
-        next[assistantIndex] = {
-          role: 'assistant',
-          text: 'Gagal mendapatkan respons dari asisten AI. Silakan coba lagi.',
-        };
-        return next;
-      });
+      updateAssistantTurn(() => ({
+        clientId: assistantId,
+        role: 'assistant',
+        text: 'Gagal mendapatkan respons dari asisten AI. Silakan coba lagi.',
+      }));
     } finally {
       setIsLoading(false);
     }
@@ -446,7 +487,13 @@ export const AdvisorChatDrawer: React.FC = () => {
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl rounded-tl-sm'
                       } px-3.5 py-2.5 space-y-1`}
                     >
-                      <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+                      {msg.role === 'assistant' && !msg.text && isLoading ? (
+                        <p className="text-xs italic text-slate-500 dark:text-slate-400">
+                          Menganalisis data keuangan Anda...
+                        </p>
+                      ) : (
+                        <AdvisorFormattedText text={msg.text} isUser={msg.role === 'user'} />
+                      )}
                       {msg.role === 'assistant' &&
                         Array.isArray(msg.proposed_actions) &&
                         msg.proposed_actions.length > 0 && (() => {

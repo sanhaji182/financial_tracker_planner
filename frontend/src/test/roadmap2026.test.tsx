@@ -353,6 +353,25 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
       const latestAcc = await accountsService.getAccount(bca.id);
       expect(latestAcc.balance).toBe(balanceAfter - 21_000);
     });
+
+    // Relative Indonesian date + custom account cleanup
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const yesterdayIso = `${yesterday.getFullYear()}-${String(yesterday.getMonth() + 1).padStart(2, '0')}-${String(yesterday.getDate()).padStart(2, '0')}`;
+    const customParsed = parseIndonesianFinancialCommands(
+      'kemarin beli susu 6rb pakai BCA Utama',
+      dbNow.accounts,
+      dbNow.categories
+    );
+    expect(customParsed[0].txDate).toBe(yesterdayIso);
+    expect(customParsed[0].description).toBe('Susu');
+
+    // Rich local Q&A brain (bills + keyword transaction lookup + debts)
+    const billsReply = await aiSettingsService.chat('Tagihan bulan ini apa saja?');
+    expect(billsReply.response).toMatch(/Tagihan Listrik PLN/i);
+
+    const kopiLookup = await aiSettingsService.chat('Habis berapa buat kopi bulan ini?');
+    expect(kopiLookup.response).toMatch(/90\.000|Kopi/i);
   });
 
   // ---------------- TAHAP 4 ----------------

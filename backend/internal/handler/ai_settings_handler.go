@@ -22,6 +22,9 @@ type AISettingsHandler struct {
 	auditService      service.AuditService
 	accountService    service.AccountService
 	categoryService   service.CategoryService
+	txService         service.TransactionService
+	debtService       service.DebtService
+	goalService       service.GoalService
 	householdResolver HouseholdOwnerResolver
 }
 
@@ -48,6 +51,18 @@ func (h *AISettingsHandler) WithCatalogServices(
 ) *AISettingsHandler {
 	h.accountService = accountService
 	h.categoryService = categoryService
+	return h
+}
+
+// WithPlannerContextServices wires transaction, debt, and goal services so AI Advisor reasons over real household activity.
+func (h *AISettingsHandler) WithPlannerContextServices(
+	txService service.TransactionService,
+	debtService service.DebtService,
+	goalService service.GoalService,
+) *AISettingsHandler {
+	h.txService = txService
+	h.debtService = debtService
+	h.goalService = goalService
 	return h
 }
 
@@ -182,6 +197,8 @@ func (h *AISettingsHandler) buildCatalogContext(ctx context.Context, ownerID str
 					"id":        a.ID,
 					"name":      a.Name,
 					"type":      a.Type,
+					"balance":   a.Balance,
+					"currency":  a.Currency,
 					"is_active": a.IsActive,
 				}
 				if a.BankProvider != nil {
@@ -218,12 +235,123 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 	budgetSummary, _ := h.budgetService.GetBudgetSummary(ctx, ownerID, currentMonth)
 	accountCatalog, categoryCatalog := h.buildCatalogContext(ctx, ownerID, sharedOnly)
 
+	allowedAccountIDs := make(map[string]bool, len(accountCatalog))
+	for _, a := range accountCatalog {
+		if id, ok := a["id"].(string); ok && id != "" {
+			allowedAccountIDs[id] = true
+		}
+	}
+
+	var budgetCategories []map[string]interface{}
+	if h.budgetService != nil {
+		if budgets, bErr := h.budgetService.GetBudgets(ctx, ownerID, currentMonth); bErr == nil {
+			for _, b := range budgets {
+				budgetCategories = append(budgetCategories, map[string]interface{}{
+					"category_id":     b.CategoryID,
+					"category_name":   b.CategoryName,
+					"limit":           b.Amount,
+					"spent":           b.Spent,
+					"remaining":       b.Remaining,
+					"used_percentage": b.UsedPercentage,
+					"status":          b.Status,
+				})
+			}
+		}
+	}
+
+	var recentTransactions []map[string]interface{}
+	if h.txService != nil {
+		if txList, tErr := h.txService.GetTransactions(ctx, ownerID, map[string]interface{}{}, 1, 20, "date", "desc"); tErr == nil && txList != nil {
+			for _, t := range txList.Data {
+				if sharedOnly && !allowedAccountIDs[t.AccountID] {
+					continue
+				}
+				desc := ""
+				if t.Description != nil {
+					desc = *t.Description
+				}
+				catName := ""
+				if t.CategoryName != nil {
+					catName = *t.CategoryName
+				}
+				recentTransactions = append(recentTransactions, map[string]interface{}{
+					"id":            t.ID,
+					"date":          t.Date.Format("2006-01-02"),
+					"type":          t.Type,
+					"amount":        t.Amount,
+					"description":   desc,
+					"account_name":  t.AccountName,
+					"category_name": catName,
+				})
+				if len(recentTransactions) >= 15 {
+					break
+				}
+			}
+		}
+	}
+
+	var activeDebts []map[string]interface{}
+	if h.debtService != nil {
+		if debts, dErr := h.debtService.GetDebts(ctx, ownerID); dErr == nil {
+			for _, d := range debts {
+				if d.Status != "active" && d.Status != "" {
+					continue
+				}
+				if sharedOnly && !d.IsShared {
+					continue
+				}
+				entry := map[string]interface{}{
+					"name":                d.Name,
+					"type":                d.Type,
+					"outstanding_balance": d.OutstandingBalance,
+					"status":              d.Status,
+				}
+				if d.InterestRate != nil {
+					entry["interest_rate"] = *d.InterestRate
+				}
+				if d.MinimumPayment != nil {
+					entry["minimum_payment"] = *d.MinimumPayment
+				}
+				if d.DueDay != nil {
+					entry["due_day"] = *d.DueDay
+				}
+				activeDebts = append(activeDebts, entry)
+			}
+		}
+	}
+
+	var activeGoals []map[string]interface{}
+	if h.goalService != nil {
+		if goals, gErr := h.goalService.ListGoals(ctx, ownerID); gErr == nil {
+			for _, g := range goals {
+				if sharedOnly && g.LinkedAccountID != nil && !allowedAccountIDs[*g.LinkedAccountID] {
+					continue
+				}
+				entry := map[string]interface{}{
+					"name":           g.Name,
+					"target_amount":  g.TargetAmount,
+					"current_amount": g.CurrentAmount,
+					"progress":       g.Progress,
+					"status":         g.Status,
+				}
+				if g.TargetDate != nil {
+					entry["target_date"] = *g.TargetDate
+				}
+				activeGoals = append(activeGoals, entry)
+			}
+		}
+	}
+
 	return map[string]interface{}{
-		"dashboard":      dashboard,
-		"emergency_fund": efSummary,
-		"budget":         budgetSummary,
-		"accounts":       accountCatalog,
-		"categories":     categoryCatalog,
+		"dashboard":           dashboard,
+		"emergency_fund":      efSummary,
+		"budget":              budgetSummary,
+		"budget_categories":   budgetCategories,
+		"accounts":            accountCatalog,
+		"categories":          categoryCatalog,
+		"recent_transactions": recentTransactions,
+		"debts":               activeDebts,
+		"goals":               activeGoals,
 		"financial_guidance_policy": map[string]interface{}{
 			"purpose":      "education_and_decision_support_only",
 			"must_explain": []string{"data_used", "assumptions", "missing_data", "confidence", "alternatives"},

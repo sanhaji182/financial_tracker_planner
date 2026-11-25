@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import asyncio
 import json
 import logging
@@ -717,6 +717,20 @@ def _split_indonesian_transaction_clauses(text: str) -> List[str]:
     return clauses
 
 
+def extract_indonesian_relative_date(text: str) -> str:
+    low = (text or "").lower()
+    now = datetime.now()
+    if re.search(r"\bkemarin\s+lusa\b", low):
+        return (now - timedelta(days=2)).strftime("%Y-%m-%d")
+    if re.search(r"\bkemarin\b", low):
+        return (now - timedelta(days=1)).strftime("%Y-%m-%d")
+    if re.search(r"\blusa\b", low):
+        return (now + timedelta(days=2)).strftime("%Y-%m-%d")
+    if re.search(r"\bbesok\b", low):
+        return (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    return now.strftime("%Y-%m-%d")
+
+
 def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
     desc = clause
     desc = re.sub(r"(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b", " ", desc, flags=re.IGNORECASE)
@@ -728,6 +742,12 @@ def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
         flags=re.IGNORECASE,
     )
     desc = re.sub(r"\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b", " ", desc)
+    desc = re.sub(
+        r"\b(?:kemarin\s+lusa|kemarin|lusa|besok|hari\s+ini|tadi\s+(?:pagi|siang|sore|malam))\b",
+        " ",
+        desc,
+        flags=re.IGNORECASE,
+    )
     desc = re.sub(
         r"^(?:dan|serta|lalu|terus|sama|kemudian|plus)\b\s*",
         "",
@@ -764,8 +784,8 @@ def parse_indonesian_action_commands(
     if amount <= 0:
         return []
 
-    today = datetime.now().strftime("%Y-%m-%d")
-    month = datetime.now().strftime("%Y-%m")
+    today = extract_indonesian_relative_date(clean)
+    month = today[:7]
 
     # 1. Transfer intent: "transfer 500rb dari BCA ke GoPay"
     if re.search(r"\b(transfer|kirim|pindah(?:\s+dana)?|topup|top\s*up)\b", low):
@@ -1040,86 +1060,7 @@ async def chat_advisor(
     fallback_actions = deterministic_actions
     today_iso = datetime.now().strftime("%Y-%m-%d")
 
-    # Helper to safely extract float from plain number or MoneyValue dict
-    def _val(obj, key: str, default: float = 0.0) -> float:
-        v = obj.get(key, default)
-        if isinstance(v, dict):
-            return float(v.get("value", default))
-        try:
-            return float(v)
-        except (TypeError, ValueError):
-            return default
-
-    net_worth     = _val(dashboard, "net_worth")
-    cash          = _val(dashboard, "cash_available")
-    debts         = _val(dashboard, "total_debts")
-    dti           = dashboard.get("dti_ratio", 0)
-    score_obj     = dashboard.get("health_score", {})
-    score         = score_obj.get("score", 0) if isinstance(score_obj, dict) else score_obj
-    score_status  = score_obj.get("status", "N/A") if isinstance(score_obj, dict) else "N/A"
-    forecast      = _val(dashboard, "forecast_end_month")
-
-    ef_current    = _val(ef, "total_emergency_fund")
-    ef_target     = _val(ef, "target_amount")
-    ef_months     = ef.get("coverage_months", 0)
-
-    budget_limit  = _val(budget, "total_budget")
-    budget_spent  = _val(budget, "total_spent")
-    budget_remaining = _val(budget, "remaining")
-    budget_remaining_pct = (budget_remaining / budget_limit * 100) if budget_limit > 0 else 100.0
-
-    accounts_summary = ", ".join(
-        f"{a.get('name')} (id={a.get('id')}, type={a.get('type', 'bank')})"
-        for a in accounts[:12]
-        if a.get("id")
-    ) or "Belum ada"
-    categories_summary = ", ".join(
-        f"{c.get('name')} (id={c.get('id')}, type={c.get('type', 'expense')})"
-        for c in categories[:20]
-        if c.get("id")
-    ) or "Belum ada"
-
-    context_str = (
-        f"Tanggal Hari Ini: {today_iso}\n"
-        f"Kekayaan Bersih: Rp {net_worth:,.2f}\n"
-        f"Kas Tersedia: Rp {cash:,.2f}\n"
-        f"Total Utang: Rp {debts:,.2f}\n"
-        f"Rasio DTI: {dti}% ({dashboard.get('dti_status', 'N/A')})\n"
-        f"Skor Kesehatan Keuangan: {score}/100 ({score_status})\n"
-        f"Prediksi Akhir Bulan: Rp {forecast:,.2f}\n"
-        f"Status Dana Darurat: Target Rp {ef_target:,.2f}, Terkumpul Rp {ef_current:,.2f} ({ef_months} bulan tercover)\n"
-        f"Status Anggaran Bulan Ini: Limit Rp {budget_limit:,.2f}, Terpakai Rp {budget_spent:,.2f} ({budget_remaining_pct:.1f}% tersisa)\n"
-        f"Daftar Rekening Aktif: {accounts_summary}\n"
-        f"Daftar Kategori: {categories_summary}\n"
-    )
-
-    system_prompt = (
-        "Anda adalah asisten perencana keuangan pribadi profesional (AI Advisor) untuk keluarga Indonesia. "
-        "Jawab pertanyaan user dalam Bahasa Indonesia yang ramah, sopan, namun taktis dan solutif. "
-        "Gunakan data finansial aktual di bawah ini untuk menjawab secara spesifik dengan angka.\n\n"
-        f"Konteks Finansial User:\n{context_str}\n\n"
-        "PENTING:\n"
-        "1. JAWABAN ANDA HARUS SELALU diawali dengan baris disclaimer tepat seperti ini:\n"
-        "🤖 Saran AI — bukan nasihat keuangan profesional\n\n"
-        "2. Jika user meminta mencatat transaksi, transfer antar rekening, mengatur budget, atau membuat target keuangan, "
-        "Anda WAJIB menyertakan blok ```actions JSON array menggunakan HANYA ID rekening/kategori yang valid di atas:\n"
-        "- ATURAN MULTI-ITEM: Jika user menyebut beberapa pembelian/item dalam satu pesan "
-        "(contoh: 'beli kopi 10rb, susu 6rb dan warteg 5rb'), Anda WAJIB memecahnya menjadi beberapa objek terpisah di dalam array ```actions "
-        "(satu objek `create_transaction` per item dengan nominal masing-masing: 10000, 6000, 5000). JANGAN gabung menjadi satu transaksi dan JANGAN hanya ambil item terakhir.\n"
-        "- Skema payload per type:\n"
-        "  - create_transaction: {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense|income\", \"account_id\": \"<id rekening>\", \"category_id\": \"<id kategori>\", \"description\": \"Kopi\"}\n"
-        "  - create_transfer: {\"source_account_id\": \"<id asal>\", \"target_account_id\": \"<id tujuan>\", \"amount\": 500000, \"date\": \"" + today_iso + "\", \"notes\": \"Transfer via AI Advisor\"}\n"
-        "  - set_budget: {\"category_id\": \"<id kategori>\", \"month\": \"" + today_iso[:7] + "\", \"amount\": 2000000}\n"
-        "  - create_goal: {\"name\": \"Nama Target\", \"type\": \"custom\", \"target_amount\": 10000000}\n"
-        "```actions\n"
-        "[{\"id\": \"act-1\", \"type\": \"create_transaction\", \"title\": \"Catat Pengeluaran: Kopi\", \"summary\": \"Rp 10.000 • BCA • Makan\", \"payload\": {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense\", \"account_id\": \"<id>\", \"category_id\": \"<id>\", \"description\": \"Kopi\"}}]\n"
-        "```\n"
-        "3. Di bagian akhir jawaban Anda, Anda HARUS menulis bagian 'Alasan:' yang merangkum alasan di balik rekomendasi Anda berdasarkan data finansial di atas.\n"
-        "Format output akhir:\n"
-        "🤖 Saran AI — bukan nasihat keuangan profesional\n"
-        "[Isi saran detail Anda dengan angka dan rekomendasi konkret]\n\n"
-        "Alasan: [Alasan ringkas Anda]"
-    )
+    system_prompt = _build_advisor_system_prompt(context_data)
 
     if not api_key or provider == "local":
         logger.info("Using mock advisor response")
@@ -1146,8 +1087,9 @@ async def chat_advisor(
                 api_key=api_key,
                 model=llm_model,
                 messages=oai_messages,
-                temperature=0.7,
-                timeout=60.0,
+                temperature=0.3,
+                max_tokens=1200,
+                timeout=45.0,
             )
             return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
         elif provider == "anthropic":
@@ -1156,10 +1098,10 @@ async def chat_advisor(
             anth_messages = list(normalized_history) + [{"role": "user", "content": message}]
             payload = {
                 "model": llm_model,
-                "max_tokens": 1500,
+                "max_tokens": 1200,
                 "system": system_prompt,
                 "messages": anth_messages,
-                "temperature": 0.7
+                "temperature": 0.3
             }
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
@@ -1180,7 +1122,7 @@ async def chat_advisor(
             payload = {
                 "system_instruction": {"parts": [{"text": system_prompt}]},
                 "contents": gem_contents,
-                "generationConfig": {"temperature": 0.7},
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200},
             }
             async with httpx.AsyncClient(timeout=30.0) as client:
                 resp = await client.post(url, json=payload)
@@ -1204,6 +1146,240 @@ async def chat_advisor(
     )
 
 
+async def _stream_raw_llm_tokens(
+    *,
+    provider: str,
+    model_name: str,
+    api_key: str,
+    system_prompt: str,
+    history: List[Dict[str, str]],
+    message: str,
+) -> AsyncGenerator[str, None]:
+    """Yields incremental raw text tokens directly from OpenAI, Gemini, or Anthropic SSE streams."""
+    if provider == "openai":
+        llm_model = model_name if model_name != "default" else "gpt-4o-mini"
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        messages = [{"role": "system", "content": system_prompt}, *history, {"role": "user", "content": message}]
+        payload = {
+            "model": llm_model,
+            "messages": messages,
+            "temperature": 0.3,
+            "max_tokens": 1200,
+            "stream": True,
+        }
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            async with client.stream("POST", openai_chat_completions_url(), json=payload, headers=headers) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    trimmed = line.strip()
+                    if not trimmed.startswith("data:"):
+                        continue
+                    data_str = trimmed[5:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        evt = json.loads(data_str)
+                        delta = (evt.get("choices") or [{}])[0].get("delta", {}).get("content") or ""
+                        if delta:
+                            yield delta
+                    except Exception:
+                        continue
+        return
+
+    if provider == "gemini":
+        llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:streamGenerateContent?alt=sse&key={api_key}"
+        gem_contents = [
+            {"role": "model" if t["role"] == "assistant" else "user", "parts": [{"text": t["content"]}]}
+            for t in history
+        ]
+        gem_contents.append({"role": "user", "parts": [{"text": message}]})
+        payload = {
+            "system_instruction": {"parts": [{"text": system_prompt}]},
+            "contents": gem_contents,
+            "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200},
+        }
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            async with client.stream("POST", url, json=payload) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    trimmed = line.strip()
+                    if not trimmed.startswith("data:"):
+                        continue
+                    data_str = trimmed[5:].strip()
+                    if not data_str or data_str == "[DONE]":
+                        continue
+                    try:
+                        evt = json.loads(data_str)
+                        parts = ((evt.get("candidates") or [{}])[0].get("content") or {}).get("parts") or []
+                        for part in parts:
+                            txt = part.get("text") or ""
+                            if txt:
+                                yield txt
+                    except Exception:
+                        continue
+        return
+
+    if provider == "anthropic":
+        llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
+        headers = {
+            "x-api-key": api_key,
+            "anthropic-version": "2023-06-01",
+            "Content-Type": "application/json",
+        }
+        payload = {
+            "model": llm_model,
+            "max_tokens": 1200,
+            "system": system_prompt,
+            "messages": [*history, {"role": "user", "content": message}],
+            "temperature": 0.3,
+            "stream": True,
+        }
+        async with httpx.AsyncClient(timeout=45.0) as client:
+            async with client.stream("POST", "https://api.anthropic.com/v1/messages", json=payload, headers=headers) as resp:
+                resp.raise_for_status()
+                async for line in resp.aiter_lines():
+                    trimmed = line.strip()
+                    if not trimmed.startswith("data:"):
+                        continue
+                    data_str = trimmed[5:].strip()
+                    if not data_str:
+                        continue
+                    try:
+                        evt = json.loads(data_str)
+                        if evt.get("type") == "content_block_delta":
+                            txt = (evt.get("delta") or {}).get("text") or ""
+                            if txt:
+                                yield txt
+                    except Exception:
+                        continue
+
+
+def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
+    today_iso = datetime.now().strftime("%Y-%m-%d")
+    dashboard = context_data.get("dashboard", {}) or {}
+    ef = context_data.get("emergency_fund", {}) or {}
+    budget = context_data.get("budget", {}) or {}
+    accounts = context_data.get("accounts", []) or []
+    categories = context_data.get("categories", []) or []
+    budget_cats = context_data.get("budget_categories", []) or []
+    recent_tx = context_data.get("recent_transactions", []) or []
+    debts = context_data.get("debts", []) or []
+    goals = context_data.get("goals", []) or []
+
+    def _v(obj, key: str, default: float = 0.0) -> float:
+        raw = obj.get(key, default)
+        if isinstance(raw, dict):
+            for field in ("value", "total_outstanding", "total", "amount"):
+                if field in raw and raw.get(field) is not None:
+                    raw = raw.get(field)
+                    break
+            else:
+                raw = default
+        try:
+            return float(raw)
+        except (TypeError, ValueError):
+            return default
+
+    net_worth = _v(dashboard, "net_worth")
+    cash = _v(dashboard, "cash_available")
+    safe_spend = _v(dashboard, "safe_to_spend")
+    debts_total = _v(dashboard, "total_debts")
+    dti_val = dashboard.get("dti_ratio", 0)
+    score_obj = dashboard.get("health_score", {})
+    score_num = score_obj.get("score", 0) if isinstance(score_obj, dict) else score_obj
+    score_lbl = (score_obj.get("rating") or score_obj.get("status") or "N/A") if isinstance(score_obj, dict) else "N/A"
+    forecast_val = _v(dashboard, "forecast_end_month")
+    ef_cur = _v(ef, "total_emergency_fund")
+    ef_tgt = _v(ef, "target_amount")
+    ef_m = ef.get("coverage_months", 0)
+    b_lim = _v(budget, "total_budget")
+    b_spn = _v(budget, "total_spent")
+    b_rem = _v(budget, "remaining")
+    b_rem_pct = (b_rem / b_lim * 100) if b_lim > 0 else 100.0
+
+    acc_summary = ", ".join(
+        f"{a.get('name')} (id={a.get('id')}, type={a.get('type', 'bank')}"
+        + (f", saldo=Rp {float(a['balance']):,.0f}" if a.get("balance") is not None else "")
+        + ")"
+        for a in accounts[:12]
+        if a.get("id")
+    ) or "Belum ada"
+    cat_summary = ", ".join(
+        f"{c.get('name')} (id={c.get('id')}, type={c.get('type', 'expense')})"
+        for c in categories[:20]
+        if c.get("id")
+    ) or "Belum ada"
+    bills_summary = "; ".join(
+        f"{b.get('name')} Rp {float(b.get('amount') or 0):,.0f} ({b.get('days_remaining', '?')} hari lagi)"
+        for b in (dashboard.get("upcoming_bills") or [])[:6]
+    ) or "Tidak ada"
+    budget_cat_summary = "; ".join(
+        f"{b.get('category_name')}: terpakai Rp {float(b.get('spent') or 0):,.0f}/{float(b.get('limit') or 0):,.0f} ({float(b.get('used_percentage') or 0):.0f}%)"
+        for b in budget_cats[:8]
+    ) or "Belum diatur"
+    debts_summary = "; ".join(
+        f"{d.get('name')}: sisa Rp {float(d.get('outstanding_balance') or 0):,.0f}"
+        + (f" bunga {d.get('interest_rate')}%" if d.get("interest_rate") is not None else "")
+        for d in debts[:8]
+    ) or "Tidak ada"
+    goals_summary = "; ".join(
+        f"{g.get('name')}: Rp {float(g.get('current_amount') or 0):,.0f}/{float(g.get('target_amount') or 0):,.0f} ({float(g.get('progress') or 0):.0f}%)"
+        for g in goals[:6]
+    ) or "Belum ada"
+    tx_summary = "; ".join(
+        f"{t.get('date', '')} {t.get('type', '')} Rp {float(t.get('amount') or 0):,.0f} '{t.get('description') or t.get('category_name') or '-'}'"
+        for t in recent_tx[:10]
+    ) or "Belum ada"
+
+    ctx_str = (
+        f"Tanggal Hari Ini: {today_iso}\n"
+        f"Kekayaan Bersih: Rp {net_worth:,.2f}\n"
+        f"Kas Tersedia: Rp {cash:,.2f} (Safe-to-Spend: Rp {safe_spend:,.2f})\n"
+        f"Total Utang: Rp {debts_total:,.2f} (Rincian: {debts_summary})\n"
+        f"Rasio DTI: {dti_val}% ({dashboard.get('dti_status', 'N/A')})\n"
+        f"Skor Kesehatan Keuangan: {score_num}/100 ({score_lbl})\n"
+        f"Prediksi Akhir Bulan: Rp {forecast_val:,.2f}\n"
+        f"Status Dana Darurat: Target Rp {ef_tgt:,.2f}, Terkumpul Rp {ef_cur:,.2f} ({ef_m} bulan tercover)\n"
+        f"Status Anggaran Bulan Ini: Limit Rp {b_lim:,.2f}, Terpakai Rp {b_spn:,.2f} ({b_rem_pct:.1f}% tersisa)\n"
+        f"Rincian Anggaran per Kategori: {budget_cat_summary}\n"
+        f"Tagihan Jatuh Tempo Dekat: {bills_summary}\n"
+        f"Target Tabungan: {goals_summary}\n"
+        f"Transaksi Terbaru: {tx_summary}\n"
+        f"Daftar Rekening Aktif: {acc_summary}\n"
+        f"Daftar Kategori: {cat_summary}\n"
+    )
+    return (
+        "Anda adalah asisten perencana keuangan pribadi profesional (AI Advisor) untuk keluarga Indonesia. "
+        "Jawab pertanyaan user dalam Bahasa Indonesia yang ringkas, akurat, solutif, dan berbasis angka nyata dari data di bawah ini.\n\n"
+        f"Konteks Finansial User:\n{ctx_str}\n\n"
+        "PENTING:\n"
+        "1. JAWABAN ANDA HARUS SELALU diawali dengan baris disclaimer tepat seperti ini:\n"
+        "🤖 Saran AI — bukan nasihat keuangan profesional\n\n"
+        "2. Jika user meminta mencatat transaksi, transfer antar rekening, mengatur budget, atau membuat target keuangan, "
+        "Anda WAJIB menyertakan blok ```actions JSON array menggunakan HANYA ID rekening/kategori yang valid di atas:\n"
+        "- ATURAN MULTI-ITEM: Jika user menyebut beberapa pembelian/item dalam satu pesan "
+        "(contoh: 'beli kopi 10rb, susu 6rb dan warteg 5rb'), Anda WAJIB memecahnya menjadi beberapa objek terpisah di dalam array ```actions "
+        "(satu objek `create_transaction` per item dengan nominal masing-masing: 10000, 6000, 5000). JANGAN gabung menjadi satu transaksi dan JANGAN hanya ambil item terakhir.\n"
+        "- Skema payload per type:\n"
+        "  - create_transaction: {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense|income\", \"account_id\": \"<id rekening>\", \"category_id\": \"<id kategori>\", \"description\": \"Kopi\"}\n"
+        "  - create_transfer: {\"source_account_id\": \"<id asal>\", \"target_account_id\": \"<id tujuan>\", \"amount\": 500000, \"date\": \"" + today_iso + "\", \"notes\": \"Transfer via AI Advisor\"}\n"
+        "  - set_budget: {\"category_id\": \"<id kategori>\", \"month\": \"" + today_iso[:7] + "\", \"amount\": 2000000}\n"
+        "  - create_goal: {\"name\": \"Nama Target\", \"type\": \"custom\", \"target_amount\": 10000000}\n"
+        "```actions\n"
+        "[{\"id\": \"act-1\", \"type\": \"create_transaction\", \"title\": \"Catat Pengeluaran: Kopi\", \"summary\": \"Rp 10.000 • BCA • Makan\", \"payload\": {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense\", \"account_id\": \"<id>\", \"category_id\": \"<id>\", \"description\": \"Kopi\"}}]\n"
+        "```\n"
+        "3. Di bagian akhir jawaban Anda, Anda HARUS menulis bagian 'Alasan:' yang merangkum alasan di balik rekomendasi Anda berdasarkan data finansial di atas.\n"
+        "Format output akhir:\n"
+        "🤖 Saran AI — bukan nasihat keuangan profesional\n"
+        "[Isi saran detail Anda dengan angka dan rekomendasi konkret]\n\n"
+        "Alasan: [Alasan ringkas Anda]"
+    )
+
+
 async def stream_chat_advisor(
     message: str,
     context_data: Dict[str, Any],
@@ -1214,10 +1390,102 @@ async def stream_chat_advisor(
 ) -> AsyncGenerator[str, None]:
     """
     Streams advisor chat responses as Server-Sent Events (SSE):
-      1. `meta` frame carrying `reason` and sanitized `proposed_actions`
-      2. `delta` frames streaming 5-word response chunks
-      3. `done` frame signaling completion
+      1. Initial `meta` frame with fast deterministic `proposed_actions`
+      2. Live token `delta` frames directly from LLM (or instant chunked reply in local/action mode)
+      3. Updated `meta` (if LLM emitted extra actions/reason) and final `done` frame
     """
+    accounts = context_data.get("accounts", []) or []
+    categories = context_data.get("categories", []) or []
+    normalized_history = _normalize_history_turns(history)
+    effective_message = _resolve_followup_command(message, normalized_history)
+    deterministic_actions = parse_indonesian_action_commands(
+        effective_message, accounts, categories
+    )
+
+    if not api_key or provider == "local" or deterministic_actions:
+        result = await chat_advisor(
+            message=message,
+            context_data=context_data,
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            history=history,
+        )
+        meta_event = {
+            "type": "meta",
+            "reason": result.get("reason", ""),
+            "proposed_actions": result.get("proposed_actions") or [],
+        }
+        yield f"data: {json.dumps(meta_event, ensure_ascii=False)}\n\n"
+
+        full_text = str(result.get("response") or "")
+        words = full_text.split(" ")
+        chunk_size = 5
+        for idx in range(0, len(words), chunk_size):
+            piece = " ".join(words[idx : idx + chunk_size])
+            if idx + chunk_size < len(words):
+                piece += " "
+            yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
+            await asyncio.sleep(0)
+
+        yield f"data: {json.dumps({'type': 'done'})}\n\n"
+        return
+
+    # Real-time LLM SSE streaming for OpenAI / Gemini / Anthropic
+    yield f"data: {json.dumps({'type': 'meta', 'reason': 'Menyusun saran dari data keuangan Anda...', 'proposed_actions': []}, ensure_ascii=False)}\n\n"
+    disclaimer = "🤖 Saran AI — bukan nasihat keuangan profesional"
+    sys_prompt = _build_advisor_system_prompt(context_data)
+    raw_buffer = ""
+    emitted_len = 0
+    stop_delta = False
+
+    try:
+        async for token in _stream_raw_llm_tokens(
+            provider=provider,
+            model_name=model_name,
+            api_key=api_key,
+            system_prompt=sys_prompt,
+            history=normalized_history,
+            message=message,
+        ):
+            raw_buffer += token
+            if not stop_delta:
+                body = raw_buffer.replace(disclaimer, "").lstrip()
+                cut_points = [i for i in (body.find("```actions"), body.find("Alasan:")) if i >= 0]
+                if cut_points:
+                    cut = min(cut_points)
+                    if cut > emitted_len:
+                        piece = body[emitted_len:cut].rstrip()
+                        if piece:
+                            yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
+                        emitted_len = cut
+                    stop_delta = True
+                elif len(body) > emitted_len + 12:
+                    # Keep short lookahead tail to prevent half-markers ("```act" / "Alasa") from flashing
+                    safe_end = len(body) - 12
+                    piece = body[emitted_len:safe_end]
+                    if piece:
+                        yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
+                    emitted_len = safe_end
+
+        if raw_buffer.strip():
+            parsed = parse_advisor_response(
+                raw_buffer,
+                fallback_actions=deterministic_actions,
+                context_data=context_data,
+            )
+            final_text = str(parsed.get("response") or "")
+            if not stop_delta and len(final_text) > emitted_len:
+                tail = final_text[emitted_len:]
+                if tail:
+                    yield f"data: {json.dumps({'type': 'delta', 'content': tail}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'meta', 'reason': parsed.get('reason', ''), 'proposed_actions': parsed.get('proposed_actions') or []}, ensure_ascii=False)}\n\n"
+            yield f"data: {json.dumps({'type': 'done'})}\n\n"
+            return
+    except Exception as exc:
+        logger.warning("Streaming LLM fallback triggered (%s): %s", provider, exc)
+
+    # Graceful fallback to non-streaming completion / local brain
     result = await chat_advisor(
         message=message,
         context_data=context_data,
@@ -1226,23 +1494,10 @@ async def stream_chat_advisor(
         api_key=api_key,
         history=history,
     )
-    meta_event = {
-        "type": "meta",
-        "reason": result.get("reason", ""),
-        "proposed_actions": result.get("proposed_actions") or [],
-    }
-    yield f"data: {json.dumps(meta_event, ensure_ascii=False)}\n\n"
-
+    yield f"data: {json.dumps({'type': 'meta', 'reason': result.get('reason', ''), 'proposed_actions': result.get('proposed_actions') or []}, ensure_ascii=False)}\n\n"
     full_text = str(result.get("response") or "")
-    words = full_text.split(" ")
-    chunk_size = 5
-    for idx in range(0, len(words), chunk_size):
-        piece = " ".join(words[idx : idx + chunk_size])
-        if idx + chunk_size < len(words):
-            piece += " "
-        yield f"data: {json.dumps({'type': 'delta', 'content': piece}, ensure_ascii=False)}\n\n"
-        await asyncio.sleep(0)
-
+    if full_text:
+        yield f"data: {json.dumps({'type': 'delta', 'content': full_text}, ensure_ascii=False)}\n\n"
     yield f"data: {json.dumps({'type': 'done'})}\n\n"
 
 
@@ -1407,11 +1662,16 @@ def generate_mock_chat_response(
             "proposed_actions": actions,
         }
 
-    # Safe extractor for MoneyValue or plain float
+    # Safe extractor for MoneyValue, DebtSummaryDto, or plain float
     def _val(obj, key: str, default: float = 0.0) -> float:
         v = obj.get(key, default)
         if isinstance(v, dict):
-            return float(v.get("value", default))
+            for field in ("value", "total_outstanding", "total", "amount"):
+                if field in v and v.get(field) is not None:
+                    v = v.get(field)
+                    break
+            else:
+                v = default
         try:
             return float(v)
         except (TypeError, ValueError):
@@ -1419,6 +1679,7 @@ def generate_mock_chat_response(
 
     net_worth = _val(dashboard, "net_worth")
     cash = _val(dashboard, "cash_available")
+    safe_spend = _val(dashboard, "safe_to_spend")
     debts = _val(dashboard, "total_debts")
     dti = dashboard.get("dti_ratio", 0)
     score_obj = dashboard.get("health_score", {})
@@ -1428,45 +1689,106 @@ def generate_mock_chat_response(
     ef_target = _val(ef, "target_amount")
     budget_limit = _val(budget, "total_budget")
     budget_spent = _val(budget, "total_spent")
+    upcoming_bills = dashboard.get("upcoming_bills") or []
+    debts_list = context_data.get("debts") or []
+    goals_list = context_data.get("goals") or []
+    budget_cats = context_data.get("budget_categories") or []
 
     msg_lower = message.lower()
-    
-    if "kondisi" in msg_lower or "keuangan" in msg_lower or "summary" in msg_lower or "dashboard" in msg_lower:
+
+    if any(k in msg_lower for k in ("tagihan", "bill", "jatuh tempo")):
+        if upcoming_bills:
+            total_b = sum(float(b.get("amount") or 0) for b in upcoming_bills)
+            lines = "\n".join(
+                f"{i}. **{b.get('name')}** — Rp {float(b.get('amount') or 0):,.0f} ({b.get('days_remaining', '?')} hari lagi)"
+                for i, b in enumerate(upcoming_bills[:6], start=1)
+            )
+            response = (
+                f"Tagihan Jatuh Tempo Dekat (Total **Rp {total_b:,.0f}**):\n{lines}\n\n"
+                f"Safe-to-Spend tersedia saat ini: **Rp {safe_spend:,.0f}**."
+            )
+        else:
+            response = "Tidak ada tagihan mendesak dalam beberapa hari ke depan."
+        reason = "Disarikan dari daftar tagihan aktif terdekat dan saldo Safe-to-Spend Anda."
+    elif any(k in msg_lower for k in ("saldo", "rekening", "dompet")):
+        acc_lines = [
+            f"- **{a.get('name')}** ({a.get('type', 'bank')}): Rp {float(a.get('balance') or 0):,.0f}"
+            for a in accounts[:8]
+        ]
+        response = (
+            "Posisi Rekening Aktif Anda:\n"
+            + ("\n".join(acc_lines) if acc_lines else "- Belum ada rekening aktif tercatat.")
+            + f"\n\nTotal Kas Tersedia: **Rp {cash:,.0f}** (Safe-to-Spend: **Rp {safe_spend:,.0f}**)."
+        )
+        reason = "Menampilkan ringkasan saldo seluruh rekening aktif dan kapasitas kas likuid."
+    elif any(k in msg_lower for k in ("target", "goal", "impian")):
+        if goals_list:
+            g_lines = "\n".join(
+                f"- **{g.get('name')}**: Rp {float(g.get('current_amount') or 0):,.0f} / Rp {float(g.get('target_amount') or 0):,.0f} ({float(g.get('progress') or 0):.0f}%)"
+                for g in goals_list[:6]
+            )
+            response = f"Progres Target Tabungan Anda:\n{g_lines}"
+        else:
+            response = "Belum ada target tabungan aktif. Ketik misalnya `Buat target dana liburan 10jt` untuk membuatnya."
+        reason = "Dihitung dari target tabungan aktif yang tersimpan di akun Anda."
+    elif "kondisi" in msg_lower or "keuangan" in msg_lower or "summary" in msg_lower or "dashboard" in msg_lower:
         response = (
             f"Berdasarkan analisis dashboard keuangan Anda:\n"
-            f"- **Kekayaan Bersih Anda** saat ini berada di angka **Rp {net_worth:,.0f}** dengan **Kas Tersedia sebesar Rp {cash:,.0f}**.\n"
+            f"- **Kekayaan Bersih Anda** saat ini berada di angka **Rp {net_worth:,.0f}** dengan **Kas Tersedia sebesar Rp {cash:,.0f}** (Safe-to-Spend **Rp {safe_spend:,.0f}**).\n"
             f"- **Rasio Debt-to-Income (DTI)** Anda berada pada level **{dti}%**. Level ini tergolong aman jika di bawah 35%.\n"
-            f"- **Skor Kesehatan Keuangan** Anda adalah **{score}/100**. Sistem menilai ini sebagai performa yang cukup baik, namun masih ada ruang untuk optimasi.\n"
-            f"- **Dana Darurat** Anda saat ini terkumpul **Rp {ef_current:,.0f}** dari target **Rp {ef_target:,.0f}**. Memenuhi target ini harus menjadi prioritas utama Anda guna mengantisipasi kejadian tak terduga."
+            f"- **Skor Kesehatan Keuangan** Anda adalah **{score}/100**.\n"
+            f"- **Dana Darurat** Anda saat ini terkumpul **Rp {ef_current:,.0f}** dari target **Rp {ef_target:,.0f}**."
         )
         reason = "Analisis didasarkan pada kekayaan bersih, tingkat utang (DTI), skor kesehatan keuangan, dan pencapaian target dana darurat Anda saat ini."
-    elif "utang" in msg_lower or "debt" in msg_lower or "cicilan" in msg_lower:
-        response = (
-            f"Melihat data keuangan Anda, total kewajiban/utang Anda adalah **Rp {debts:,.0f}** dengan rasio cicilan DTI sebesar **{dti}%**.\n"
-            f"Rekomendasi:\n"
-            f"1. Jika rasio DTI > 35%, batasi pembelanjaan non-essential segera dan fokus pada pelunasan utang dengan bunga tertinggi (metode Avalanche) atau saldo terkecil (metode Snowball).\n"
-            f"2. Manfaatkan simulator pelunasan utang di menu Utang untuk mensimulasikan percepatan cicilan."
-        )
+    elif "utang" in msg_lower or "debt" in msg_lower or "cicilan" in msg_lower or "avalanche" in msg_lower:
+        if debts_list:
+            sorted_av = sorted(debts_list, key=lambda d: float(d.get("interest_rate") or 0), reverse=True)
+            sorted_sn = sorted(debts_list, key=lambda d: float(d.get("outstanding_balance") or 0))
+            d_lines = "\n".join(
+                f"{i}. **{d.get('name')}** — sisa Rp {float(d.get('outstanding_balance') or 0):,.0f}"
+                + (f" (bunga {d.get('interest_rate')}%)" if d.get("interest_rate") is not None else "")
+                for i, d in enumerate(sorted_av[:5], start=1)
+            )
+            response = (
+                f"Melihat profil utang aktif (Total **Rp {debts:,.0f}**, DTI **{dti}%**):\n{d_lines}\n\n"
+                f"1. **Avalanche (hemat bunga)**: prioritaskan **{sorted_av[0].get('name')}**.\n"
+                f"2. **Snowball (cepat lunas 1 pos)**: prioritaskan **{sorted_sn[0].get('name')}**."
+            )
+        else:
+            response = (
+                f"Melihat data keuangan Anda, total kewajiban/utang Anda adalah **Rp {debts:,.0f}** dengan rasio cicilan DTI sebesar **{dti}%**.\n"
+                f"Rekomendasi:\n"
+                f"1. Jika rasio DTI > 35%, batasi pembelanjaan non-essential segera dan fokus pada pelunasan utang dengan bunga tertinggi (metode Avalanche) atau saldo terkecil (metode Snowball).\n"
+                f"2. Manfaatkan simulator pelunasan utang di menu Utang untuk mensimulasikan percepatan cicilan."
+            )
         reason = "Rekomendasi diberikan berdasarkan rasio utang berbanding pendapatan (DTI) sebesar " + str(dti) + "%."
-    elif "anggaran" in msg_lower or "budget" in msg_lower or "hemat" in msg_lower:
+    elif "anggaran" in msg_lower or "budget" in msg_lower or "hemat" in msg_lower or "boros" in msg_lower or "pengeluaran" in msg_lower:
         remaining = budget_limit - budget_spent
+        cat_detail = ""
+        if budget_cats:
+            top_b = sorted(budget_cats, key=lambda b: float(b.get("used_percentage") or 0), reverse=True)[:4]
+            cat_detail = "\nPos kategori tertinggi:\n" + "\n".join(
+                f"- **{b.get('category_name')}**: Rp {float(b.get('spent') or 0):,.0f} / Rp {float(b.get('limit') or 0):,.0f} ({float(b.get('used_percentage') or 0):.0f}%)"
+                for b in top_b
+            )
         response = (
             f"Untuk bulan ini, total batas anggaran Anda adalah **Rp {budget_limit:,.0f}**, dan Anda telah membelanjakan **Rp {budget_spent:,.0f}**.\n"
-            f"Sisa anggaran belanja Anda adalah **Rp {remaining:,.0f}**.\n"
+            f"Sisa anggaran belanja Anda adalah **Rp {remaining:,.0f}**.{cat_detail}\n"
             f"Rekomendasi:\n"
             f"1. Pantau kategori pengeluaran yang mendekati limit di halaman Anggaran.\n"
-            f"2. Batasi transaksi impulsif di sisa bulan ini agar proyeksi saldo akhir bulan Anda (Rp {dashboard.get('forecast_end_month', {}).get('value', 0):,.0f}) tetap bernilai positif."
+            f"2. Batasi transaksi impulsif di sisa bulan ini agar proyeksi saldo akhir bulan Anda (Rp {forecast:,.0f}) tetap bernilai positif."
         )
         reason = f"Pengeluaran anggaran Anda sudah mencapai Rp {budget_spent:,.0f} dari batas Rp {budget_limit:,.0f}."
     else:
         response = (
             f"Halo! Saya adalah asisten AI keuangan Anda. Anda menanyakan: \"{message}\"\n\n"
-            f"Sebagai rekomendasi umum berdasarkan profil Anda saat ini:\n"
-            f"- Jaga Rasio DTI Anda di bawah 35% (Saat ini: {dti}%).\n"
-            f"- Sisihkan minimal 10-20% pendapatan untuk mengisi Dana Darurat Anda yang baru terisi sebesar {((ef_current/ef_target)*100) if ef_target > 0 else 0:.1f}%.\n"
-            f"- Optimalkan alokasi anggaran bulanan Anda agar surplus kas bulanan meningkat."
+            f"Berdasarkan profil Anda saat ini:\n"
+            f"- **Kas Tersedia**: **Rp {cash:,.0f}** (Safe-to-Spend: **Rp {safe_spend:,.0f}**).\n"
+            f"- **Rasio DTI**: **{dti}%** (ideal di bawah 35%).\n"
+            f"- **Dana Darurat**: terisi **{((ef_current/ef_target)*100) if ef_target > 0 else 0:.1f}%** (**Rp {ef_current:,.0f}** dari **Rp {ef_target:,.0f}**).\n"
+            f"- Coba ketik perintah pencatatan cepat seperti `beli kopi 10rb, susu 6rb dan warteg 5rb`."
         )
-        reason = "Saran umum disesuaikan dengan status dana darurat dan rasio utang Anda."
+        reason = "Saran disesuaikan dengan saldo likuid, dana darurat, dan rasio utang Anda."
 
     return {
         "response": response,

@@ -2772,3 +2772,5 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
     'Fitur kolaborasi server ini hanya tersedia di Mode Cloud.'
   );
 }
+
+export { computeDashboard, computeEmergencyFundSummary };

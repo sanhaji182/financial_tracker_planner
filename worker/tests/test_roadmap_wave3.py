@@ -158,3 +158,80 @@ def test_verify_service_auth_fail_closed_and_constant_time(monkeypatch):
     assert exc_wrong.value.status_code == 401
 
     verify_service_auth("super-secret-worker-key")
+
+
+def test_advisor_rich_go_context_relative_dates_and_live_llm_streaming(monkeypatch):
+    from datetime import datetime, timedelta
+    import app.services.ai_service as ai_svc
+
+    accounts = [
+        {"id": "acc-bca", "name": "BCA Utama", "bank_provider": "BCA", "type": "bank", "balance": 15_000_000},
+    ]
+    categories = [
+        {"id": "cat-makan", "name": "Makanan & Minuman", "type": "expense"},
+    ]
+
+    yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    cmds = ai_svc.parse_indonesian_action_commands("kemarin beli kopi 12rb pakai BCA", accounts, categories)
+    assert len(cmds) == 1
+    assert cmds[0]["payload"]["date"] == yesterday
+    assert cmds[0]["payload"]["amount"] == 12_000
+
+    rich_ctx = {
+        "dashboard": {
+            "net_worth": {"value": 50_000_000},
+            "cash_available": {"value": 15_000_000},
+            "safe_to_spend": {"value": 4_200_000},
+            "total_debts": {"total_outstanding": 12_000_000, "active_count": 2},
+            "dti_ratio": 18.5,
+            "health_score": {"score": 84, "rating": "Good"},
+            "upcoming_bills": [{"name": "Internet Biznet", "amount": 350_000, "days_remaining": 3}],
+        },
+        "emergency_fund": {"total_emergency_fund": {"value": 15_000_000}, "target_amount": {"value": 30_000_000}, "coverage_months": 3},
+        "budget": {"total_budget": {"value": 5_000_000}, "total_spent": {"value": 2_100_000}},
+        "accounts": accounts,
+        "categories": categories,
+        "debts": [
+            {"name": "Kartu Kredit", "outstanding_balance": 4_000_000, "interest_rate": 21.0},
+            {"name": "KTA", "outstanding_balance": 8_000_000, "interest_rate": 11.0},
+        ],
+    }
+
+    bills_ans = asyncio.run(ai_svc.chat_advisor("Tagihan bulan ini apa saja?", rich_ctx, "local", "default", None))
+    assert "Internet Biznet" in bills_ans["response"]
+
+    debt_ans = asyncio.run(ai_svc.chat_advisor("Bagaimana strategi utang?", rich_ctx, "local", "default", None))
+    assert "12,000,000" in debt_ans["response"]
+    assert "Kartu Kredit" in debt_ans["response"]
+
+    async def _fake_tokens(**_kwargs):
+        chunks = [
+            "🤖 Saran AI — bukan nasihat keuangan profesional\n",
+            "Dana darurat Anda saat ini Rp 15.000.000 ",
+            "dengan Safe-to-Spend Rp 4.200.000.\n",
+            "Alasan: Mengacu pada saldo kas likuid dan DTI 18.5%.",
+        ]
+        for ch in chunks:
+            yield ch
+
+    monkeypatch.setattr(ai_svc, "_stream_raw_llm_tokens", _fake_tokens)
+
+    async def _collect_live():
+        frames = []
+        async for frame in ai_svc.stream_chat_advisor(
+            message="Bagaimana dana darurat saya?",
+            context_data=rich_ctx,
+            provider="openai",
+            model_name="gpt-4o-mini",
+            api_key="sk-live-mock",
+        ):
+            frames.append(json.loads(frame[len("data: ") :].strip()))
+        return frames
+
+    live_frames = asyncio.run(_collect_live())
+    assert live_frames[0]["type"] == "meta"
+    delta_text = "".join(f["content"] for f in live_frames if f["type"] == "delta")
+    assert "Safe-to-Spend Rp 4.200.000" in delta_text
+    assert "Alasan:" not in delta_text
+    assert any(f["type"] == "meta" and "DTI 18.5%" in f.get("reason", "") for f in live_frames)
+    assert live_frames[-1]["type"] == "done"

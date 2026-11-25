@@ -116,7 +116,7 @@ export function handleAiAgentRoutes(
         title: `Catat ${cmd.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}: ${cmd.description}`,
         summary: `${formatRupiah(cmd.amount || 0)} • ${cmd.accountName || 'Rekening'} • ${cmd.categoryName || 'Umum'}`,
         payload: {
-          date: today,
+          date: cmd.txDate || today,
           amount: cmd.amount,
           type: cmd.type === 'income' ? 'income' : 'expense',
           account_id: cmd.accountId,
@@ -128,7 +128,7 @@ export function handleAiAgentRoutes(
       if (actions.length === 1) {
         return makeOk(config, {
           data: {
-            response: `Siap! Saya sudah menyiapkan draf pencatatan ${txCommands[0].type === 'income' ? 'pemasukan' : 'pengeluaran'} sebesar ${formatRupiah(txCommands[0].amount || 0)} untuk "${txCommands[0].description}". Ketuk Konfirmasi di bawah untuk menyimpan.`,
+            response: `Siap! Saya sudah menyiapkan draf pencatatan ${txCommands[0].type === 'income' ? 'pemasukan' : 'pengeluaran'} sebesar ${formatRupiah(txCommands[0].amount || 0)} untuk "${txCommands[0].description}"${txCommands[0].txDate && txCommands[0].txDate !== today ? ` (tanggal ${txCommands[0].txDate})` : ''}. Ketuk Konfirmasi di bawah untuk menyimpan.`,
             reason: 'agentic-nlp-on-device',
             proposed_actions: actions,
           },
@@ -258,30 +258,175 @@ export function handleAiAgentRoutes(
       });
     }
 
-    // 6. Analytical query + proactive anomaly inspection
-    if (/anomali|boros|hemat|pengeluaran terbesar|cek/i.test(message)) {
+    // 6. Upcoming bills inquiry
+    if (/\b(tagihan|bill|jatuh\s*tempo|bayar\s+bulan)\b/i.test(message)) {
+      const unpaidBills = db.bills
+        .filter((b) => b.status !== 'paid' && b.status !== 'cancelled')
+        .sort((a, b) =>
+          (a.next_due_date || a.due_date || '').localeCompare(b.next_due_date || b.due_date || '')
+        );
+      const totalBills = unpaidBills.reduce((sum, b) => sum + b.amount, 0);
+      const billLines = unpaidBills
+        .slice(0, 6)
+        .map(
+          (b, i) =>
+            `${i + 1}. **${b.name}** — ${formatRupiah(b.amount)} (jatuh tempo ${b.next_due_date || b.due_date || '-'})`
+        );
+      const reply =
+        unpaidBills.length > 0
+          ? [
+              `Tagihan Aktif yang Perlu Disiapkan (Total **${formatRupiah(totalBills)}**):`,
+              billLines.join('\n'),
+              `Sisa Safe-to-Spend saat ini: **${dash.safe_to_spend.formatted_value}**.`,
+            ].join('\n\n')
+          : 'Tidak ada tagihan aktif yang menunggu pembayaran saat ini.';
+      return makeOk(config, {
+        data: { response: reply, reason: 'local-bills-analysis' },
+      });
+    }
+
+    // 7. Debt payoff strategy (Avalanche vs Snowball)
+    if (/\b(utang|hutang|cicilan|kredit|pinjaman|avalanche|snowball|lunas)\b/i.test(message)) {
+      const activeDebts = db.debts.filter((d) => d.status === 'active');
+      if (activeDebts.length === 0) {
+        return makeOk(config, {
+          data: {
+            response: 'Tidak ada utang aktif yang tercatat saat ini. Anda bisa memfokuskan surplus ke Dana Darurat dan Investasi.',
+            reason: 'local-debt-analysis',
+          },
+        });
+      }
+      const avalanche = [...activeDebts].sort(
+        (a, b) => (b.interest_rate || 0) - (a.interest_rate || 0)
+      );
+      const snowball = [...activeDebts].sort(
+        (a, b) => a.outstanding_balance - b.outstanding_balance
+      );
+      const listLines = avalanche
+        .slice(0, 5)
+        .map(
+          (d, i) =>
+            `${i + 1}. **${d.name}** — sisa ${formatRupiah(d.outstanding_balance)}` +
+            (d.interest_rate ? ` (bunga ${d.interest_rate}%)` : '') +
+            (d.minimum_payment ? `, min. cicilan ${formatRupiah(d.minimum_payment)}/bln` : '')
+        )
+        .join('\n');
+      const reply = [
+        `Strategi Pelunasan Utang (Total **${dash.total_debts.formatted_total_outstanding}**, DTI **${dash.dti_ratio}%**):`,
+        listLines,
+        `• **Avalanche (hemat bunga maksimal)**: dahulukan **${avalanche[0].name}**${avalanche[0].interest_rate ? ` (${avalanche[0].interest_rate}%)` : ''}.`,
+        `• **Snowball (cepat lunas 1 pos)**: dahulukan **${snowball[0].name}** (${formatRupiah(snowball[0].outstanding_balance)}).`,
+      ].join('\n\n');
+      return makeOk(config, {
+        data: { response: reply, reason: 'local-debt-avalanche-snowball' },
+      });
+    }
+
+    // 8. Account balances & Safe-to-Spend breakdown
+    if (/\b(saldo|rekening|dompet|kas|uang\s+saya)\b/i.test(message)) {
+      const activeAccs = db.accounts.filter((a) => a.is_active);
+      const lines = activeAccs
+        .slice(0, 8)
+        .map((a) => `• **${a.name}** (${a.type}): ${formatRupiah(a.balance)}`);
+      const reply = [
+        `Posisi Saldo Rekening Aktif:`,
+        lines.length > 0 ? lines.join('\n') : 'Belum ada rekening aktif.',
+        `Kas likuid total: **${dash.cash_available.formatted_value}** • Safe-to-Spend: **${dash.safe_to_spend.formatted_value}**.`,
+      ].join('\n\n');
+      return makeOk(config, {
+        data: { response: reply, reason: 'local-accounts-snapshot' },
+      });
+    }
+
+    // 9. Savings goals progress
+    if (/\b(target|goal|impian|tabungan)\b/i.test(message)) {
+      const activeGoals = db.goals.filter((g) => g.status === 'active');
+      const goalLines = activeGoals.slice(0, 6).map((g) => {
+        const pct = g.target_amount > 0 ? Math.min(100, (g.current_amount / g.target_amount) * 100) : 0;
+        const left = Math.max(0, g.target_amount - g.current_amount);
+        return `• **${g.name}**: ${formatRupiah(g.current_amount)} / ${formatRupiah(g.target_amount)} (${pct.toFixed(0)}%, kurang ${formatRupiah(left)})`;
+      });
+      const reply =
+        goalLines.length > 0
+          ? [`Progres Target Tabungan Anda:`, goalLines.join('\n')].join('\n\n')
+          : 'Belum ada target tabungan aktif. Ketik misalnya `"Buat target dana liburan 10jt"` untuk membuatnya.';
+      return makeOk(config, {
+        data: { response: reply, reason: 'local-goals-progress' },
+      });
+    }
+
+    // 10. Analytical query, keyword spending lookup, budgets & proactive anomaly inspection
+    if (/anomali|boros|hemat|pengeluaran|anggaran|budget|habis|berapa|cek/i.test(message)) {
       const watchdog = runProactiveWatchdog(db);
-      const byCategory = new Map<string, number>();
-      for (const tx of db.transactions.filter(
+      const monthExpenses = db.transactions.filter(
         (t) => t.type === 'expense' && monthKeyOf(t.date) === month
-      )) {
+      );
+      const totalExpense = monthExpenses.reduce((s, t) => s + t.amount, 0);
+
+      // Keyword transaction lookup e.g. "habis berapa buat kopi bulan ini?"
+      const stopWords = new Set([
+        'berapa', 'habis', 'pengeluaran', 'bulan', 'ini', 'kemarin', 'tahun', 'total',
+        'buat', 'untuk', 'beli', 'jajan', 'saya', 'aku', 'kita', 'apa', 'aja', 'saja',
+        'cek', 'anomali', 'boros', 'hemat', 'terbesar', 'anggaran', 'budget', 'bagaimana',
+      ]);
+      const searchTerms = message
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .split(/\s+/)
+        .filter((w) => w.length >= 3 && !stopWords.has(w));
+      let keywordNote = '';
+      if (searchTerms.length > 0) {
+        const matched = monthExpenses.filter((t) => {
+          const hay = `${t.description || ''} ${t.category_name || ''}`.toLowerCase();
+          return searchTerms.some((term) => hay.includes(term));
+        });
+        if (matched.length > 0) {
+          const matchSum = matched.reduce((s, t) => s + t.amount, 0);
+          keywordNote = `Pencarian "${searchTerms.join(' ')}" bulan ${month}: **${matched.length} transaksi** total **${formatRupiah(matchSum)}**.`;
+        }
+      }
+
+      const byCategory = new Map<string, number>();
+      for (const tx of monthExpenses) {
         const name = tx.category_name || 'Lainnya';
         byCategory.set(name, (byCategory.get(name) || 0) + tx.amount);
       }
       const topCats = [...byCategory.entries()]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
-        .map(([name, val], i) => `${i + 1}. ${name}: ${formatRupiah(val)}`);
+        .map(([name, val], i) => `${i + 1}. **${name}**: ${formatRupiah(val)}`);
 
-      const reply = [
-        `Analisis Pengeluaran & Watchdog (${month}):`,
+      const monthBudgets = db.budgets.filter((b) => b.month === month);
+      const budgetAlerts = monthBudgets
+        .map((b) => {
+          const catName =
+            b.category_name ||
+            db.categories.find((c) => c.id === b.category_id)?.name ||
+            'Kategori';
+          const spent = monthExpenses
+            .filter((t) => t.category_id === b.category_id)
+            .reduce((s, t) => s + t.amount, 0);
+          const pct = b.amount > 0 ? (spent / b.amount) * 100 : 0;
+          return { catName, spent, limit: b.amount, pct };
+        })
+        .sort((a, b) => b.pct - a.pct)
+        .slice(0, 3)
+        .map(
+          (b) =>
+            `• ${b.catName}: ${formatRupiah(b.spent)} / ${formatRupiah(b.limit)} (${b.pct.toFixed(0)}%)`
+        );
+
+      const parts = [
+        `Analisis Pengeluaran & Anggaran (${month}) — Total Pengeluaran **${formatRupiah(totalExpense)}**:`,
+        ...(keywordNote ? [keywordNote] : []),
         topCats.length > 0 ? `Pos terbesar:\n${topCats.join('\n')}` : 'Belum ada pengeluaran bulan ini.',
+        ...(budgetAlerts.length > 0 ? [`Pemakaian anggaran:\n${budgetAlerts.join('\n')}`] : []),
         watchdog.findings.length > 0
           ? `Temuan proaktif (${watchdog.findings.length}): ${watchdog.findings.map((f) => f.title).join('; ')}.`
           : 'Tidak ada anomali anggaran atau transaksi ganda terdeteksi.',
-      ].join('\n\n');
+      ];
 
-      return makeOk(config, { data: { response: reply, reason: 'local-watchdog-analysis' } });
+      return makeOk(config, { data: { response: parts.join('\n\n'), reason: 'local-watchdog-analysis' } });
     }
 
     const topDebt = [...db.debts]
@@ -289,14 +434,14 @@ export function handleAiAgentRoutes(
       .sort((a, b) => (b.interest_rate || 0) - (a.interest_rate || 0))[0];
 
     const summaryReply = [
-      `Ringkasan kondisi keuangan lokal Anda untuk "${message}":`,
-      `• Kas likuid tersedia: ${dash.cash_available.formatted_value} (Safe-to-Spend: ${dash.safe_to_spend.formatted_value})`,
-      `• Total utang aktif: ${dash.total_debts.formatted_total_outstanding} (Rasio cicilan/DTI ${dash.dti_ratio}%)`,
-      `• Cakupan dana darurat: ${ef.coverage_months} bulan (${ef.status})`,
+      `Ringkasan kondisi keuangan lokal Anda:`,
+      `• Kas likuid tersedia: **${dash.cash_available.formatted_value}** (Safe-to-Spend: **${dash.safe_to_spend.formatted_value}**)`,
+      `• Total utang aktif: **${dash.total_debts.formatted_total_outstanding}** (Rasio cicilan/DTI **${dash.dti_ratio}%**)`,
+      `• Cakupan dana darurat: **${ef.coverage_months} bulan** (${ef.status})`,
       topDebt
-        ? `• Prioritas pelunasan: ${topDebt.name} (sisa ${topDebt.formatted_outstanding}${topDebt.interest_rate ? `, bunga ${topDebt.interest_rate}%` : ''}).`
+        ? `• Prioritas pelunasan: **${topDebt.name}** (sisa ${topDebt.formatted_outstanding}${topDebt.interest_rate ? `, bunga ${topDebt.interest_rate}%` : ''}).`
         : '• Tidak ada utang aktif tercatat.',
-      `Tip: Coba ketik perintah seperti "Catat kopi 28rb" atau "Simulasi cicilan 3jt/bln".`,
+      'Tip: Anda bisa mengetik "beli kopi 10rb, susu 6rb dan warteg 5rb", "Tagihan bulan ini", "Strategi utang", atau "Simulasi cicilan 3jt/bln".',
     ].join('\n');
 
     return makeOk(config, { data: { response: summaryReply, reason: 'local-offline-analysis' } });

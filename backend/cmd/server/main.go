@@ -150,7 +150,8 @@ func main() {
 	behavioralHandler := handler.NewBehavioralHandler(behavioralService)
 	privacyHandler := handler.NewPrivacyHandler(privacyService)
 	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService).
-		WithCatalogServices(accountService, categoryService)
+		WithCatalogServices(accountService, categoryService).
+		WithPlannerContextServices(txService, debtService, goalService)
 	governanceHandler := handler.NewGovernanceHandler()
 	syncStore := handler.NewPgSyncStore(dbPool)
 	syncHandler := handler.NewSyncHandler(syncStore)

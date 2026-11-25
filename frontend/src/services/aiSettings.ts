@@ -73,6 +73,11 @@ export const aiSettingsService = {
   },
 
   chat: async (message: string, history?: AIChatTurn[]): Promise<AIChatMessage> => {
+    if (getAppMode() === 'local') {
+      const { runHybridAdvisorChat } = await import('../offline/hybridAdvisor');
+      const hybridRes = await runHybridAdvisorChat(message, history || []);
+      if (hybridRes) return hybridRes;
+    }
     const response = await api.post<{ data: AIChatMessage }>('/ai/chat', {
       message,
       ...(history && history.length > 0 ? { history } : {}),
@@ -89,8 +94,13 @@ export const aiSettingsService = {
       onDone?: (finalResult: AIChatMessage) => void;
     }
   ): Promise<AIChatMessage> => {
-    // In local offline mode or without fetch stream support, reuse unified chat fallback seamlessly
+    // In local offline mode, use direct Hybrid LLM stream if configured, else deterministic local engine
     if (getAppMode() === 'local' || typeof fetch !== 'function') {
+      if (getAppMode() === 'local') {
+        const { runHybridAdvisorChat } = await import('../offline/hybridAdvisor');
+        const hybridRes = await runHybridAdvisorChat(message, history, handlers);
+        if (hybridRes) return hybridRes;
+      }
       const res = await aiSettingsService.chat(message, history);
       handlers.onMeta?.({ reason: res.reason, proposed_actions: res.proposed_actions });
       handlers.onDelta?.(res.response);
