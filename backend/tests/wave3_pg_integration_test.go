@@ -2,7 +2,11 @@ package tests
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/user/financial-os/internal/handler"
@@ -288,6 +292,86 @@ func TestWave3PostgresStores(t *testing.T) {
 		}
 		if !seenMsgs["E2EE pull timeout"] || !seenMsgs["Pre-login passkey abort"] {
 			t.Fatalf("missing expected telemetry messages: %+v", seenMsgs)
+		}
+	})
+
+	t.Run("PgLegacyCheckInStore", func(t *testing.T) {
+		legStore := handler.NewPgLegacyCheckInStore(testDB)
+
+		defCfg, err := legStore.GetConfig(ctx, ownerID)
+		if err != nil || defCfg.Enabled || defCfg.IntervalDays != 7 {
+			t.Fatalf("unexpected default legacy config: %+v err=%v", defCfg, err)
+		}
+
+		savedBens, err := legStore.ReplaceBeneficiaries(ctx, ownerID, []handler.LegacyBeneficiary{
+			{Name: "Siti PG", Relationship: "Istri", Email: "siti-pg@keluarga.id", TelegramChatID: "123123"},
+		})
+		if err != nil || len(savedBens) != 1 {
+			t.Fatalf("ReplaceBeneficiaries failed: %+v err=%v", savedBens, err)
+		}
+
+		now := time.Now().UTC().Truncate(time.Second)
+		nextDue := now.Add(7 * 24 * time.Hour)
+		todayStr := now.Format("2006-01-02")
+		cfg, err := legStore.UpsertConfig(ctx, &handler.LegacyCheckInConfig{
+			UserID:               ownerID,
+			Enabled:              true,
+			IntervalDays:         7,
+			GracePeriodDays:      3,
+			ReminderHour:         20,
+			Timezone:             "Asia/Jakarta",
+			AutoResetOnActivity:  true,
+			DeliveryMode:         "e2ee_portal",
+			OwnerNotifyEmail:     true,
+			OwnerNotifyTelegram:  true,
+			Status:               "triggered",
+			LastCheckinAt:        &now,
+			NextDueAt:            &nextDue,
+			TriggeredAt:          &now,
+			LastReminderSentDate: &todayStr,
+			EncryptedPackage: &handler.LegacyEncryptedPackage{
+				Version:       1,
+				CiphertextB64: "ZW5jcnlwdGVkLXBn",
+				IVB64:         "aXYtcGc=",
+				SaltB64:       "c2FsdC1wZw==",
+				KDFIterations: 100000,
+				UpdatedAt:     now.Format(time.RFC3339),
+			},
+			PlaintextSummaryNote: "Lokasi map dokumen keluarga di brankas kamar.",
+		})
+		if err != nil || !cfg.Enabled || cfg.EncryptedPackage == nil || cfg.EncryptedPackage.CiphertextB64 != "ZW5jcnlwdGVkLXBn" {
+			t.Fatalf("UpsertConfig failed: %+v err=%v", cfg, err)
+		}
+
+		if err := legStore.AppendEvent(ctx, ownerID, "triggered_released", "Test PG release"); err != nil {
+			t.Fatalf("AppendEvent failed: %v", err)
+		}
+		evs, err := legStore.ListEvents(ctx, ownerID, 5)
+		if err != nil || len(evs) != 1 || evs[0].EventType != "triggered_released" {
+			t.Fatalf("ListEvents failed: %+v err=%v", evs, err)
+		}
+
+		sum := sha256.Sum256([]byte("pg-raw-claim-token"))
+		tokHash := hex.EncodeToString(sum[:])
+		if err := legStore.InsertClaimToken(ctx, &handler.LegacyClaimTokenRecord{
+			TokenHash:        tokHash,
+			UserID:           ownerID,
+			BeneficiaryID:    savedBens[0].ID,
+			BeneficiaryName:  savedBens[0].Name,
+			BeneficiaryEmail: savedBens[0].Email,
+			ExpiresAt:        now.Add(24 * time.Hour),
+		}); err != nil {
+			t.Fatalf("InsertClaimToken failed: %v", err)
+		}
+
+		rec, claimedCfg, meta, err := legStore.ClaimByTokenHash(ctx, tokHash, now)
+		if err != nil || rec.BeneficiaryEmail != "siti-pg@keluarga.id" || claimedCfg.EncryptedPackage.CiphertextB64 != "ZW5jcnlwdGVkLXBn" {
+			t.Fatalf("ClaimByTokenHash failed: rec=%+v cfg=%+v meta=%+v err=%v", rec, claimedCfg, meta, err)
+		}
+
+		summary, err := legStore.BuildReadableInventorySummary(ctx, ownerID)
+		if err != nil || !strings.Contains(summary, "RINGKASAN INVENTARIS KELUARGA") {
+			t.Fatalf("BuildReadableInventorySummary failed: %q err=%v", summary, err)
 		}
 	})
 }

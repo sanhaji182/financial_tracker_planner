@@ -191,6 +191,7 @@ func cleanDatabase(t *testing.T) {
 		"automation_rules", "ai_settings", "vault_references",
 		"household_sync_envelopes", "household_approval_settings", "transaction_approvals",
 		"channel_links", "webauthn_credentials", "client_error_events",
+		"legacy_checkin_configs", "legacy_beneficiaries", "legacy_checkin_events", "legacy_claim_tokens",
 	}
 	query := fmt.Sprintf("TRUNCATE TABLE %s CASCADE;", strings.Join(tables, ", "))
 	_, err := testDB.Exec(ctx, query)

@@ -376,6 +376,7 @@ type telegramLinkCodeEntry struct {
 }
 
 type ReceiptOCRFunc func(ctx context.Context, imageBytes []byte, fileName string) (merchant string, total float64, dateStr string, err error)
+type LegacyCheckInFunc func(ctx context.Context, ownerID string) (nextDueLabel string, err error)
 
 type ChannelInboundHandler struct {
 	store                 ChannelStore
@@ -384,6 +385,7 @@ type ChannelInboundHandler struct {
 	aiService             service.AISettingsService
 	txCreator             InboundTransactionCreator
 	ocrFn                 ReceiptOCRFunc
+	legacyCheckInFn       LegacyCheckInFunc
 	telegramWebhookSecret string
 	emailWebhookSecret    string
 	rdb                   *redis.Client
@@ -415,6 +417,11 @@ func (h *ChannelInboundHandler) WithAIService(aiService service.AISettingsServic
 
 func (h *ChannelInboundHandler) WithReceiptOCR(fn ReceiptOCRFunc) *ChannelInboundHandler {
 	h.ocrFn = fn
+	return h
+}
+
+func (h *ChannelInboundHandler) WithLegacyCheckIn(fn LegacyCheckInFunc) *ChannelInboundHandler {
+	h.legacyCheckInFn = fn
 	return h
 }
 
@@ -876,6 +883,29 @@ func (h *ChannelInboundHandler) TelegramWebhook(c *gin.Context) {
 			_ = h.telegram.SendReplyToChat(chatID, "Akun Telegram ini belum terhubung. Buat kode di Pengaturan -> Integrasi Bot, lalu kirim `/link KODE`.")
 		}
 		c.JSON(http.StatusOK, gin.H{"ok": true, "linked": false})
+		return
+	}
+
+	if strings.HasPrefix(strings.ToLower(text), "/checkin") {
+		if h.legacyCheckInFn == nil {
+			if h.telegram != nil {
+				_ = h.telegram.SendReplyToChat(chatID, "Fitur Check-In Wasiat Digital belum aktif di server.")
+			}
+			c.JSON(http.StatusOK, gin.H{"ok": true, "action": "legacy_checkin", "configured": false})
+			return
+		}
+		nextDueLabel, ciErr := h.legacyCheckInFn(ctx, link.HouseholdOwnerID)
+		if ciErr != nil {
+			if h.telegram != nil {
+				_ = h.telegram.SendReplyToChat(chatID, "⚠️ Check-In gagal: "+ciErr.Error())
+			}
+			c.JSON(http.StatusOK, gin.H{"ok": false, "action": "legacy_checkin", "error": ciErr.Error()})
+			return
+		}
+		if h.telegram != nil {
+			_ = h.telegram.SendReplyToChat(chatID, fmt.Sprintf("✅ *Check-In Darurat Berhasil!*\nTimer Wasiat Digital telah direset.\nJadwal jatuh tempo berikutnya: *%s*", nextDueLabel))
+		}
+		c.JSON(http.StatusOK, gin.H{"ok": true, "action": "legacy_checkin", "next_due": nextDueLabel})
 		return
 	}
 

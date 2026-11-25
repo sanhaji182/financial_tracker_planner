@@ -93,6 +93,7 @@ func main() {
 	closingService := service.NewClosingService(dbPool)
 	dataQualityService := service.NewDataQualityService(dbPool)
 	telegramService := service.NewTelegramService()
+	emailService := service.NewEmailService()
 	alertService := service.NewAlertService(dbPool)
 	alertGeneratorService := service.NewAlertGeneratorService(dbPool, telegramService)
 	auditService := service.NewAuditService(txRepo)
@@ -237,13 +238,15 @@ func main() {
 	).WithTelegram(telegramService)
 
 	channelStore := handler.NewPgChannelStore(dbPool)
+	legacyCheckInStore := handler.NewPgLegacyCheckInStore(dbPool)
+	legacyCheckInHandler := handler.NewLegacyCheckInHandler(legacyCheckInStore, emailService, telegramService, rdb)
 	channelInboundHandler := handler.NewChannelInboundHandler(
 		channelStore,
 		syncStore.ResolveHouseholdOwner,
 		telegramService,
 		inboundTxCreator,
 		rdb,
-	).WithAIService(aiSettingsService)
+	).WithAIService(aiSettingsService).WithLegacyCheckIn(legacyCheckInHandler.RecordTelegramCheckIn)
 
 	passkeyStore := handler.NewPgPasskeyStore(dbPool)
 	passkeyHandler := handler.NewPasskeyHandler(passkeyStore, authService, rdb)
@@ -292,6 +295,7 @@ func main() {
 	// API Router Group v1
 	v1 := r.Group("/api/v1")
 	v1.Use(middleware.DashboardCacheInvalidator(rdb))
+	v1.Use(legacyCheckInHandler.ActivityResetMiddleware())
 	{
 		// Register health check handler
 		healthHandler := handler.NewHealthHandler(dbCheck, redisCheck, cfg.BuildVersion, cfg.BuildSHA)
@@ -379,6 +383,7 @@ func main() {
 		syncHandler.RegisterRoutes(v1)
 		approvalHandler.RegisterRoutes(v1)
 		channelInboundHandler.RegisterRoutes(v1)
+		legacyCheckInHandler.RegisterRoutes(v1)
 		marketSnapHandler.RegisterRoutes(v1)
 		telemetryHandler.RegisterRoutes(v1)
 
@@ -501,6 +506,29 @@ func main() {
 				}); err != nil {
 					log.Error().Err(err).Msg("Failed to run automation rules evaluation")
 				}
+			}
+		}
+	}()
+
+	// Start background cron job for Legacy Check-In & Dead Man's Switch evaluation (every 15 minutes)
+	go func() {
+		runEval := func() {
+			nowBucket := time.Now().UTC()
+			minuteBucket := (nowBucket.Minute() / 15) * 15
+			idem := fmt.Sprintf("%s-%02d", nowBucket.Format("2006-01-02-15"), minuteBucket)
+			if _, err := jobRunner.Run(context.Background(), "legacy_checkin_eval", idem, func(ctx context.Context) error {
+				return legacyCheckInHandler.EvaluateDueSchedules(ctx)
+			}); err != nil {
+				log.Error().Err(err).Msg("Failed to evaluate legacy check-in schedules")
+			}
+		}
+		runEval()
+		ticker := time.NewTicker(15 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				runEval()
 			}
 		}
 	}()

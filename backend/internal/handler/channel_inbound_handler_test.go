@@ -133,9 +133,16 @@ func TestChannelInboundHandlerTelegramAndEmail(t *testing.T) {
 
 	r := gin.New()
 	v1 := r.Group("/api/v1")
+	checkInCalled := false
 	h := NewChannelInboundHandler(store, nil, fakeTg, txCreator, nil).
 		WithAIService(fakeAI).
 		WithWebhookSecrets(tgSecret, emailSecret).
+		WithLegacyCheckIn(func(_ context.Context, gotOwnerID string) (string, error) {
+			if gotOwnerID == ownerID {
+				checkInCalled = true
+			}
+			return "02 Des 2026 09:00 WIB", nil
+		}).
 		WithReceiptOCR(func(_ context.Context, imageBytes []byte, _ string) (string, float64, string, error) {
 			if len(imageBytes) == 0 {
 				return "", 0, "", nil
@@ -340,5 +347,26 @@ func TestChannelInboundHandlerTelegramAndEmail(t *testing.T) {
 	photoReply := fakeTg.replies[len(fakeTg.replies)-1]
 	if !strings.Contains(photoReply, "Struk terbaca otomatis!") {
 		t.Fatalf("expected photo OCR reply, got %q", photoReply)
+	}
+
+	// 8. Send `/checkin` Telegram command -> invokes legacy check-in reset
+	ciBody, _ := json.Marshal(map[string]interface{}{
+		"update_id": 1005,
+		"message": map[string]interface{}{
+			"chat": map[string]interface{}{"id": 987654321},
+			"text": "/checkin",
+		},
+	})
+	ciReq := httptest.NewRequest(http.MethodPost, "/api/v1/webhooks/telegram", bytes.NewReader(ciBody))
+	ciReq.Header.Set("Content-Type", "application/json")
+	ciReq.Header.Set("X-Telegram-Bot-Api-Secret-Token", tgSecret)
+	ciRec := httptest.NewRecorder()
+	r.ServeHTTP(ciRec, ciReq)
+	if ciRec.Code != http.StatusOK || !checkInCalled {
+		t.Fatalf("expected /checkin telegram webhook to trigger callback, code=%d called=%v", ciRec.Code, checkInCalled)
+	}
+	ciReply := fakeTg.replies[len(fakeTg.replies)-1]
+	if !strings.Contains(ciReply, "Check-In Darurat Berhasil!") {
+		t.Fatalf("expected check-in confirmation reply, got %q", ciReply)
 	}
 }
