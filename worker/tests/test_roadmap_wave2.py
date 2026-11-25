@@ -5,6 +5,7 @@ from app.services.ai_service import (
     chat_advisor,
     parse_advisor_response,
     parse_indonesian_action_command,
+    parse_indonesian_action_commands,
     parse_indonesian_amount,
 )
 from app.services.pdf_service import (
@@ -134,3 +135,61 @@ def test_digital_bank_e_statements_and_internal_transfer_annotation():
     assert annotated[0].get("possible_transfer") is not True
     assert annotated[1].get("possible_transfer") is True
     assert annotated[2].get("possible_transfer") is True
+
+
+def test_multi_item_transaction_splitting_and_llm_guardrail():
+    accounts = [
+        {"id": "acc-bca", "name": "BCA Utama", "bank_provider": "BCA", "type": "bank"},
+        {"id": "acc-gopay", "name": "GoPay Harian", "bank_provider": "GoPay", "type": "e_wallet"},
+    ]
+    categories = [
+        {"id": "cat-makan", "name": "Makanan & Minuman", "type": "expense"},
+    ]
+
+    multi = parse_indonesian_action_commands(
+        "beli kopi 10rb, susu 6rb dan warteg 5rb", accounts, categories
+    )
+    assert len(multi) == 3
+    assert [m["payload"]["amount"] for m in multi] == [10_000, 6_000, 5_000]
+    assert [m["payload"]["description"] for m in multi] == ["Kopi", "Susu", "Warteg"]
+
+    mixed_fmt = parse_indonesian_action_commands(
+        "beli kopi 10.000, susu 6.000 dan warteg 5rb pakai GoPay", accounts, categories
+    )
+    assert len(mixed_fmt) == 3
+    assert [m["payload"]["amount"] for m in mixed_fmt] == [10_000, 6_000, 5_000]
+    assert all(m["payload"]["account_id"] == "acc-gopay" for m in mixed_fmt)
+
+    # Guardrail recovers when an LLM collapses 3 items into 1 mismatched Rp 5.000 summary action
+    buggy_llm = (
+        "🤖 Saran AI — bukan nasihat keuangan profesional\n"
+        "Saya catatkan keseluruhan Rp 5.000.\n"
+        "```actions\n"
+        + json.dumps(
+            [
+                {
+                    "id": "act-collapsed",
+                    "type": "create_transaction",
+                    "title": "Catat Pengeluaran: beli kopi, susu dan warteg",
+                    "summary": "Rp 5.000",
+                    "payload": {"amount": 5000, "type": "expense", "account_id": "acc-bca"},
+                }
+            ]
+        )
+        + "\n```\nAlasan: Ringkasan chat."
+    )
+    guarded = parse_advisor_response(buggy_llm, fallback_actions=multi)
+    assert len(guarded["proposed_actions"]) == 3
+    assert [a["payload"]["amount"] for a in guarded["proposed_actions"]] == [10_000, 6_000, 5_000]
+
+    res_local = asyncio.run(
+        chat_advisor(
+            "beli kopi 10rb, susu 6rb dan warteg 5rb",
+            {"dashboard": {}, "emergency_fund": {}, "budget": {}, "accounts": accounts, "categories": categories},
+            provider="local",
+            model_name="default",
+            api_key=None,
+        )
+    )
+    assert len(res_local["proposed_actions"]) == 3
+    assert "21.000" in res_local["response"]

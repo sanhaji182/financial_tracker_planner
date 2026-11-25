@@ -4,7 +4,7 @@ import type { Account } from '../services/accounts';
 import type { AgenticAction, VoiceTranscribeResponse } from '../services/aiSettings';
 import type { Category } from '../services/categories';
 import { getTodayLocalDate } from './date';
-import { parseIndonesianFinancialCommand } from './indonesianNlpParser';
+import { parseIndonesianFinancialCommands } from './indonesianNlpParser';
 import { isNativeMobile } from './mobile';
 
 export function isAudioRecordingSupported(): boolean {
@@ -236,31 +236,39 @@ export async function transcribeVoiceNoteDirectHybrid(
 
   const accounts = context?.accounts || [];
   const categories = context?.categories || [];
-  const parsed = parseIndonesianFinancialCommand(transcript, accounts, categories);
+  const parsedCommands = parseIndonesianFinancialCommands(transcript, accounts, categories);
   const proposedActions: AgenticAction[] = [];
 
-  if (parsed.intent === 'create_transaction' && parsed.amount && parsed.accountId) {
-    proposedActions.push({
-      id: uid('act'),
-      type: 'create_transaction',
-      title: `Catat ${parsed.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}: ${parsed.description}`,
-      summary: `${formatRupiah(parsed.amount)} • ${parsed.accountName || 'Rekening'}`,
-      payload: {
-        date: getTodayLocalDate(),
-        amount: parsed.amount,
-        type: parsed.type === 'income' ? 'income' : 'expense',
-        account_id: parsed.accountId,
-        category_id: parsed.categoryId,
-        description: parsed.description,
-      },
-    });
+  for (let i = 0; i < parsedCommands.length; i += 1) {
+    const parsed = parsedCommands[i];
+    if (parsed.intent === 'create_transaction' && parsed.amount && parsed.accountId) {
+      proposedActions.push({
+        id: `${uid('act')}-${i + 1}`,
+        type: 'create_transaction',
+        title: `Catat ${parsed.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}: ${parsed.description}`,
+        summary: `${formatRupiah(parsed.amount)} • ${parsed.accountName || 'Rekening'}`,
+        payload: {
+          date: getTodayLocalDate(),
+          amount: parsed.amount,
+          type: parsed.type === 'income' ? 'income' : 'expense',
+          account_id: parsed.accountId,
+          category_id: parsed.categoryId,
+          description: parsed.description,
+        },
+      });
+    }
   }
+
+  const totalParsedAmount = proposedActions.reduce(
+    (sum, act) => sum + Number((act.payload as { amount?: number })?.amount || 0),
+    0
+  );
 
   return {
     transcript,
     provider: `${provider}-hybrid-direct`,
     needs_manual_transcript: false,
-    parsed_amount: Number(parsed.amount || 0),
+    parsed_amount: totalParsedAmount || Number(parsedCommands[0]?.amount || 0),
     proposed_actions: proposedActions,
   };
 }

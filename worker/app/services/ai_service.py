@@ -614,7 +614,9 @@ def parse_indonesian_amount(text: str) -> float:
 
 
 def _resolve_account_from_text(
-    text_lower: str, accounts: List[Dict[str, Any]]
+    text_lower: str,
+    accounts: List[Dict[str, Any]],
+    fallback_first: bool = True,
 ) -> Optional[Dict[str, Any]]:
     active = [a for a in accounts if a.get("is_active", True)]
     pool = active or accounts
@@ -631,7 +633,7 @@ def _resolve_account_from_text(
             if cand and cand in text_lower and len(cand) > best_len:
                 best = acc
                 best_len = len(cand)
-    return best or pool[0]
+    return best or (pool[0] if fallback_first else None)
 
 
 def _resolve_category_from_text(
@@ -649,7 +651,7 @@ def _resolve_category_from_text(
             return cat
 
     keyword_buckets = {
-        "makan": ["kopi", "makan", "minum", "bakso", "nasi", "ayam", "restoran", "cafe", "lunch", "dinner"],
+        "makan": ["kopi", "ngopi", "susu", "teh", "jus", "warteg", "makan", "minum", "bakso", "nasi", "lauk", "gorengan", "ayam", "restoran", "cafe", "lunch", "dinner", "snack", "jajan"],
         "belanja": ["belanja", "indomaret", "alfamart", "superindo", "sabun", "sembako"],
         "transport": ["bensin", "gojek", "grab", "tol", "parkir", "mrt", "krl", "ojol"],
         "tagihan": ["listrik", "pln", "wifi", "internet", "pdam", "bpjs", "pulsa"],
@@ -663,24 +665,104 @@ def _resolve_category_from_text(
     return pool[0]
 
 
-def parse_indonesian_action_command(
+_COMPOUND_MONEY_SPAN_RE = re.compile(
+    r"(?:(?:rp\.?|idr)\s*)?(?:"
+    r"\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt)\b(?:\s+(?:lebih\s+)?\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b)?"
+    r"|\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b"
+    r"|(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b"
+    r"|\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,10}\b)",
+    re.IGNORECASE,
+)
+
+
+def _split_subclauses_by_amount_pairs(clause: str) -> List[str]:
+    trimmed = clause.strip()
+    if not trimmed:
+        return []
+    matches = list(_COMPOUND_MONEY_SPAN_RE.finditer(trimmed))
+    if len(matches) < 2:
+        return [trimmed]
+
+    segments: List[str] = []
+    cursor = 0
+    for idx, match in enumerate(matches):
+        end = match.end()
+        if idx == len(matches) - 1:
+            rest = trimmed[cursor:].strip()
+            if rest:
+                segments.append(rest)
+        else:
+            between = trimmed[end : matches[idx + 1].start()]
+            if re.search(r"[a-zA-Z]{2,}", between):
+                piece = trimmed[cursor:end].strip()
+                if piece:
+                    segments.append(piece)
+                cursor = end
+    return segments if len(segments) >= 2 else [trimmed]
+
+
+def _split_indonesian_transaction_clauses(text: str) -> List[str]:
+    rough_parts = [
+        p.strip()
+        for p in re.split(
+            r"(?:,?\s+(?:dan|serta|lalu|terus|sama|kemudian|plus)\s+|,(?!\d)|[;\n•]+|\s+[+&]\s+)",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if p and p.strip()
+    ]
+    clauses: List[str] = []
+    for part in rough_parts:
+        clauses.extend(_split_subclauses_by_amount_pairs(part))
+    return clauses
+
+
+def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
+    desc = clause
+    desc = re.sub(r"(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b", " ", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\b\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt|ribu|rb|k)\b", " ", desc, flags=re.IGNORECASE)
+    desc = re.sub(
+        r"\b(?:setengah\s+juta|sejuta|seratus|seribu|(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas)\s+(?:puluh\s+|ratus\s+)?(?:ribu|juta))\b",
+        " ",
+        desc,
+        flags=re.IGNORECASE,
+    )
+    desc = re.sub(r"\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b", " ", desc)
+    desc = re.sub(
+        r"^(?:dan|serta|lalu|terus|sama|kemudian|plus)\b\s*",
+        "",
+        desc,
+        flags=re.IGNORECASE,
+    )
+    desc = re.sub(
+        r"\b(?:tolong|coba|catat|catatkan|beli|bayar|jajan|pakai|pake|via|dengan|dari|untuk|sebesar|seharga|harga|senilai|nominal)\b",
+        " ",
+        desc,
+        flags=re.IGNORECASE,
+    )
+    desc = re.sub(r"\s+", " ", desc).strip(" :-.,")
+    return desc.capitalize() if desc else ("Pemasukan" if is_income else "Pengeluaran Harian")
+
+
+def parse_indonesian_action_commands(
     message: str,
     accounts: Optional[List[Dict[str, Any]]] = None,
     categories: Optional[List[Dict[str, Any]]] = None,
-) -> Optional[Dict[str, Any]]:
+) -> List[Dict[str, Any]]:
     """
-    Parses natural Indonesian financial commands into executable AgenticAction schemas
+    Parses natural Indonesian financial commands (including multi-item lists such as
+    'beli kopi 10rb, susu 6rb dan warteg 5rb') into one or more executable AgenticAction schemas
     matching frontend AdvisorChatDrawer actions.
     """
     clean = (message or "").strip()
     if not clean:
-        return None
+        return []
     low = clean.lower()
     accounts = accounts or []
     categories = categories or []
     amount = parse_indonesian_amount(clean)
     if amount <= 0:
-        return None
+        return []
 
     today = datetime.now().strftime("%Y-%m-%d")
     month = datetime.now().strftime("%Y-%m")
@@ -693,19 +775,21 @@ def parse_indonesian_action_command(
             remaining = [a for a in accounts if src and a.get("id") != src.get("id")]
             tgt = _resolve_account_from_text(m_pair.group(2), remaining) if remaining else None
             if src and tgt and src.get("id") != tgt.get("id"):
-                return {
-                    "id": f"act-{uuid.uuid4().hex[:8]}",
-                    "type": "create_transfer",
-                    "title": f"Transfer {src.get('name')} → {tgt.get('name')}",
-                    "summary": f"Nominal Rp {amount:,.0f}".replace(",", ".") + f" pada {today}",
-                    "payload": {
-                        "source_account_id": src["id"],
-                        "target_account_id": tgt["id"],
-                        "amount": amount,
-                        "date": today,
-                        "notes": "Transfer via AI Advisor",
-                    },
-                }
+                return [
+                    {
+                        "id": f"act-{uuid.uuid4().hex[:8]}",
+                        "type": "create_transfer",
+                        "title": f"Transfer {src.get('name')} → {tgt.get('name')}",
+                        "summary": f"Nominal Rp {amount:,.0f}".replace(",", ".") + f" pada {today}",
+                        "payload": {
+                            "source_account_id": src["id"],
+                            "target_account_id": tgt["id"],
+                            "amount": amount,
+                            "date": today,
+                            "notes": "Transfer via AI Advisor",
+                        },
+                    }
+                ]
 
     # 2. Set budget intent: "atur budget makan 2jt"
     if re.search(r"\b(atur|set|buat)\s+(?:budget|anggaran)\b", low) or (
@@ -713,17 +797,19 @@ def parse_indonesian_action_command(
     ):
         cat = _resolve_category_from_text(low, categories, "expense")
         if cat:
-            return {
-                "id": f"act-{uuid.uuid4().hex[:8]}",
-                "type": "set_budget",
-                "title": f"Atur Anggaran {cat.get('name', 'Kategori')}",
-                "summary": f"Batas Rp {amount:,.0f}".replace(",", ".") + f" untuk bulan {month}",
-                "payload": {
-                    "category_id": cat["id"],
-                    "month": month,
-                    "amount": amount,
-                },
-            }
+            return [
+                {
+                    "id": f"act-{uuid.uuid4().hex[:8]}",
+                    "type": "set_budget",
+                    "title": f"Atur Anggaran {cat.get('name', 'Kategori')}",
+                    "summary": f"Batas Rp {amount:,.0f}".replace(",", ".") + f" untuk bulan {month}",
+                    "payload": {
+                        "category_id": cat["id"],
+                        "month": month,
+                        "amount": amount,
+                    },
+                }
+            ]
 
     # 3. Create goal intent: "buat target dana liburan 10jt"
     if re.search(r"\b(target|goal|tabungan\s+impian|impian)\b", low) and re.search(
@@ -744,50 +830,123 @@ def parse_indonesian_action_command(
         }
         if acc:
             payload["linked_account_id"] = acc["id"]
-        return {
-            "id": f"act-{uuid.uuid4().hex[:8]}",
-            "type": "create_goal",
-            "title": f"Buat Target: {title_desc}",
-            "summary": f"Target Rp {amount:,.0f}".replace(",", "."),
-            "payload": payload,
-        }
-
-    # 4. Transaction intent (explicit command verbs)
-    if re.search(r"\b(catat|beli|bayar|jajan|pengeluaran|keluar|terima|gaji|pemasukan|masuk|dapat)\b", low) and not re.search(
-        r"\b(simulasi|what[\s-]*if|andai|kalau|jika|kira[\s-]*kira|berapa)\b", low
-    ):
-        is_income = bool(re.search(r"\b(terima|gaji|pemasukan|masuk|dapat|bonus|thr)\b", low))
-        tx_type = "income" if is_income else "expense"
-        acc = _resolve_account_from_text(low, accounts)
-        cat = _resolve_category_from_text(low, categories, tx_type)
-        if acc:
-            desc = re.sub(
-                r"\b(tolong|catat|catatkan|beli|bayar|pakai|via|dengan|dari|untuk|sebesar|rp\.?\s*[\d.,]+|\d+(?:[.,]\d+)?\s*(?:jt|juta|rb|ribu|k))\b",
-                "",
-                clean,
-                flags=re.IGNORECASE,
-            ).strip(" :-.,")
-            desc = re.sub(r"\s+", " ", desc).strip() or ("Pemasukan" if is_income else "Pengeluaran Harian")
-            payload = {
-                "date": today,
-                "amount": amount,
-                "type": tx_type,
-                "account_id": acc["id"],
-                "description": desc,
+        return [
+            {
+                "id": f"act-{uuid.uuid4().hex[:8]}",
+                "type": "create_goal",
+                "title": f"Buat Target: {title_desc}",
+                "summary": f"Target Rp {amount:,.0f}".replace(",", "."),
+                "payload": payload,
             }
-            if cat:
-                payload["category_id"] = cat["id"]
-            acc_name = acc.get("name", "Rekening")
-            cat_name = cat.get("name", "Umum") if cat else "Umum"
-            return {
+        ]
+
+    # 4. Transaction intent (single or multi-item list)
+    has_tx_verb = bool(
+        re.search(
+            r"\b(catat|catatkan|rekam|beli|bayar|jajan|makan|ngopi|isi\s+bensin|belanja|pengeluaran|keluar|terima|gaji|pemasukan|masuk|dapat)\b",
+            low,
+        )
+    )
+    clauses_preview = _split_indonesian_transaction_clauses(clean)
+    has_multi_item_amounts = sum(1 for c in clauses_preview if parse_indonesian_amount(c) > 0) >= 2
+    is_hypothetical = bool(
+        re.search(r"\b(simulasi|what[\s-]*if|andai|kalau|jika|kira[\s-]*kira|berapa|apakah|bagaimana)\b", low)
+    ) or ("?" in clean and not has_tx_verb)
+    if (has_tx_verb or has_multi_item_amounts) and not is_hypothetical:
+        income_re = re.compile(r"\b(terima|gaji|pemasukan|masuk|dapat|bonus|thr|freelance)\b", re.IGNORECASE)
+        global_is_income = bool(income_re.search(low))
+        shared_acc = _resolve_account_from_text(low, accounts)
+        if not shared_acc:
+            return []
+
+        clauses = _split_indonesian_transaction_clauses(clean)
+        if len(clauses) >= 2:
+            multi_actions: List[Dict[str, Any]] = []
+            for clause in clauses:
+                c_amt = parse_indonesian_amount(clause)
+                if c_amt <= 0:
+                    continue
+                c_low = clause.lower()
+                c_is_income = bool(income_re.search(c_low)) or (
+                    global_is_income
+                    and not re.search(r"\b(beli|bayar|keluar|pengeluaran|jajan|makan|kopi)\b", c_low)
+                )
+                c_type = "income" if c_is_income else "expense"
+                c_acc = _resolve_account_from_text(c_low, accounts, fallback_first=False) or shared_acc
+                c_cat = _resolve_category_from_text(c_low, categories, c_type)
+                c_desc = _clean_indonesian_tx_description(clause, c_is_income)
+                # Strip explicitly matched account name tokens when user writes "warteg 5rb pakai BCA"
+                acc_name_raw = str(c_acc.get("name") or "").strip()
+                prov_raw = str(c_acc.get("bank_provider") or "").strip()
+                for token in (acc_name_raw, prov_raw):
+                    if token and len(token) >= 2:
+                        c_desc = re.sub(rf"\b{re.escape(token)}\b", " ", c_desc, flags=re.IGNORECASE).strip()
+                c_desc = re.sub(r"\s+", " ", c_desc).strip(" :-.,") or (
+                    "Pemasukan" if c_is_income else "Pengeluaran Harian"
+                )
+                c_desc = c_desc[0].upper() + c_desc[1:]
+
+                c_payload: Dict[str, Any] = {
+                    "date": today,
+                    "amount": c_amt,
+                    "type": c_type,
+                    "account_id": c_acc["id"],
+                    "description": c_desc,
+                }
+                if c_cat:
+                    c_payload["category_id"] = c_cat["id"]
+                acc_name = c_acc.get("name", "Rekening")
+                cat_name = c_cat.get("name", "Umum") if c_cat else "Umum"
+                multi_actions.append(
+                    {
+                        "id": f"act-{uuid.uuid4().hex[:8]}",
+                        "type": "create_transaction",
+                        "title": f"Catat {'Pemasukan' if c_is_income else 'Pengeluaran'}: {c_desc}",
+                        "summary": f"Rp {c_amt:,.0f}".replace(",", ".") + f" • {acc_name} • {cat_name}",
+                        "payload": c_payload,
+                    }
+                )
+            if len(multi_actions) >= 2:
+                return multi_actions
+
+        tx_type = "income" if global_is_income else "expense"
+        acc = shared_acc
+        cat = _resolve_category_from_text(low, categories, tx_type)
+        desc = _clean_indonesian_tx_description(clean, global_is_income)
+        payload = {
+            "date": today,
+            "amount": amount,
+            "type": tx_type,
+            "account_id": acc["id"],
+            "description": desc,
+        }
+        if cat:
+            payload["category_id"] = cat["id"]
+        acc_name = acc.get("name", "Rekening")
+        cat_name = cat.get("name", "Umum") if cat else "Umum"
+        return [
+            {
                 "id": f"act-{uuid.uuid4().hex[:8]}",
                 "type": "create_transaction",
-                "title": f"Catat {'Pemasukan' if is_income else 'Pengeluaran'}: {desc}",
+                "title": f"Catat {'Pemasukan' if global_is_income else 'Pengeluaran'}: {desc}",
                 "summary": f"Rp {amount:,.0f}".replace(",", ".") + f" • {acc_name} • {cat_name}",
                 "payload": payload,
             }
+        ]
 
-    return None
+    return []
+
+
+def parse_indonesian_action_command(
+    message: str,
+    accounts: Optional[List[Dict[str, Any]]] = None,
+    categories: Optional[List[Dict[str, Any]]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Backward-compatible single-action wrapper over `parse_indonesian_action_commands`.
+    """
+    commands = parse_indonesian_action_commands(message, accounts, categories)
+    return commands[0] if commands else None
 
 
 def _normalize_history_turns(history: Optional[List[Dict[str, str]]]) -> List[Dict[str, str]]:
@@ -874,8 +1033,12 @@ async def chat_advisor(
     categories = context_data.get("categories", []) or []
     normalized_history = _normalize_history_turns(history)
     effective_message = _resolve_followup_command(message, normalized_history)
-    deterministic_action = parse_indonesian_action_command(effective_message, accounts, categories)
-    fallback_actions = [deterministic_action] if deterministic_action else []
+    deterministic_actions = parse_indonesian_action_commands(
+        effective_message, accounts, categories
+    )
+    deterministic_action = deterministic_actions[0] if deterministic_actions else None
+    fallback_actions = deterministic_actions
+    today_iso = datetime.now().strftime("%Y-%m-%d")
 
     # Helper to safely extract float from plain number or MoneyValue dict
     def _val(obj, key: str, default: float = 0.0) -> float:
@@ -917,6 +1080,7 @@ async def chat_advisor(
     ) or "Belum ada"
 
     context_str = (
+        f"Tanggal Hari Ini: {today_iso}\n"
         f"Kekayaan Bersih: Rp {net_worth:,.2f}\n"
         f"Kas Tersedia: Rp {cash:,.2f}\n"
         f"Total Utang: Rp {debts:,.2f}\n"
@@ -938,9 +1102,17 @@ async def chat_advisor(
         "1. JAWABAN ANDA HARUS SELALU diawali dengan baris disclaimer tepat seperti ini:\n"
         "🤖 Saran AI — bukan nasihat keuangan profesional\n\n"
         "2. Jika user meminta mencatat transaksi, transfer antar rekening, mengatur budget, atau membuat target keuangan, "
-        "Anda boleh menyertakan blok ```actions JSON array menggunakan HANYA ID rekening/kategori yang valid di atas:\n"
+        "Anda WAJIB menyertakan blok ```actions JSON array menggunakan HANYA ID rekening/kategori yang valid di atas:\n"
+        "- ATURAN MULTI-ITEM: Jika user menyebut beberapa pembelian/item dalam satu pesan "
+        "(contoh: 'beli kopi 10rb, susu 6rb dan warteg 5rb'), Anda WAJIB memecahnya menjadi beberapa objek terpisah di dalam array ```actions "
+        "(satu objek `create_transaction` per item dengan nominal masing-masing: 10000, 6000, 5000). JANGAN gabung menjadi satu transaksi dan JANGAN hanya ambil item terakhir.\n"
+        "- Skema payload per type:\n"
+        "  - create_transaction: {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense|income\", \"account_id\": \"<id rekening>\", \"category_id\": \"<id kategori>\", \"description\": \"Kopi\"}\n"
+        "  - create_transfer: {\"source_account_id\": \"<id asal>\", \"target_account_id\": \"<id tujuan>\", \"amount\": 500000, \"date\": \"" + today_iso + "\", \"notes\": \"Transfer via AI Advisor\"}\n"
+        "  - set_budget: {\"category_id\": \"<id kategori>\", \"month\": \"" + today_iso[:7] + "\", \"amount\": 2000000}\n"
+        "  - create_goal: {\"name\": \"Nama Target\", \"type\": \"custom\", \"target_amount\": 10000000}\n"
         "```actions\n"
-        "[{\"id\": \"act-1\", \"type\": \"create_transaction|create_transfer|set_budget|create_goal\", \"title\": \"...\", \"summary\": \"...\", \"payload\": {...}}]\n"
+        "[{\"id\": \"act-1\", \"type\": \"create_transaction\", \"title\": \"Catat Pengeluaran: Kopi\", \"summary\": \"Rp 10.000 • BCA • Makan\", \"payload\": {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense\", \"account_id\": \"<id>\", \"category_id\": \"<id>\", \"description\": \"Kopi\"}}]\n"
         "```\n"
         "3. Di bagian akhir jawaban Anda, Anda HARUS menulis bagian 'Alasan:' yang merangkum alasan di balik rekomendasi Anda berdasarkan data finansial di atas.\n"
         "Format output akhir:\n"
@@ -951,7 +1123,12 @@ async def chat_advisor(
 
     if not api_key or provider == "local":
         logger.info("Using mock advisor response")
-        return generate_mock_chat_response(effective_message, context_data, deterministic_action=deterministic_action)
+        return generate_mock_chat_response(
+            effective_message,
+            context_data,
+            deterministic_action=deterministic_action,
+            deterministic_actions=deterministic_actions,
+        )
 
     try:
         headers = {
@@ -972,7 +1149,7 @@ async def chat_advisor(
                 temperature=0.7,
                 timeout=60.0,
             )
-            return parse_advisor_response(content, fallback_actions=fallback_actions)
+            return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
             llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
@@ -988,7 +1165,7 @@ async def chat_advisor(
                 resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
                 resp.raise_for_status()
                 content = resp.json()["content"][0]["text"]
-                return parse_advisor_response(content, fallback_actions=fallback_actions)
+                return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
         elif provider == "gemini":
             llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
             url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
@@ -1009,12 +1186,22 @@ async def chat_advisor(
                 resp = await client.post(url, json=payload)
                 resp.raise_for_status()
                 content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return parse_advisor_response(content, fallback_actions=fallback_actions)
+                return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
     except Exception as e:
         logger.error(f"Error calling {provider} for advisor chat: {str(e)}")
-        return generate_mock_chat_response(effective_message, context_data, deterministic_action=deterministic_action)
+        return generate_mock_chat_response(
+            effective_message,
+            context_data,
+            deterministic_action=deterministic_action,
+            deterministic_actions=deterministic_actions,
+        )
 
-    return generate_mock_chat_response(effective_message, context_data, deterministic_action=deterministic_action)
+    return generate_mock_chat_response(
+        effective_message,
+        context_data,
+        deterministic_action=deterministic_action,
+        deterministic_actions=deterministic_actions,
+    )
 
 
 async def stream_chat_advisor(
@@ -1094,12 +1281,53 @@ def _extract_actions_block(content: str) -> Tuple[str, List[Dict[str, Any]]]:
     return cleaned, actions
 
 
+def _sanitize_llm_actions(
+    actions: List[Dict[str, Any]],
+    context_data: Optional[Dict[str, Any]] = None,
+) -> List[Dict[str, Any]]:
+    today = datetime.now().strftime("%Y-%m-%d")
+    accounts = (context_data or {}).get("accounts") or []
+    account_ids = {str(a.get("id")) for a in accounts if a.get("id")}
+    default_acc_id = str(accounts[0].get("id")) if accounts and accounts[0].get("id") else None
+
+    sanitized: List[Dict[str, Any]] = []
+    for act in actions:
+        act_type = act.get("type")
+        payload = dict(act.get("payload") or {})
+        if act_type in ("create_transaction", "create_transfer", "set_budget"):
+            raw_amt = payload.get("amount")
+            if isinstance(raw_amt, str):
+                amt_val = parse_indonesian_amount(raw_amt)
+            else:
+                try:
+                    amt_val = float(raw_amt or 0)
+                except (TypeError, ValueError):
+                    amt_val = 0.0
+            if amt_val <= 0:
+                continue
+            payload["amount"] = round(amt_val)
+
+        if act_type == "create_transaction":
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(payload.get("date") or "")):
+                payload["date"] = today
+            if str(payload.get("type") or "") not in ("expense", "income"):
+                payload["type"] = "expense"
+            if account_ids and str(payload.get("account_id") or "") not in account_ids and default_acc_id:
+                payload["account_id"] = default_acc_id
+
+        sanitized.append({**act, "payload": payload})
+    return sanitized
+
+
 def parse_advisor_response(
-    content: str, fallback_actions: Optional[List[Dict[str, Any]]] = None
+    content: str,
+    fallback_actions: Optional[List[Dict[str, Any]]] = None,
+    context_data: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     disclaimer = "🤖 Saran AI — bukan nasihat keuangan profesional"
 
     stripped_content, parsed_actions = _extract_actions_block(content)
+    parsed_actions = _sanitize_llm_actions(parsed_actions, context_data=context_data)
 
     # Strip disclaimer from the start if present to handle it cleanly in the frontend
     main_response = stripped_content
@@ -1113,7 +1341,16 @@ def parse_advisor_response(
         main_response = parts[0].strip()
         reason = parts[1].strip()
 
-    final_actions = parsed_actions if parsed_actions else (fallback_actions or [])
+    # Prevent LLM collapse bugs when multi-item deterministic parser detected >=2 separate transactions
+    if (
+        fallback_actions
+        and len(fallback_actions) >= 2
+        and len(parsed_actions) < len(fallback_actions)
+    ):
+        final_actions = fallback_actions
+    else:
+        final_actions = parsed_actions if parsed_actions else (fallback_actions or [])
+
     result: Dict[str, Any] = {
         "response": main_response,
         "reason": reason,
@@ -1127,6 +1364,7 @@ def generate_mock_chat_response(
     message: str,
     context_data: Dict[str, Any],
     deterministic_action: Optional[Dict[str, Any]] = None,
+    deterministic_actions: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     dashboard = context_data.get("dashboard", {})
     ef = context_data.get("emergency_fund", {})
@@ -1134,16 +1372,39 @@ def generate_mock_chat_response(
     accounts = context_data.get("accounts", []) or []
     categories = context_data.get("categories", []) or []
 
-    if deterministic_action is None:
-        deterministic_action = parse_indonesian_action_command(message, accounts, categories)
-    if deterministic_action is not None:
+    actions = list(deterministic_actions or [])
+    if not actions:
+        if deterministic_action is not None:
+            actions = [deterministic_action]
+        else:
+            actions = parse_indonesian_action_commands(message, accounts, categories)
+
+    if len(actions) == 1:
+        single = actions[0]
         return {
             "response": (
-                f"Siap! Saya sudah menyiapkan draf aksi **{deterministic_action['title']}** "
-                f"({deterministic_action['summary']}). Ketuk Konfirmasi di kartu aksi di bawah untuk menjalankan."
+                f"Siap! Saya sudah menyiapkan draf aksi **{single['title']}** "
+                f"({single['summary']}). Ketuk Konfirmasi di kartu aksi di bawah untuk menjalankan."
             ),
             "reason": "agentic-nlp-worker",
-            "proposed_actions": [deterministic_action],
+            "proposed_actions": actions,
+        }
+
+    if len(actions) >= 2:
+        total_amt = sum(float((a.get("payload") or {}).get("amount") or 0) for a in actions)
+        lines = [
+            f"{idx}. {a['title'].replace('Catat Pengeluaran: ', '').replace('Catat Pemasukan: ', '')} — {a['summary']}"
+            for idx, a in enumerate(actions, start=1)
+        ]
+        total_str = f"Rp {total_amt:,.0f}".replace(",", ".")
+        return {
+            "response": (
+                f"Siap! Saya sudah memisahkan {len(actions)} draf transaksi (total **{total_str}**):\n"
+                + "\n".join(lines)
+                + "\n\nKetuk Konfirmasi Semua atau per item di kartu aksi di bawah."
+            ),
+            "reason": "agentic-nlp-worker-multi",
+            "proposed_actions": actions,
         }
 
     # Safe extractor for MoneyValue or plain float

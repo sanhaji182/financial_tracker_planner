@@ -5,7 +5,7 @@ import type {
   UpdateAISettingsRequest,
 } from '../../services/aiSettings';
 import { getCurrentLocalMonth, getTodayLocalDate } from '../../utils/date';
-import { parseIndonesianFinancialCommand } from '../../utils/indonesianNlpParser';
+import { parseIndonesianFinancialCommands } from '../../utils/indonesianNlpParser';
 import { runProactiveWatchdog } from '../proactiveWatchdog';
 import { formatRupiah, monthKeyOf, saveLocalDB, uid } from '../storage';
 import type { LocalHandlerContext, LocalHandlerHelpers } from './types';
@@ -102,29 +102,51 @@ export function handleAiAgentRoutes(
     const ef = computeEmergencyFundSummary(db);
     const today = getTodayLocalDate();
     const month = getCurrentLocalMonth();
-    const parsed = parseIndonesianFinancialCommand(message, db.accounts, db.categories);
+    const parsedCommands = parseIndonesianFinancialCommands(message, db.accounts, db.categories);
+    const parsed = parsedCommands[0];
 
-    // 1. Agentic transaction proposal
-    if (parsed.intent === 'create_transaction' && parsed.amount && parsed.accountId) {
-      const action: AgenticAction = {
-        id: uid('act'),
+    // 1. Agentic transaction proposal (supports 1 or multiple items in a single prompt)
+    const txCommands = parsedCommands.filter(
+      (cmd) => cmd.intent === 'create_transaction' && cmd.amount && cmd.accountId
+    );
+    if (txCommands.length > 0) {
+      const actions: AgenticAction[] = txCommands.map((cmd, idx) => ({
+        id: `${uid('act')}-${idx + 1}`,
         type: 'create_transaction',
-        title: `Catat ${parsed.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}: ${parsed.description}`,
-        summary: `${formatRupiah(parsed.amount)} • ${parsed.accountName || 'Rekening'} • ${parsed.categoryName || 'Umum'}`,
+        title: `Catat ${cmd.type === 'income' ? 'Pemasukan' : 'Pengeluaran'}: ${cmd.description}`,
+        summary: `${formatRupiah(cmd.amount || 0)} • ${cmd.accountName || 'Rekening'} • ${cmd.categoryName || 'Umum'}`,
         payload: {
           date: today,
-          amount: parsed.amount,
-          type: parsed.type === 'income' ? 'income' : 'expense',
-          account_id: parsed.accountId,
-          category_id: parsed.categoryId,
-          description: parsed.description,
+          amount: cmd.amount,
+          type: cmd.type === 'income' ? 'income' : 'expense',
+          account_id: cmd.accountId,
+          category_id: cmd.categoryId,
+          description: cmd.description,
         },
-      };
+      }));
+
+      if (actions.length === 1) {
+        return makeOk(config, {
+          data: {
+            response: `Siap! Saya sudah menyiapkan draf pencatatan ${txCommands[0].type === 'income' ? 'pemasukan' : 'pengeluaran'} sebesar ${formatRupiah(txCommands[0].amount || 0)} untuk "${txCommands[0].description}". Ketuk Konfirmasi di bawah untuk menyimpan.`,
+            reason: 'agentic-nlp-on-device',
+            proposed_actions: actions,
+          },
+        });
+      }
+
+      const totalAmount = txCommands.reduce((sum, item) => sum + (item.amount || 0), 0);
+      const itemLines = txCommands
+        .map(
+          (item, i) =>
+            `${i + 1}. ${item.description} — ${formatRupiah(item.amount || 0)} (${item.accountName || 'Rekening'})`
+        )
+        .join('\n');
       return makeOk(config, {
         data: {
-          response: `Siap! Saya sudah menyiapkan draf pencatatan ${parsed.type === 'income' ? 'pemasukan' : 'pengeluaran'} sebesar ${formatRupiah(parsed.amount)} untuk "${parsed.description}". Ketuk Konfirmasi di bawah untuk menyimpan.`,
-          reason: 'agentic-nlp-on-device',
-          proposed_actions: [action],
+          response: `Siap! Saya sudah memisahkan ${actions.length} draf transaksi dengan total ${formatRupiah(totalAmount)}:\n${itemLines}\n\nKetuk "Konfirmasi Semua" atau konfirmasi per item di bawah.`,
+          reason: 'agentic-nlp-on-device-multi',
+          proposed_actions: actions,
         },
       });
     }

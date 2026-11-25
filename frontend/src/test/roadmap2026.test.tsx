@@ -31,6 +31,7 @@ import {
 } from '../offline/e2eeSync';
 import {
   parseIndonesianFinancialCommand,
+  parseIndonesianFinancialCommands,
   parseIndonesianSpokenAmount,
 } from '../utils/indonesianNlpParser';
 import { parseBankNotification } from '../utils/bankNotificationParser';
@@ -311,6 +312,47 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
     expect(await screen.findByText(/Berhasil dijalankan/i)).toBeInTheDocument();
     const balanceAfter = (await accountsService.getAccount(bca.id)).balance;
     expect(balanceAfter).toBe(balanceBefore - 35_000);
+
+    // Multi-item NLP parsing + AdvisorChatDrawer "Konfirmasi Semua"
+    const dbNow = loadLocalDB();
+    const multiCmds = parseIndonesianFinancialCommands(
+      'beli kopi 10rb, susu 6rb dan warteg 5rb',
+      dbNow.accounts,
+      dbNow.categories
+    );
+    expect(multiCmds).toHaveLength(3);
+    expect(multiCmds.map((c) => c.amount)).toEqual([10_000, 6_000, 5_000]);
+    expect(multiCmds.map((c) => c.description)).toEqual(['Kopi', 'Susu', 'Warteg']);
+
+    const mixedFmtCmds = parseIndonesianFinancialCommands(
+      'beli kopi 10.000, susu 6.000 dan warteg 5rb pakai BCA',
+      dbNow.accounts,
+      dbNow.categories
+    );
+    expect(mixedFmtCmds).toHaveLength(3);
+    expect(mixedFmtCmds.map((c) => c.amount)).toEqual([10_000, 6_000, 5_000]);
+    expect(mixedFmtCmds.every((c) => c.accountId === bca.id)).toBe(true);
+
+    const compoundCmds = parseIndonesianFinancialCommands(
+      'beli hp 2 juta 500 ribu pakai BCA',
+      dbNow.accounts,
+      dbNow.categories
+    );
+    expect(compoundCmds).toHaveLength(1);
+    expect(compoundCmds[0].amount).toBe(2_500_000);
+
+    await user.type(chatBox, 'beli kopi 10rb, susu 6rb dan warteg 5rb pakai BCA');
+    await user.keyboard('{Enter}');
+
+    const confirmAllBtn = await screen.findByRole('button', {
+      name: /Konfirmasi Semua \(3 Aksi/i,
+    });
+    await user.click(confirmAllBtn);
+
+    await waitFor(async () => {
+      const latestAcc = await accountsService.getAccount(bca.id);
+      expect(latestAcc.balance).toBe(balanceAfter - 21_000);
+    });
   });
 
   // ---------------- TAHAP 4 ----------------

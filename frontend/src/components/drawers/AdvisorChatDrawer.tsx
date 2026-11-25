@@ -270,7 +270,7 @@ export const AdvisorChatDrawer: React.FC = () => {
     }
   };
 
-  const handleExecuteAction = async (action: AgenticAction) => {
+  const handleExecuteAction = async (action: AgenticAction): Promise<boolean> => {
     setActionStates((prev) => ({ ...prev, [action.id]: 'running' }));
     try {
       if (action.type === 'create_transaction') {
@@ -288,9 +288,23 @@ export const AdvisorChatDrawer: React.FC = () => {
       invalidateFinancialData(queryClient);
       setActionStates((prev) => ({ ...prev, [action.id]: 'done' }));
       toast.success('Aksi AI berhasil dijalankan', action.title);
+      return true;
     } catch {
       setActionStates((prev) => ({ ...prev, [action.id]: 'idle' }));
       toast.error('Gagal menjalankan aksi AI');
+      return false;
+    }
+  };
+
+  const handleConfirmAllActions = async (actions: AgenticAction[]) => {
+    const pending = actions.filter((act) => (actionStates[act.id] || 'idle') === 'idle');
+    let okCount = 0;
+    for (const act of pending) {
+      const ok = await handleExecuteAction(act);
+      if (ok) okCount += 1;
+    }
+    if (okCount > 1) {
+      toast.success(`${okCount} transaksi/aksi berhasil dicatat sekaligus`);
     }
   };
 
@@ -435,68 +449,97 @@ export const AdvisorChatDrawer: React.FC = () => {
                       <p className="text-sm leading-relaxed whitespace-pre-wrap">{msg.text}</p>
                       {msg.role === 'assistant' &&
                         Array.isArray(msg.proposed_actions) &&
-                        msg.proposed_actions.length > 0 && (
-                          <div className="pt-2 space-y-2">
-                            {msg.proposed_actions.map((act) => {
-                              const status = actionStates[act.id] || 'idle';
-                              if (status === 'dismissed') return null;
-                              return (
-                                <div
-                                  key={act.id}
-                                  className="rounded-xl border border-indigo-200 dark:border-indigo-800/70 bg-white dark:bg-slate-900 p-2.5 space-y-2 shadow-sm"
+                        msg.proposed_actions.length > 0 && (() => {
+                          const pendingActions = msg.proposed_actions.filter(
+                            (a) => (actionStates[a.id] || 'idle') === 'idle'
+                          );
+                          const isAnyRunning = msg.proposed_actions.some(
+                            (a) => actionStates[a.id] === 'running'
+                          );
+                          const pendingTotal = pendingActions.reduce(
+                            (sum, a) => sum + Number((a.payload as { amount?: number })?.amount || 0),
+                            0
+                          );
+                          return (
+                            <div className="pt-2 space-y-2">
+                              {pendingActions.length > 1 && (
+                                <button
+                                  type="button"
+                                  disabled={isAnyRunning}
+                                  onClick={() =>
+                                    void handleConfirmAllActions(msg.proposed_actions || [])
+                                  }
+                                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-semibold shadow-sm disabled:opacity-50"
                                 >
-                                  <div className="flex items-start gap-2">
-                                    <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
-                                    <div className="min-w-0">
-                                      <p className="text-xs font-bold text-slate-900 dark:text-white">
-                                        {act.title}
-                                      </p>
-                                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                                        {act.summary}
-                                      </p>
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  {`Konfirmasi Semua (${pendingActions.length} Aksi${
+                                    pendingTotal > 0
+                                      ? ` · Rp ${pendingTotal.toLocaleString('id-ID')}`
+                                      : ''
+                                  })`}
+                                </button>
+                              )}
+                              {msg.proposed_actions.map((act) => {
+                                const status = actionStates[act.id] || 'idle';
+                                if (status === 'dismissed') return null;
+                                return (
+                                  <div
+                                    key={act.id}
+                                    className="rounded-xl border border-indigo-200 dark:border-indigo-800/70 bg-white dark:bg-slate-900 p-2.5 space-y-2 shadow-sm"
+                                  >
+                                    <div className="flex items-start gap-2">
+                                      <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
+                                      <div className="min-w-0">
+                                        <p className="text-xs font-bold text-slate-900 dark:text-white">
+                                          {act.title}
+                                        </p>
+                                        <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                          {act.summary}
+                                        </p>
+                                      </div>
                                     </div>
+                                    {status === 'done' ? (
+                                      <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
+                                        <CheckCircle2 className="w-3.5 h-3.5" />
+                                        Berhasil dijalankan
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-1.5">
+                                        <button
+                                          type="button"
+                                          disabled={status === 'running'}
+                                          onClick={() => void handleExecuteAction(act)}
+                                          className="flex-1 inline-flex items-center justify-center gap-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 text-[11px] font-semibold disabled:opacity-50"
+                                        >
+                                          {status === 'running' ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <CheckCircle2 className="w-3 h-3" />
+                                          )}
+                                          Konfirmasi &amp; Jalankan
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={status === 'running'}
+                                          onClick={() =>
+                                            setActionStates((prev) => ({
+                                              ...prev,
+                                              [act.id]: 'dismissed',
+                                            }))
+                                          }
+                                          className="rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                          aria-label="Batalkan saran aksi"
+                                        >
+                                          <X className="w-3 h-3" />
+                                        </button>
+                                      </div>
+                                    )}
                                   </div>
-                                  {status === 'done' ? (
-                                    <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                                      <CheckCircle2 className="w-3.5 h-3.5" />
-                                      Berhasil dijalankan
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-1.5">
-                                      <button
-                                        type="button"
-                                        disabled={status === 'running'}
-                                        onClick={() => void handleExecuteAction(act)}
-                                        className="flex-1 inline-flex items-center justify-center gap-1 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white px-2.5 py-1.5 text-[11px] font-semibold disabled:opacity-50"
-                                      >
-                                        {status === 'running' ? (
-                                          <Loader2 className="w-3 h-3 animate-spin" />
-                                        ) : (
-                                          <CheckCircle2 className="w-3 h-3" />
-                                        )}
-                                        Konfirmasi &amp; Jalankan
-                                      </button>
-                                      <button
-                                        type="button"
-                                        disabled={status === 'running'}
-                                        onClick={() =>
-                                          setActionStates((prev) => ({
-                                            ...prev,
-                                            [act.id]: 'dismissed',
-                                          }))
-                                        }
-                                        className="rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
-                                        aria-label="Batalkan saran aksi"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       {msg.role === 'assistant' && msg.reason && (
                         <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700 mt-1.5">
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
