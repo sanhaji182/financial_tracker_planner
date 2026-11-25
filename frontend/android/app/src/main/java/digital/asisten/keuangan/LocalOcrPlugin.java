@@ -1284,6 +1284,16 @@ public class LocalOcrPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void checkAudioPermission(PluginCall call) {
+        boolean granted = getPermissionState("audio") == PermissionState.GRANTED
+                || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
+                        == PackageManager.PERMISSION_GRANTED;
+        JSObject ret = new JSObject();
+        ret.put("granted", granted);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void requestAudioPermission(PluginCall call) {
         if (getPermissionState("audio") == PermissionState.GRANTED
                 || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)
@@ -1329,6 +1339,40 @@ public class LocalOcrPlugin extends Plugin {
         JSObject ret = new JSObject();
         ret.put("granted", granted);
         call.resolve(ret);
+    }
+
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        android.content.Context ctx = getContext();
+        String pkg = ctx.getPackageName();
+        try {
+            android.content.Intent intent;
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                intent = new android.content.Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, pkg);
+            } else {
+                intent = new android.content.Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", pkg, null));
+            }
+            intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+            ctx.startActivity(intent);
+            JSObject ret = new JSObject();
+            ret.put("opened", true);
+            call.resolve(ret);
+        } catch (Exception e) {
+            try {
+                android.content.Intent fallback = new android.content.Intent(
+                        Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                        .setData(Uri.fromParts("package", pkg, null))
+                        .addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+                ctx.startActivity(fallback);
+                JSObject ret = new JSObject();
+                ret.put("opened", true);
+                call.resolve(ret);
+            } catch (Exception ex) {
+                call.reject("Gagal membuka pengaturan notifikasi: " + safeErrorMessage(ex));
+            }
+        }
     }
 
     private static String safeErrorMessage(Exception e) {

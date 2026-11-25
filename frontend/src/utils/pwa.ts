@@ -63,6 +63,14 @@ export async function requestProactiveNotificationPermission(): Promise<Notifica
   }
 }
 
+export async function openAppNotificationSettings(): Promise<boolean> {
+  if (!isNativeMobile()) {
+    return false;
+  }
+  const res = await localOcrBridge.openNotificationSettings();
+  return Boolean(res.opened);
+}
+
 export async function sendProactiveNotification(
   title: string,
   body: string,

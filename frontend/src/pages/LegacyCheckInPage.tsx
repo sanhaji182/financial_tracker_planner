@@ -36,6 +36,7 @@ import { loadLocalDB } from '../offline/storage';
 import { useAuthStore } from '../stores/authStore';
 import { toast } from '../stores/useToastStore';
 import { isLocalOfflineMode } from '../utils/appMode';
+import { requestProactiveNotificationPermission } from '../utils/pwa';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { PageHeader } from '../components/ui/PageHeader';
@@ -238,6 +239,14 @@ export const LegacyCheckInPage: React.FC = () => {
         plaintext_summary_note: plaintextSummaryNote.trim(),
       });
       syncFromResponse(updated);
+      if (nextEnabled) {
+        const perm = await requestProactiveNotificationPermission();
+        if (perm === 'denied') {
+          toast.info(
+            'Izin notifikasi perangkat belum aktif. Aktifkan di Pengaturan HP agar pengingat jadwal check-in muncul.'
+          );
+        }
+      }
       toast.success(
         nextEnabled
           ? 'Check-In Darurat & Wasiat Digital aktif! Paket terenkripsi tersimpan.'

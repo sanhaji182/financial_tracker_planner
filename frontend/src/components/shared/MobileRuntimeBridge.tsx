@@ -16,6 +16,7 @@ import { sendProactiveNotification } from '../../utils/pwa';
 import { toast } from '../../stores/useToastStore';
 import {
   hideNativeSplash,
+  isNativeMobile,
   minimizeOrExitNativeApp,
   registerNativeBackButton,
   syncStatusBarWithTheme,
@@ -37,6 +38,26 @@ export const MobileRuntimeBridge: React.FC = () => {
   useEffect(() => {
     void syncStatusBarWithTheme(useThemeStore.getState().theme);
     void hideNativeSplash();
+    if (!isNativeMobile()) {
+      return;
+    }
+    try {
+      const key = 'kb_native_perm_bootstrapped_v1';
+      if (window.localStorage.getItem(key) !== '1') {
+        window.localStorage.setItem(key, '1');
+        void localOcrBridge
+          .checkNotificationPermission()
+          .then((res) => {
+            if (!res.granted) {
+              return localOcrBridge.requestNotificationPermission();
+            }
+            return res;
+          })
+          .catch(() => undefined);
+      }
+    } catch {
+      // ignore storage access issues on restricted webviews
+    }
   }, []);
 
   const dispatchQuickAction = useCallback(

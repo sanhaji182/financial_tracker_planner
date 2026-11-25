@@ -5,6 +5,7 @@ import { AppShell } from './components/layout/AppShell';
 import { ProtectedRoute } from './components/shared/ProtectedRoute';
 import { OfflineBanner } from './components/shared/OfflineBanner';
 import { MobileRuntimeBridge } from './components/shared/MobileRuntimeBridge';
+import { PermissionSetupModal } from './components/shared/PermissionSetupModal';
 import { AppLockGate } from './components/shared/AppLockGate';
 import { ErrorBoundary } from './components/shared/ErrorBoundary';
 import { Toaster } from './components/ui/Toaster';
@@ -305,6 +306,7 @@ const App: React.FC = () => {
 
         <Toaster />
         <AppLockGate />
+        <PermissionSetupModal />
         <React.Suspense fallback={null}>
           <AdvisorChatDrawer />
         </React.Suspense>

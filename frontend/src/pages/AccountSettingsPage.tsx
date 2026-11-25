@@ -51,9 +51,11 @@ import {
   getNotificationPermissionStatus,
   isIosDevice,
   isStandalonePwa,
+  openAppNotificationSettings,
   requestProactiveNotificationPermission,
   sendProactiveNotification,
 } from '../utils/pwa';
+import { isNativeMobile } from '../utils/mobile';
 import { clearClientDiagnostics, getClientDiagnostics } from '../utils/telemetry';
 import { ONBOARDING_DONE_KEY, OnboardingWizardModal } from '../components/modals/OnboardingWizardModal';
 import { toast } from '../stores/useToastStore';
@@ -948,7 +950,7 @@ export const AccountSettingsPage: React.FC = () => {
                     Kirim pengingat proaktif saat ada tagihan jatuh tempo atau anomali anggaran.
                   </p>
                 </div>
-                <div className="flex gap-1.5 shrink-0">
+                <div className="flex flex-wrap gap-1.5 shrink-0">
                   <Button
                     type="button"
                     size="sm"
@@ -961,6 +963,23 @@ export const AccountSettingsPage: React.FC = () => {
                   >
                     Izinkan
                   </Button>
+                  {isNativeMobile() && notifPerm !== 'granted' && (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="secondary"
+                      onClick={async () => {
+                        const opened = await openAppNotificationSettings();
+                        if (!opened) {
+                          toast.info(
+                            'Buka Pengaturan HP > Aplikasi > Keuangan Bersama untuk mengaktifkan notifikasi.'
+                          );
+                        }
+                      }}
+                    >
+                      Pengaturan HP
+                    </Button>
+                  )}
                   <Button
                     type="button"
                     size="sm"

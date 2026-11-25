@@ -83,7 +83,9 @@ export interface LocalOcrPlugin {
   consumePendingQuickAction?(): Promise<{ action: string | null }>;
   checkNotificationPermission?(): Promise<{ granted: boolean }>;
   requestNotificationPermission?(): Promise<{ granted: boolean }>;
+  checkAudioPermission?(): Promise<{ granted: boolean }>;
   requestAudioPermission?(): Promise<{ granted: boolean }>;
+  openNotificationSettings?(): Promise<{ opened: boolean }>;
   consumePendingNotificationRoute?(): Promise<{ route: string | null }>;
   scheduleLegacyCheckInReminder?(options: {
     enabled: boolean;
@@ -280,6 +282,16 @@ export const localOcrBridge = {
       return { granted: false };
     }
   },
+  checkAudioPermission: async (): Promise<{ granted: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.checkAudioPermission) {
+      return { granted: true };
+    }
+    try {
+      return await LocalOcr.checkAudioPermission();
+    } catch {
+      return { granted: false };
+    }
+  },
   requestAudioPermission: async (): Promise<{ granted: boolean }> => {
     if (!hasNativeLocalOcrPlugin() || !LocalOcr.requestAudioPermission) {
       return { granted: true };
@@ -288,6 +300,16 @@ export const localOcrBridge = {
       return await LocalOcr.requestAudioPermission();
     } catch {
       return { granted: false };
+    }
+  },
+  openNotificationSettings: async (): Promise<{ opened: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.openNotificationSettings) {
+      return { opened: false };
+    }
+    try {
+      return await LocalOcr.openNotificationSettings();
+    } catch {
+      return { opened: false };
     }
   },
   consumePendingNotificationRoute: async (): Promise<{ route: string | null }> => {
@@ -337,7 +359,11 @@ export const localOcrBridge = {
     if (!hasNativeLocalOcrPlugin()) {
       return { remove: () => {} };
     }
-    return LocalOcr.addListener('notificationRouteReceived', listener);
+    try {
+      return await LocalOcr.addListener('notificationRouteReceived', listener);
+    } catch {
+      return { remove: () => {} };
+    }
   },
   addQuickActionListener: async (
     listener: (data: { action: string }) => void
@@ -345,7 +371,11 @@ export const localOcrBridge = {
     if (!hasNativeLocalOcrPlugin()) {
       return { remove: () => {} };
     }
-    return LocalOcr.addListener('quickActionReceived', listener);
+    try {
+      return await LocalOcr.addListener('quickActionReceived', listener);
+    } catch {
+      return { remove: () => {} };
+    }
   },
 };
 

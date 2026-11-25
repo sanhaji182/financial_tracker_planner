@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Capacitor } from '@capacitor/core';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -12,7 +13,10 @@ import {
   hasSensitiveCredentialPattern,
 } from '../offline/legacyCrypto';
 import { legacyCheckinService } from '../services/legacyCheckin';
+import { localOcrBridge } from '../offline/nativeOcr';
 import { LegacyCheckInBanner } from '../components/shared/LegacyCheckInBanner';
+import { MobileRuntimeBridge } from '../components/shared/MobileRuntimeBridge';
+import { PermissionSetupModal } from '../components/shared/PermissionSetupModal';
 import { LegacyCheckInPage } from '../pages/LegacyCheckInPage';
 import { LegacyClaimPage } from '../pages/LegacyClaimPage';
 import { useAuthStore } from '../stores/authStore';
@@ -161,6 +165,106 @@ describe('Legacy Check-In & Dead Man Switch', () => {
     await user.click(screen.getByRole('button', { name: /Check-In Sekarang/i }));
     await waitFor(() => {
       expect(screen.getByText(/Check-In Wasiat Digital Aktif/i)).toBeInTheDocument();
+    });
+  });
+
+  it('auto-prompts notification permission on first native open via MobileRuntimeBridge', async () => {
+    vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    vi.spyOn(localOcrBridge, 'consumePendingQuickAction').mockResolvedValue({ action: null });
+    vi.spyOn(localOcrBridge, 'consumePendingNotificationRoute').mockResolvedValue({ route: null });
+    vi.spyOn(localOcrBridge, 'addQuickActionListener').mockResolvedValue({ remove: () => {} });
+    vi.spyOn(localOcrBridge, 'addNotificationRouteListener').mockResolvedValue({ remove: () => {} });
+    vi.spyOn(localOcrBridge, 'addCapturedNotificationsListener').mockResolvedValue({
+      remove: () => {},
+    });
+    const checkNotifSpy = vi
+      .spyOn(localOcrBridge, 'checkNotificationPermission')
+      .mockResolvedValue({ granted: false });
+    const reqNotifSpy = vi
+      .spyOn(localOcrBridge, 'requestNotificationPermission')
+      .mockResolvedValue({ granted: true });
+
+    const firstMount = render(
+      <MemoryRouter>
+        <MobileRuntimeBridge />
+      </MemoryRouter>
+    );
+
+    await waitFor(() => {
+      expect(checkNotifSpy).toHaveBeenCalledTimes(1);
+      expect(reqNotifSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(window.localStorage.getItem('kb_native_perm_bootstrapped_v1')).toBe('1');
+    firstMount.unmount();
+
+    const secondMount = render(
+      <MemoryRouter>
+        <MobileRuntimeBridge />
+      </MemoryRouter>
+    );
+    await waitFor(() => {
+      expect(reqNotifSpy).toHaveBeenCalledTimes(1);
+    });
+    secondMount.unmount();
+  });
+
+  it('shows PermissionSetupModal on native mobile when permissions are missing and falls back to settings if denied', async () => {
+    vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    vi.spyOn(localOcrBridge, 'checkNotificationPermission').mockResolvedValue({ granted: false });
+    vi.spyOn(localOcrBridge, 'checkAudioPermission').mockResolvedValue({ granted: false });
+    const reqNotifSpy = vi
+      .spyOn(localOcrBridge, 'requestNotificationPermission')
+      .mockResolvedValue({ granted: false });
+    const reqAudioSpy = vi
+      .spyOn(localOcrBridge, 'requestAudioPermission')
+      .mockResolvedValue({ granted: true });
+    const openSettingsSpy = vi
+      .spyOn(localOcrBridge, 'openNotificationSettings')
+      .mockResolvedValue({ opened: true });
+
+    const user = userEvent.setup();
+    render(<PermissionSetupModal />);
+
+    expect(await screen.findByText(/Aktifkan Izin Aplikasi/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /Aktifkan Izin Sekarang/i }));
+    await waitFor(() => {
+      expect(reqNotifSpy).toHaveBeenCalledTimes(1);
+      expect(reqAudioSpy).toHaveBeenCalledTimes(1);
+      expect(screen.getByRole('button', { name: /Buka Pengaturan HP/i })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole('button', { name: /Buka Pengaturan HP/i }));
+    expect(openSettingsSpy).toHaveBeenCalledTimes(1);
+
+    await user.click(screen.getByRole('button', { name: /Nanti Saja/i }));
+    expect(window.localStorage.getItem('kb_perms_primer_done_v1')).toBe('1');
+  });
+
+  it('automatically requests native notification permission when enabling Check-In Darurat', async () => {
+    vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    const reqNotifSpy = vi
+      .spyOn(localOcrBridge, 'requestNotificationPermission')
+      .mockResolvedValue({ granted: true });
+
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <LegacyCheckInPage />
+      </MemoryRouter>
+    );
+
+    expect(await screen.findByText(/Wasiat Digital & Check-In Darurat/i)).toBeInTheDocument();
+    await user.type(screen.getByPlaceholderText(/Nama Lengkap Ahli Waris/i), 'Rani');
+    await user.type(screen.getByPlaceholderText(/Email Aktif/i), 'rani@keluarga.id');
+    await user.click(screen.getByRole('button', { name: /Simpan Daftar Ahli Waris/i }));
+    await user.type(screen.getByLabelText(/Pesan Wasiat/i), 'Catatan aset keluarga');
+    await user.type(screen.getByLabelText(/Kunci Wasiat untuk Mengenkripsi Paket/i), 'wasiat-aman-77');
+
+    await user.click(screen.getByRole('button', { name: /Simpan & Aktifkan Check-In/i }));
+
+    await waitFor(() => {
+      expect(reqNotifSpy).toHaveBeenCalledTimes(1);
     });
   });
 });
