@@ -732,6 +732,25 @@ export const AccountSettingsPage: React.FC = () => {
                   </Button>
                 </div>
               </div>
+
+              {user?.role === 'owner' && (
+                <div className="rounded-xl border border-indigo-200/70 dark:border-indigo-900/50 bg-indigo-50/40 dark:bg-indigo-950/20 p-3 flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-semibold text-slate-800 dark:text-slate-100 text-xs">
+                      Wasiat Digital &amp; Check-In Darurat
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Jadwalkan check-in otomatis + pengiriman peta aset ke ahli waris via Email/Telegram.
+                    </p>
+                  </div>
+                  <Link
+                    to="/legacy-checkin"
+                    className="inline-flex items-center gap-1 rounded-lg bg-indigo-600 text-white px-3 py-1.5 text-xs font-semibold hover:bg-indigo-700 shrink-0"
+                  >
+                    Buka Pengaturan
+                  </Link>
+                </div>
+              )}
             </div>
           </div>
         </section>

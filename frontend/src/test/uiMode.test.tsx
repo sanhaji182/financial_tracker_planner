@@ -113,12 +113,13 @@ describe('Simple vs Advanced UI Mode', () => {
     const ownerSimpleItems = getNavGroupsForRole('owner', 'simple').flatMap((g) => g.items);
     const ownerAdvancedItems = getNavGroupsForRole('owner', 'advanced').flatMap((g) => g.items);
 
-    expect(ownerSimpleItems).toHaveLength(12);
+    expect(ownerSimpleItems).toHaveLength(13);
     expect(ownerSimpleItems.map((i) => i.name)).toContain('Hub Finansial ID');
+    expect(ownerSimpleItems.map((i) => i.name)).toContain('Wasiat & Check-In');
     expect(ownerSimpleItems.map((i) => i.name)).not.toContain('Audit Trail');
     expect(ownerSimpleItems.map((i) => i.name)).not.toContain('Simulasi What-If');
     expect(ownerSimpleItems.map((i) => i.name)).not.toContain('Forecast Cashflow');
-    expect(ownerAdvancedItems).toHaveLength(29);
+    expect(ownerAdvancedItems).toHaveLength(30);
     expect(getHiddenAdvancedCount('owner')).toBe(17);
 
     const spouseSimpleItems = getNavGroupsForRole('spouse_viewer', 'simple').flatMap((g) => g.items);

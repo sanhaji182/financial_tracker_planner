@@ -92,6 +92,7 @@ export const OWNER_NAV_GROUPS: NavGroup[] = [
       { name: 'Document Center', path: '/documents', icon: FileText, tier: 'advanced', keywords: 'berkas struk sertifikat arsip' },
       { name: 'Jurnal Keluarga', path: '/journal', icon: BookOpen, tier: 'advanced', keywords: 'catatan keputusan finansial' },
       { name: 'Agenda Checklist', path: '/tasks', icon: CheckSquare, tier: 'advanced', keywords: 'tugas pajak pbb asuransi' },
+      { name: 'Wasiat & Check-In', path: '/legacy-checkin', icon: ShieldCheck, tier: 'simple', keywords: 'wasiat dead man switch check-in darurat ahli waris' },
     ],
   },
   {
@@ -265,6 +266,8 @@ const ROUTE_TITLES: Array<{ match: (pathname: string, search: string) => boolean
   { match: (p) => p.startsWith('/privacy'), title: 'Kebijakan Privasi' },
   { match: (p) => p.startsWith('/review'), title: 'Review Bulanan' },
   { match: (p) => p.startsWith('/protection'), title: 'Proteksi Rumah Tangga' },
+  { match: (p) => p.startsWith('/legacy-checkin'), title: 'Wasiat Digital & Check-In' },
+  { match: (p) => p.startsWith('/legacy-claim'), title: 'Portal Klaim Wasiat' },
   { match: (p) => p.startsWith('/retirement'), title: 'Perencanaan Pensiun' },
   { match: (p) => p.startsWith('/data-quality'), title: 'Data Quality Center' },
   { match: (p) => p.startsWith('/settings/automation'), title: 'Aturan Otomatis' },

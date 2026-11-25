@@ -11,6 +11,7 @@ import {
 import { loadLocalDB } from '../../offline/storage';
 import { runProactiveWatchdog } from '../../offline/proactiveWatchdog';
 import { approvalsService } from '../../services/approvals';
+import { legacyCheckinService } from '../../services/legacyCheckin';
 import { sendProactiveNotification } from '../../utils/pwa';
 import { toast } from '../../stores/useToastStore';
 import {
@@ -147,6 +148,30 @@ export const MobileRuntimeBridge: React.FC = () => {
         const lastRun = Number(window.localStorage.getItem(WATCHDOG_NOTIF_COOLDOWN_KEY) || '0');
         if (Date.now() - lastRun < 30 * 60 * 1000) return;
         window.localStorage.setItem(WATCHDOG_NOTIF_COOLDOWN_KEY, String(Date.now()));
+
+        const legacyStatus = await legacyCheckinService.getStatus().catch(() => null);
+        if (
+          legacyStatus?.config?.enabled &&
+          !legacyStatus.config.is_paused &&
+          legacyStatus.config.status !== 'paused' &&
+          legacyStatus.config.status !== 'triggered'
+        ) {
+          const isGrace = legacyStatus.config.status === 'grace_period';
+          const nextDueMs = legacyStatus.config.next_due_at
+            ? Date.parse(legacyStatus.config.next_due_at)
+            : 0;
+          const dueWithin24h = nextDueMs > 0 && nextDueMs - Date.now() <= 24 * 3600 * 1000;
+          if (isGrace || (!legacyStatus.checked_in_today && dueWithin24h)) {
+            await sendProactiveNotification(
+              isGrace ? '⚠️ Check-In Wasiat Terlewati!' : '⏰ Pengingat Check-In Darurat Hari Ini',
+              isGrace
+                ? 'Anda memasuki Masa Tenggang Wasiat Digital. Ketuk untuk Check-In sekarang.'
+                : 'Anda belum Check-In hari ini. Ketuk untuk reset timer Wasiat Digital.',
+              '/legacy-checkin'
+            );
+            return;
+          }
+        }
 
         const pendingApprovals = await approvalsService.listApprovals('pending').catch(() => []);
         if (pendingApprovals.length > 0) {

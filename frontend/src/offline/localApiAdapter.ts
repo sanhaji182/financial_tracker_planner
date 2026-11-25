@@ -43,6 +43,7 @@ import {
   tryDirectVisionJson,
 } from './nativeOcr';
 import { handleAiAgentRoutes } from './handlers/aiAgentHandler';
+import { handleLegacyRoutes } from './handlers/legacyHandler';
 import { handlePlanningRoutes } from './handlers/planningHandler';
 import { handleSyncRoutes } from './handlers/syncHandler';
 import type { LocalHandlerContext, LocalHandlerHelpers } from './handlers/types';
@@ -900,6 +901,9 @@ export async function handleLocalApiRequest(config: AxiosRequestConfig): Promise
 
   const syncRes = handleSyncRoutes(handlerCtx, handlerHelpers);
   if (syncRes) return syncRes;
+
+  const legacyRes = handleLegacyRoutes(handlerCtx, handlerHelpers);
+  if (legacyRes) return legacyRes;
 
   const aiRes = handleAiAgentRoutes(handlerCtx, handlerHelpers);
   if (aiRes) return aiRes;

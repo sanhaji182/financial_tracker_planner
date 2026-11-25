@@ -85,6 +85,13 @@ export interface LocalOcrPlugin {
   requestNotificationPermission?(): Promise<{ granted: boolean }>;
   requestAudioPermission?(): Promise<{ granted: boolean }>;
   consumePendingNotificationRoute?(): Promise<{ route: string | null }>;
+  scheduleLegacyCheckInReminder?(options: {
+    enabled: boolean;
+    paused: boolean;
+    nextDueEpochMs: number;
+    reminderHour: number;
+    lastCheckinDay: string;
+  }): Promise<{ scheduled: boolean }>;
   showLocalNotification?(options: {
     title: string;
     body: string;
@@ -291,6 +298,22 @@ export const localOcrBridge = {
       return await LocalOcr.consumePendingNotificationRoute();
     } catch {
       return { route: null };
+    }
+  },
+  scheduleLegacyCheckInReminder: async (options: {
+    enabled: boolean;
+    paused: boolean;
+    nextDueEpochMs: number;
+    reminderHour: number;
+    lastCheckinDay: string;
+  }): Promise<{ scheduled: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.scheduleLegacyCheckInReminder) {
+      return { scheduled: false };
+    }
+    try {
+      return await LocalOcr.scheduleLegacyCheckInReminder(options);
+    } catch {
+      return { scheduled: false };
     }
   },
   showLocalNotification: async (options: {

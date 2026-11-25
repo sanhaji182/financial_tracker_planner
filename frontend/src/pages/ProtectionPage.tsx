@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { AlertTriangle, HeartPulse, Users, Info, Save, Loader2 } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, HeartPulse, Users, Info, Save, Loader2, ShieldCheck, ArrowRight } from 'lucide-react';
 import protectionService, {
   type ProtectionAssessment,
   type UpdateProtectionProfilePayload,
@@ -305,6 +306,27 @@ export const ProtectionPage: React.FC = () => {
                 </div>
               )}
             </form>
+          </Card>
+
+          {/* Legacy Check-In Cross-Link */}
+          <Card className="p-4 border-indigo-200/80 dark:border-indigo-900/60 bg-indigo-50/50 dark:bg-indigo-950/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex items-start gap-2.5">
+              <ShieldCheck className="w-5 h-5 text-indigo-600 shrink-0 mt-0.5" />
+              <div className="text-xs">
+                <p className="font-bold text-slate-900 dark:text-white">
+                  Wasiat Digital &amp; Check-In Darurat (Dead Man&apos;s Switch)
+                </p>
+                <p className="text-slate-600 dark:text-slate-300 mt-0.5">
+                  Atur check-in harian/mingguan dan kirim otomatis peta rekening &amp; aset terenkripsi ke ahli waris via Email/Telegram bila terjadi kondisi darurat.
+                </p>
+              </div>
+            </div>
+            <Link
+              to="/legacy-checkin"
+              className="inline-flex items-center gap-1.5 rounded-xl bg-indigo-600 text-white px-3.5 py-2 text-xs font-semibold hover:bg-indigo-700 shrink-0"
+            >
+              Atur Wasiat &amp; Check-In <ArrowRight className="w-3.5 h-3.5" />
+            </Link>
           </Card>
 
           {/* Disclaimer */}

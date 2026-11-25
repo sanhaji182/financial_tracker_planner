@@ -14,6 +14,7 @@ import { Button } from '../components/ui/Button';
 import { StatCard } from '../components/ui/StatCard';
 import { MetricHelp } from '../components/ui/MetricHelp';
 import { JointApprovalInboxCard } from '../components/shared/JointApprovalInboxCard';
+import { LegacyCheckInBanner } from '../components/shared/LegacyCheckInBanner';
 import { ONBOARDING_DONE_KEY, OnboardingWizardModal } from '../components/modals/OnboardingWizardModal';
 import {
   TrendingUp,
@@ -507,6 +508,9 @@ export const DashboardPage: React.FC = () => {
 
       {/* Real-Time Joint Spending Approvals (only renders if pending approvals exist) */}
       <JointApprovalInboxCard />
+
+      {/* Dead Man's Switch Quick Check-In Banner (renders when enabled for owner) */}
+      <LegacyCheckInBanner />
 
       {/* Row 1 — Top Summary Bar */}
       <div

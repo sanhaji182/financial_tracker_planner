@@ -62,6 +62,8 @@ const AISettingsPage = React.lazy(() => import('./pages/AISettingsPage'));
 const PrivacyPolicyPage = React.lazy(() => import('./pages/PrivacyPolicyPage').then(m => ({ default: m.PrivacyPolicyPage })));
 const AccountSettingsPage = React.lazy(() => import('./pages/AccountSettingsPage').then(m => ({ default: m.AccountSettingsPage })));
 const IndonesiaWealthPage = React.lazy(() => import('./pages/IndonesiaWealthPage').then(m => ({ default: m.IndonesiaWealthPage })));
+const LegacyCheckInPage = React.lazy(() => import('./pages/LegacyCheckInPage').then(m => ({ default: m.LegacyCheckInPage })));
+const LegacyClaimPage = React.lazy(() => import('./pages/LegacyClaimPage').then(m => ({ default: m.LegacyClaimPage })));
 const AdvisorChatDrawer = React.lazy(() => import('./components/drawers/AdvisorChatDrawer').then(m => ({ default: m.AdvisorChatDrawer })));
 
 const queryClient = new QueryClient({
@@ -167,6 +169,7 @@ const App: React.FC = () => {
             <Route path="/register" element={<RegisterPage />} />
             <Route path="/register-spouse/:token" element={<RegisterSpousePage />} />
             <Route path="/privacy" element={<PrivacyPolicyPage />} />
+            <Route path="/legacy-claim/:token" element={<LegacyClaimPage />} />
 
             {/* Protected Main App Layout */}
             <Route
@@ -244,6 +247,14 @@ const App: React.FC = () => {
               <Route path="insights" element={<InsightsPage />} />
               <Route path="scenarios" element={<ScenariosPage />} />
               <Route path="protection" element={<ProtectionPage />} />
+              <Route
+                path="legacy-checkin"
+                element={
+                  <ProtectedRoute allowedRoles={['owner']}>
+                    <LegacyCheckInPage />
+                  </ProtectedRoute>
+                }
+              />
               <Route path="retirement" element={<RetirementPage />} />
               <Route path="review" element={<MonthlyReviewPage />} />
               <Route
