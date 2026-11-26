@@ -5,7 +5,10 @@ import type {
   UpdateAISettingsRequest,
 } from '../../services/aiSettings';
 import { getCurrentLocalMonth, getTodayLocalDate } from '../../utils/date';
-import { parseIndonesianFinancialCommands } from '../../utils/indonesianNlpParser';
+import {
+  mergeIndonesianFollowUp,
+  parseIndonesianFinancialCommands,
+} from '../../utils/indonesianNlpParser';
 import { runProactiveWatchdog } from '../proactiveWatchdog';
 import { formatRupiah, monthKeyOf, saveLocalDB, uid } from '../storage';
 import type { LocalHandlerContext, LocalHandlerHelpers } from './types';
@@ -81,20 +84,12 @@ export function handleAiAgentRoutes(
     }>(config.data);
     let message = String(body.message || '').trim();
     const history = Array.isArray(body.history) ? body.history : [];
-    if (/^(ubah|ganti|revisi|jadikan|jadi|pakai|pake|via)\b/i.test(message) && history.length > 0) {
+    if (history.length > 0) {
       const prevUser = [...history].reverse().find((t) => t.role === 'user' && t.content);
       if (prevUser) {
-        const hasNewAmount = /(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:jt|juta|m|rb|ribu|k)?\b/i.test(
-          message
-        );
-        if (hasNewAmount) {
-          const strippedPrev = prevUser.content
-            .replace(/(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:jt|juta|m|rb|ribu|k)?\b/gi, '')
-            .replace(/\s+/g, ' ')
-            .trim();
-          message = `${strippedPrev} ${message}`;
-        } else {
-          message = `${prevUser.content} ${message}`;
+        const merged = mergeIndonesianFollowUp(message, prevUser.content);
+        if (merged) {
+          message = merged;
         }
       }
     }
@@ -131,6 +126,7 @@ export function handleAiAgentRoutes(
             response: `Siap! Saya sudah menyiapkan draf pencatatan ${txCommands[0].type === 'income' ? 'pemasukan' : 'pengeluaran'} sebesar ${formatRupiah(txCommands[0].amount || 0)} untuk "${txCommands[0].description}"${txCommands[0].txDate && txCommands[0].txDate !== today ? ` (tanggal ${txCommands[0].txDate})` : ''}. Ketuk Konfirmasi di bawah untuk menyimpan.`,
             reason: 'agentic-nlp-on-device',
             proposed_actions: actions,
+            suggested_replies: ['Cek kuota jajan harian bulan ini', 'Cek sisa anggaran kategori', 'Bagaimana kondisi keuangan bulan ini?'],
           },
         });
       }
@@ -139,14 +135,15 @@ export function handleAiAgentRoutes(
       const itemLines = txCommands
         .map(
           (item, i) =>
-            `${i + 1}. ${item.description} — ${formatRupiah(item.amount || 0)} (${item.accountName || 'Rekening'})`
+            `${i + 1}. ${item.description} (${item.type === 'income' ? '+' : '-'}${formatRupiah(item.amount || 0)}) — ${item.accountName || 'Rekening'}`
         )
         .join('\n');
       return makeOk(config, {
         data: {
-          response: `Siap! Saya sudah memisahkan ${actions.length} draf transaksi dengan total ${formatRupiah(totalAmount)}:\n${itemLines}\n\nKetuk "Konfirmasi Semua" atau konfirmasi per item di bawah.`,
+          response: `Siap! Saya sudah memisahkan ${actions.length} draf transaksi dengan total ${formatRupiah(totalAmount)}:\n${itemLines}\n\nKetuk "Konfirmasi Semua", edit detail per kartu, atau konfirmasi satu per satu di bawah.`,
           reason: 'agentic-nlp-on-device-multi',
           proposed_actions: actions,
+          suggested_replies: ['Cek sisa anggaran bulan ini', 'Cek kuota jajan harian'],
         },
       });
     }
@@ -158,24 +155,26 @@ export function handleAiAgentRoutes(
       parsed.accountId &&
       parsed.targetAccountId
     ) {
+      const trfDate = parsed.txDate || today;
       const action: AgenticAction = {
         id: uid('act'),
         type: 'create_transfer',
         title: `Transfer ${parsed.accountName || 'Sumber'} → ${parsed.targetAccountName || 'Tujuan'}`,
-        summary: `Nominal ${formatRupiah(parsed.amount)} pada ${today}`,
+        summary: `Nominal ${formatRupiah(parsed.amount)} pada ${trfDate}`,
         payload: {
           source_account_id: parsed.accountId,
           target_account_id: parsed.targetAccountId,
           amount: parsed.amount,
-          date: today,
+          date: trfDate,
           notes: 'Transfer via AI Advisor',
         },
       };
       return makeOk(config, {
         data: {
-          response: `Saya siapkan draf transfer ${formatRupiah(parsed.amount)} dari ${parsed.accountName} ke ${parsed.targetAccountName}. Konfirmasi jika nominal & rekening sudah sesuai.`,
+          response: `Saya siapkan draf transfer ${formatRupiah(parsed.amount)} dari ${parsed.accountName} ke ${parsed.targetAccountName}${trfDate !== today ? ` (tanggal ${trfDate})` : ''}. Konfirmasi jika nominal & rekening sudah sesuai.`,
           reason: 'agentic-transfer-on-device',
           proposed_actions: [action],
+          suggested_replies: ['Saldo rekening saya sekarang berapa?', 'Cek tagihan bulan ini'],
         },
       });
     }
@@ -198,6 +197,7 @@ export function handleAiAgentRoutes(
           response: `Siap menetapkan batas anggaran kategori ${parsed.categoryName} bulan ${month} menjadi ${formatRupiah(parsed.amount)}. Silakan konfirmasi di kartu aksi.`,
           reason: 'agentic-budget-on-device',
           proposed_actions: [action],
+          suggested_replies: ['Cek pengeluaran terbesar bulan ini', 'Cek anomali pengeluaran'],
         },
       });
     }
@@ -221,11 +221,12 @@ export function handleAiAgentRoutes(
           response: `Saya siapkan target keuangan baru "${parsed.description}" dengan target ${formatRupiah(parsed.amount)}. Konfirmasi untuk membuat target.`,
           reason: 'agentic-goal-on-device',
           proposed_actions: [action],
+          suggested_replies: ['Bagaimana progres target tabungan saya?', 'Berapa dana darurat saya sekarang?'],
         },
       });
     }
 
-    // 5. What-If simulation check
+    // 5. What-If simulation check with verdict
     if (parsed.intent === 'what_if' && parsed.monthlyCommitAmount) {
       const extraCommit = parsed.monthlyCommitAmount;
       const monthTxs = db.transactions.filter((t) => monthKeyOf(t.date) === month);
@@ -245,20 +246,151 @@ export function handleAiAgentRoutes(
             )
           : 0;
       const remainingSurplus = netSurplus - extraCommit;
+      const verdict =
+        remainingSurplus < 0
+          ? 'BERISIKO DEFISIT (pengeluaran melampaui pemasukan bulanan)'
+          : newDti > 30 || projectedEfMonths < 3
+            ? 'KETAT (DTI atau dana darurat tertekan, pangkas pos non-esensial dulu)'
+            : 'AMAN (surplus positif dan DTI masih dalam batas sehat)';
 
       const reply = [
-        `Simulasi What-If komitmen baru ${formatRupiah(extraCommit)}/bulan:`,
-        `• Cakupan Dana Darurat berubah dari ${ef.coverage_months} bulan → ${projectedEfMonths} bulan (${projectedEfMonths >= 6 ? 'Aman ≥ 6 bln' : 'Perlu waspada < 6 bln'}).`,
-        `• Estimasi DTI baru: ~${newDti}% (${newDti <= 30 ? 'Dalam batas aman OJK ≤30%' : 'Melebihi batas aman 30%'}).`,
-        `• Sisa surplus bulanan estimasi: ${formatRupiah(remainingSurplus)}.`,
+        `Simulasi What-If komitmen baru ${formatRupiah(extraCommit)}/bulan — Status: **${verdict}**`,
+        `• Surplus bulanan: ${formatRupiah(netSurplus)} → **${formatRupiah(remainingSurplus)}**.`,
+        `• Cakupan Dana Darurat: ${ef.coverage_months} bulan → **${projectedEfMonths} bulan** (${projectedEfMonths >= 6 ? 'Aman ≥ 6 bln' : 'Perlu waspada < 6 bln'}).`,
+        `• Estimasi DTI baru: **~${newDti}%** (${newDti <= 30 ? 'Dalam batas aman ≤30%' : 'Melebihi batas aman 30%'}).`,
       ].join('\n');
 
       return makeOk(config, {
-        data: { response: reply, reason: 'local-what-if-simulation' },
+        data: {
+          response: reply,
+          reason: 'local-what-if-simulation',
+          suggested_replies: ['Strategi melunasi utang lebih cepat?', 'Cek pengeluaran terbesar bulan ini'],
+        },
       });
     }
 
-    // 6. Upcoming bills inquiry
+    // 6. Daily budget quota & cash runway until end of month
+    if (
+      /\b(cukup\s+(?:sampai|hingga)|kuota\s+harian|sehari\s+(?:boleh|maks|bisa)|jajan\s+harian|batas\s+harian|runway|sisa\s+hari|aman\s+sampai)\b/i.test(
+        message
+      )
+    ) {
+      const nowDate = new Date();
+      const daysElapsed = Math.max(1, nowDate.getDate());
+      const daysInMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0).getDate();
+      const daysLeft = Math.max(1, daysInMonth - nowDate.getDate() + 1);
+      const monthExpenses = db.transactions.filter(
+        (t) => t.type === 'expense' && monthKeyOf(t.date) === month
+      );
+      const monthSpent = monthExpenses.reduce((s, t) => s + t.amount, 0);
+      const dailyBurn = Math.round(monthSpent / daysElapsed);
+      const safeToSpend = Math.max(0, dash.safe_to_spend.value);
+      const dailyQuota = Math.round(safeToSpend / daysLeft);
+      const projectedSpendLeft = dailyBurn * daysLeft;
+      const gap = safeToSpend - projectedSpendLeft;
+
+      const reply = [
+        `Analisis Kuota Harian & Ketahanan Kas (${daysLeft} hari tersisa bulan ini):`,
+        `• **Kuota aman per hari**: **${formatRupiah(dailyQuota)}/hari** (dari Safe-to-Spend **${dash.safe_to_spend.formatted_value}**).`,
+        `• **Rata-rata belanja aktual**: **${formatRupiah(dailyBurn)}/hari** (total bulan ini ${formatRupiah(monthSpent)}).`,
+        gap >= 0
+          ? `• Dengan ritme sekarang, saldo masih **cukup** sampai akhir bulan (estimasi sisa **${formatRupiah(gap)}**).`
+          : `• **Peringatan**: ritme saat ini berpotensi tekor **${formatRupiah(Math.abs(gap))}** sebelum tutup bulan — kurangi sekitar ${formatRupiah(Math.max(0, dailyBurn - dailyQuota))}/hari.`,
+      ].join('\n');
+
+      return makeOk(config, {
+        data: {
+          response: reply,
+          reason: 'local-daily-quota-runway',
+          suggested_replies: ['Pengeluaran terbesar bulan ini?', 'Bandingkan pengeluaran dengan bulan lalu'],
+        },
+      });
+    }
+
+    // 7. Month-over-month spending comparison
+    if (/\b(lebih\s+boros|banding(?:kan)?|bulan\s+lalu|dibanding|tren\s+pengeluaran)\b/i.test(message)) {
+      const nowDate = new Date();
+      const prevDate = new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1);
+      const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+      const curList = db.transactions.filter((t) => t.type === 'expense' && monthKeyOf(t.date) === month);
+      const prevList = db.transactions.filter((t) => t.type === 'expense' && monthKeyOf(t.date) === prevMonth);
+      const curSum = curList.reduce((s, t) => s + t.amount, 0);
+      const prevSum = prevList.reduce((s, t) => s + t.amount, 0);
+      const diff = curSum - prevSum;
+      const pctStr = prevSum > 0 ? `${diff >= 0 ? '+' : ''}${((diff / prevSum) * 100).toFixed(1)}%` : 'N/A';
+
+      const curCat = new Map<string, number>();
+      const prevCat = new Map<string, number>();
+      for (const tx of curList) curCat.set(tx.category_name || 'Lainnya', (curCat.get(tx.category_name || 'Lainnya') || 0) + tx.amount);
+      for (const tx of prevList) prevCat.set(tx.category_name || 'Lainnya', (prevCat.get(tx.category_name || 'Lainnya') || 0) + tx.amount);
+      const topSpike = [...curCat.entries()]
+        .map(([cat, v]) => ({ cat, delta: v - (prevCat.get(cat) || 0), cur: v }))
+        .sort((a, b) => b.delta - a.delta)[0];
+
+      const reply = [
+        `Perbandingan Pengeluaran **${month}** vs **${prevMonth}**:`,
+        `• Bulan ini: **${formatRupiah(curSum)}** • Bulan lalu: **${formatRupiah(prevSum)}** (${pctStr}).`,
+        prevSum === 0
+          ? '• Belum ada data transaksi bulan lalu untuk pembanding penuh.'
+          : diff > 0
+            ? `• Pengeluaran naik **${formatRupiah(diff)}** dibanding bulan lalu.`
+            : `• Pengeluaran lebih hemat **${formatRupiah(Math.abs(diff))}** dibanding bulan lalu.`,
+        topSpike && topSpike.delta > 0
+          ? `• Kenaikan terbesar di pos **${topSpike.cat}** (+${formatRupiah(topSpike.delta)}).`
+          : '',
+      ]
+        .filter(Boolean)
+        .join('\n');
+
+      return makeOk(config, {
+        data: {
+          response: reply,
+          reason: 'local-mom-comparison',
+          suggested_replies: ['Cek kuota jajan harian bulan ini', 'Cek anomali pengeluaran'],
+        },
+      });
+    }
+
+    // 8. 50/30/20 allocation & personalized optimization plan
+    if (
+      /\b(atur\s+(?:gaji|uang|keuangan|alokasi)|alokasi\s+(?:gaji|keuangan|50\s*\/\s*30\s*\/\s*20)|50\s*\/\s*30\s*\/\s*20|rencana\s+keuangan|evaluasi\s+keuangan|tips\s+hemat)\b/i.test(
+        message
+      )
+    ) {
+      const monthTxs = db.transactions.filter((t) => monthKeyOf(t.date) === month);
+      const income = monthTxs.filter((t) => t.type === 'income').reduce((s, t) => s + t.amount, 0);
+      const refIncome = income > 0 ? income : Math.max(dash.cash_available.value, 5_000_000);
+      const needsTarget = Math.round(refIncome * 0.5);
+      const wantsTarget = Math.round(refIncome * 0.3);
+      const saveTarget = Math.round(refIncome * 0.2);
+      const highInterestDebt = [...db.debts]
+        .filter((d) => d.status === 'active')
+        .sort((a, b) => (b.interest_rate || 0) - (a.interest_rate || 0))[0];
+      const priorityAdvice =
+        ef.coverage_months < 3
+          ? `1. **Prioritas #1 (Dana Darurat)**: saat ini baru **${ef.coverage_months} bulan** — alihkan mayoritas porsi tabungan (**${formatRupiah(saveTarget)}/bln**) sampai minimal 3 bulan aman.`
+          : highInterestDebt && (highInterestDebt.interest_rate || 0) >= 12
+            ? `1. **Prioritas #1 (Bebas Utang Bunga Tinggi)**: percepat pelunasan **${highInterestDebt.name}** (bunga ${highInterestDebt.interest_rate}%) memakai porsi akselerasi bulanan.`
+            : `1. **Prioritas #1 (Investasi & Goal)**: fondasi sudah sehat (${ef.coverage_months} bln dana darurat), rutinkan auto-debet **${formatRupiah(saveTarget)}/bln** ke instrumen produktif.`;
+
+      const reply = [
+        `Panduan Alokasi 50/30/20 (acuan pemasukan **${formatRupiah(refIncome)}**):`,
+        `• **50% Kebutuhan Pokok & Tagihan**: maks **${formatRupiah(needsTarget)}**`,
+        `• **30% Gaya Hidup & Jajan**: maks **${formatRupiah(wantsTarget)}**`,
+        `• **20% Tabungan, Dana Darurat & Akselerasi Utang**: **${formatRupiah(saveTarget)}**`,
+        priorityAdvice,
+      ].join('\n');
+
+      return makeOk(config, {
+        data: {
+          response: reply,
+          reason: 'local-503020-planner',
+          suggested_replies: ['Cek kuota jajan harian bulan ini', 'Bagaimana progres target tabungan saya?'],
+        },
+      });
+    }
+
+    // 9. Upcoming bills inquiry
     if (/\b(tagihan|bill|jatuh\s*tempo|bayar\s+bulan)\b/i.test(message)) {
       const unpaidBills = db.bills
         .filter((b) => b.status !== 'paid' && b.status !== 'cancelled')
@@ -281,11 +413,15 @@ export function handleAiAgentRoutes(
             ].join('\n\n')
           : 'Tidak ada tagihan aktif yang menunggu pembayaran saat ini.';
       return makeOk(config, {
-        data: { response: reply, reason: 'local-bills-analysis' },
+        data: {
+          response: reply,
+          reason: 'local-bills-analysis',
+          suggested_replies: ['Cek kuota jajan harian bulan ini', 'Saldo rekening saya sekarang berapa?'],
+        },
       });
     }
 
-    // 7. Debt payoff strategy (Avalanche vs Snowball)
+    // 10. Debt payoff strategy (Avalanche vs Snowball)
     if (/\b(utang|hutang|cicilan|kredit|pinjaman|avalanche|snowball|lunas)\b/i.test(message)) {
       const activeDebts = db.debts.filter((d) => d.status === 'active');
       if (activeDebts.length === 0) {
@@ -293,6 +429,7 @@ export function handleAiAgentRoutes(
           data: {
             response: 'Tidak ada utang aktif yang tercatat saat ini. Anda bisa memfokuskan surplus ke Dana Darurat dan Investasi.',
             reason: 'local-debt-analysis',
+            suggested_replies: ['Atur alokasi keuangan 50/30/20', 'Bagaimana progres target tabungan saya?'],
           },
         });
       }
@@ -318,11 +455,15 @@ export function handleAiAgentRoutes(
         `• **Snowball (cepat lunas 1 pos)**: dahulukan **${snowball[0].name}** (${formatRupiah(snowball[0].outstanding_balance)}).`,
       ].join('\n\n');
       return makeOk(config, {
-        data: { response: reply, reason: 'local-debt-avalanche-snowball' },
+        data: {
+          response: reply,
+          reason: 'local-debt-avalanche-snowball',
+          suggested_replies: ['Simulasi cicil 1jt/bulan aman?', 'Atur alokasi keuangan 50/30/20'],
+        },
       });
     }
 
-    // 8. Account balances & Safe-to-Spend breakdown
+    // 11. Account balances & Safe-to-Spend breakdown
     if (/\b(saldo|rekening|dompet|kas|uang\s+saya)\b/i.test(message)) {
       const activeAccs = db.accounts.filter((a) => a.is_active);
       const lines = activeAccs
@@ -334,11 +475,15 @@ export function handleAiAgentRoutes(
         `Kas likuid total: **${dash.cash_available.formatted_value}** • Safe-to-Spend: **${dash.safe_to_spend.formatted_value}**.`,
       ].join('\n\n');
       return makeOk(config, {
-        data: { response: reply, reason: 'local-accounts-snapshot' },
+        data: {
+          response: reply,
+          reason: 'local-accounts-snapshot',
+          suggested_replies: ['Cek kuota jajan harian bulan ini', 'Tagihan bulan ini apa saja?'],
+        },
       });
     }
 
-    // 9. Savings goals progress
+    // 12. Savings goals progress
     if (/\b(target|goal|impian|tabungan)\b/i.test(message)) {
       const activeGoals = db.goals.filter((g) => g.status === 'active');
       const goalLines = activeGoals.slice(0, 6).map((g) => {
@@ -349,13 +494,17 @@ export function handleAiAgentRoutes(
       const reply =
         goalLines.length > 0
           ? [`Progres Target Tabungan Anda:`, goalLines.join('\n')].join('\n\n')
-          : 'Belum ada target tabungan aktif. Ketik misalnya `"Buat target dana liburan 10jt"` untuk membuatnya.';
+          : 'Belum ada target tabungan aktif. Ketik misalnya "Buat target dana liburan 10jt" untuk membuatnya.';
       return makeOk(config, {
-        data: { response: reply, reason: 'local-goals-progress' },
+        data: {
+          response: reply,
+          reason: 'local-goals-progress',
+          suggested_replies: ['Atur alokasi keuangan 50/30/20', 'Cek kuota jajan harian bulan ini'],
+        },
       });
     }
 
-    // 10. Analytical query, keyword spending lookup, budgets & proactive anomaly inspection
+    // 13. Analytical query, keyword spending lookup, budgets & proactive anomaly inspection
     if (/anomali|boros|hemat|pengeluaran|anggaran|budget|habis|berapa|cek/i.test(message)) {
       const watchdog = runProactiveWatchdog(db);
       const monthExpenses = db.transactions.filter(
@@ -426,7 +575,13 @@ export function handleAiAgentRoutes(
           : 'Tidak ada anomali anggaran atau transaksi ganda terdeteksi.',
       ];
 
-      return makeOk(config, { data: { response: parts.join('\n\n'), reason: 'local-watchdog-analysis' } });
+      return makeOk(config, {
+        data: {
+          response: parts.join('\n\n'),
+          reason: 'local-watchdog-analysis',
+          suggested_replies: ['Bandingkan pengeluaran dengan bulan lalu', 'Cek kuota jajan harian bulan ini'],
+        },
+      });
     }
 
     const topDebt = [...db.debts]
@@ -441,10 +596,16 @@ export function handleAiAgentRoutes(
       topDebt
         ? `• Prioritas pelunasan: **${topDebt.name}** (sisa ${topDebt.formatted_outstanding}${topDebt.interest_rate ? `, bunga ${topDebt.interest_rate}%` : ''}).`
         : '• Tidak ada utang aktif tercatat.',
-      'Tip: Anda bisa mengetik "beli kopi 10rb, susu 6rb dan warteg 5rb", "Tagihan bulan ini", "Strategi utang", atau "Simulasi cicilan 3jt/bln".',
+      'Tip: Anda bisa mengetik "beli kopi 10rb, susu 6rb dan warteg 5rb", "Kuota jajan harian?", "Bandingkan bulan lalu", atau "Simulasi cicilan 3jt/bln".',
     ].join('\n');
 
-    return makeOk(config, { data: { response: summaryReply, reason: 'local-offline-analysis' } });
+    return makeOk(config, {
+      data: {
+        response: summaryReply,
+        reason: 'local-offline-analysis',
+        suggested_replies: ['Cek kuota jajan harian bulan ini', 'Tagihan bulan ini apa saja?', 'Bandingkan pengeluaran dengan bulan lalu'],
+      },
+    });
   }
 
   return null;

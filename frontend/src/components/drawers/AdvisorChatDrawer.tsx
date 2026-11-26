@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot, Send, Loader2, ChevronDown, MessageSquare, CheckCircle2, Sparkles, X, Radio } from 'lucide-react';
+import { Bot, Send, Loader2, ChevronDown, MessageSquare, CheckCircle2, Sparkles, X, Radio, Pencil } from 'lucide-react';
 import { aiSettingsService, type AISettings, type AgenticAction, type AIChatTurn } from '../../services/aiSettings';
 import { isAudioRecordingSupported, VoiceNoteRecorder } from '../../utils/voiceRecorder';
 import { transactionsService, type CreateTransactionRequest } from '../../services/transactions';
@@ -18,6 +18,7 @@ interface ChatMessage {
   text: string;
   reason?: string;
   proposed_actions?: AgenticAction[];
+  suggested_replies?: string[];
 }
 
 function renderInlineMarkdown(text: string): React.ReactNode[] {
@@ -113,7 +114,65 @@ export const AdvisorChatDrawer: React.FC = () => {
   const [actionStates, setActionStates] = useState<
     Record<string, 'idle' | 'running' | 'done' | 'dismissed'>
   >({});
+  const [editingActionId, setEditingActionId] = useState<string | null>(null);
+  const [editAmountText, setEditAmountText] = useState('');
+  const [editDescText, setEditDescText] = useState('');
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const handleStartEditAction = (act: AgenticAction) => {
+    const p = act.payload as { amount?: number; target_amount?: number; description?: string; name?: string };
+    const amt = act.type === 'create_goal' ? p.target_amount : p.amount;
+    setEditingActionId(act.id);
+    setEditAmountText(amt ? String(Math.round(Number(amt))) : '');
+    setEditDescText(String(p.description || p.name || ''));
+  };
+
+  const handleSaveEditAction = (msgIndex: number, actionId: string) => {
+    const parsedAmt = Math.round(Number(editAmountText.replace(/[^\d]/g, '')));
+    if (!Number.isFinite(parsedAmt) || parsedAmt <= 0) {
+      toast.error('Nominal harus lebih dari 0');
+      return;
+    }
+    const cleanDesc = editDescText.trim();
+    setMessages((prev) =>
+      prev.map((m, idx) => {
+        if (idx !== msgIndex || !m.proposed_actions) return m;
+        return {
+          ...m,
+          proposed_actions: m.proposed_actions.map((act) => {
+            if (act.id !== actionId) return act;
+            const nextPayload = { ...act.payload };
+            let nextTitle = act.title;
+            if (act.type === 'create_goal') {
+              nextPayload.target_amount = parsedAmt;
+              if (cleanDesc) {
+                nextPayload.name = cleanDesc;
+                nextTitle = `Buat Target: ${cleanDesc}`;
+              }
+            } else {
+              nextPayload.amount = parsedAmt;
+              if (act.type === 'create_transaction' && cleanDesc) {
+                nextPayload.description = cleanDesc;
+                const prefix = nextPayload.type === 'income' ? 'Catat Pemasukan' : 'Catat Pengeluaran';
+                nextTitle = `${prefix}: ${cleanDesc}`;
+              }
+            }
+            const formatted = `Rp ${parsedAmt.toLocaleString('id-ID')}`;
+            const restSummary = act.summary.includes('•')
+              ? ` • ${act.summary.split('•').slice(1).join('•').trim()}`
+              : '';
+            return {
+              ...act,
+              title: nextTitle,
+              summary: `${formatted}${restSummary}`,
+              payload: nextPayload,
+            };
+          }),
+        };
+      })
+    );
+    setEditingActionId(null);
+  };
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const voiceRecorderRef = useRef<VoiceNoteRecorder | null>(null);
   const voiceSupported = isAudioRecordingSupported();
@@ -223,6 +282,7 @@ export const AdvisorChatDrawer: React.FC = () => {
               ...prevMsg,
               reason: meta.reason ?? prevMsg.reason,
               proposed_actions: meta.proposed_actions ?? prevMsg.proposed_actions,
+              suggested_replies: meta.suggested_replies ?? prevMsg.suggested_replies,
             }));
           },
           onDelta: (chunk) => {
@@ -238,6 +298,7 @@ export const AdvisorChatDrawer: React.FC = () => {
               text: prevMsg.text || finalRes.response,
               reason: finalRes.reason || prevMsg.reason,
               proposed_actions: finalRes.proposed_actions ?? prevMsg.proposed_actions,
+              suggested_replies: finalRes.suggested_replies ?? prevMsg.suggested_replies,
             }));
           },
         });
@@ -249,6 +310,7 @@ export const AdvisorChatDrawer: React.FC = () => {
           text: result.response,
           reason: result.reason,
           proposed_actions: result.proposed_actions,
+          suggested_replies: result.suggested_replies,
         }));
       }
     } catch {
@@ -526,9 +588,10 @@ export const AdvisorChatDrawer: React.FC = () => {
                                   })`}
                                 </button>
                               )}
-                              {msg.proposed_actions.map((act) => {
+                               {msg.proposed_actions.map((act) => {
                                 const status = actionStates[act.id] || 'idle';
                                 if (status === 'dismissed') return null;
+                                const isEditing = editingActionId === act.id;
                                 return (
                                   <div
                                     key={act.id}
@@ -536,7 +599,7 @@ export const AdvisorChatDrawer: React.FC = () => {
                                   >
                                     <div className="flex items-start gap-2">
                                       <Sparkles className="w-3.5 h-3.5 text-indigo-600 dark:text-indigo-400 shrink-0 mt-0.5" />
-                                      <div className="min-w-0">
+                                      <div className="min-w-0 flex-1">
                                         <p className="text-xs font-bold text-slate-900 dark:text-white">
                                           {act.title}
                                         </p>
@@ -545,7 +608,45 @@ export const AdvisorChatDrawer: React.FC = () => {
                                         </p>
                                       </div>
                                     </div>
-                                    {status === 'done' ? (
+                                    {isEditing ? (
+                                      <div className="space-y-1.5 pt-1 border-t border-slate-100 dark:border-slate-800">
+                                        {(act.type === 'create_transaction' || act.type === 'create_goal') && (
+                                          <input
+                                            type="text"
+                                            aria-label="Deskripsi aksi AI"
+                                            value={editDescText}
+                                            onChange={(e) => setEditDescText(e.target.value)}
+                                            placeholder="Deskripsi"
+                                            className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs text-slate-900 dark:text-white"
+                                          />
+                                        )}
+                                        <input
+                                          type="number"
+                                          min="1"
+                                          aria-label="Nominal aksi AI"
+                                          value={editAmountText}
+                                          onChange={(e) => setEditAmountText(e.target.value)}
+                                          placeholder="Nominal (Rp)"
+                                          className="w-full rounded-lg border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 px-2 py-1 text-xs text-slate-900 dark:text-white"
+                                        />
+                                        <div className="flex items-center gap-1.5">
+                                          <button
+                                            type="button"
+                                            onClick={() => handleSaveEditAction(idx, act.id)}
+                                            className="flex-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-2.5 py-1 text-[11px] font-semibold"
+                                          >
+                                            Simpan Perubahan
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setEditingActionId(null)}
+                                            className="rounded-lg border border-slate-200 dark:border-slate-700 px-2.5 py-1 text-[11px] text-slate-600 dark:text-slate-300"
+                                          >
+                                            Batal
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : status === 'done' ? (
                                       <div className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
                                         <CheckCircle2 className="w-3.5 h-3.5" />
                                         Berhasil dijalankan
@@ -564,6 +665,16 @@ export const AdvisorChatDrawer: React.FC = () => {
                                             <CheckCircle2 className="w-3 h-3" />
                                           )}
                                           Konfirmasi &amp; Jalankan
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={status === 'running'}
+                                          onClick={() => handleStartEditAction(act)}
+                                          className="rounded-lg border border-slate-200 dark:border-slate-700 p-1.5 text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800"
+                                          aria-label="Edit aksi AI"
+                                          title="Edit nominal/deskripsi"
+                                        >
+                                          <Pencil className="w-3 h-3" />
                                         </button>
                                         <button
                                           type="button"
@@ -594,6 +705,24 @@ export const AdvisorChatDrawer: React.FC = () => {
                           </p>
                         </div>
                       )}
+                      {msg.role === 'assistant' &&
+                        idx === messages.length - 1 &&
+                        !isLoading &&
+                        Array.isArray(msg.suggested_replies) &&
+                        msg.suggested_replies.length > 0 && (
+                          <div className="flex flex-wrap gap-1.5 pt-1.5">
+                            {msg.suggested_replies.slice(0, 3).map((chip) => (
+                              <button
+                                key={chip}
+                                type="button"
+                                onClick={() => void handleSendMessage(chip)}
+                                className="text-[11px] px-2.5 py-1 rounded-full bg-white/90 dark:bg-slate-900 border border-indigo-200/80 dark:border-indigo-800 text-indigo-700 dark:text-indigo-300 hover:bg-indigo-50 dark:hover:bg-indigo-950/40 transition-colors"
+                              >
+                                {chip}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                     </div>
                   </div>
                 ))}

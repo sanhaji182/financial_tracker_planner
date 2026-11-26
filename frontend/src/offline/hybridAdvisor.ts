@@ -142,10 +142,26 @@ function buildLocalFinancialContextText(db: LocalDatabase, today: string): strin
       .map((g) => `${g.name}: ${formatRupiah(g.current_amount)}/${formatRupiah(g.target_amount)}`)
       .join('; ') || 'Belum ada';
 
+  const nowDate = new Date();
+  const prevDate = new Date(nowDate.getFullYear(), nowDate.getMonth() - 1, 1);
+  const prevMonth = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, '0')}`;
+  const curMonthExpenses = db.transactions
+    .filter((t) => t.type === 'expense' && monthKeyOf(t.date) === month)
+    .reduce((s, t) => s + t.amount, 0);
+  const prevMonthExpenses = db.transactions
+    .filter((t) => t.type === 'expense' && monthKeyOf(t.date) === prevMonth)
+    .reduce((s, t) => s + t.amount, 0);
+  const daysElapsed = Math.max(1, nowDate.getDate());
+  const daysInMonth = new Date(nowDate.getFullYear(), nowDate.getMonth() + 1, 0).getDate();
+  const daysLeft = Math.max(1, daysInMonth - nowDate.getDate() + 1);
+  const dailySafeQuota = Math.round(Math.max(0, dash.safe_to_spend.value) / daysLeft);
+  const dailyBurn = Math.round(curMonthExpenses / daysElapsed);
+
   return [
-    `Tanggal Hari Ini: ${today}`,
+    `Tanggal Hari Ini: ${today} (sisa ${daysLeft} hari di bulan ini)`,
     `Kekayaan Bersih: ${dash.net_worth.formatted_value}`,
-    `Kas Likuid Tersedia: ${dash.cash_available.formatted_value} (Safe-to-Spend: ${dash.safe_to_spend.formatted_value})`,
+    `Kas Likuid Tersedia: ${dash.cash_available.formatted_value} (Safe-to-Spend: ${dash.safe_to_spend.formatted_value}, kuota harian ~${formatRupiah(dailySafeQuota)}/hari)`,
+    `Pengeluaran Bulan Ini: ${formatRupiah(curMonthExpenses)} (rata-rata ${formatRupiah(dailyBurn)}/hari) vs Bulan Lalu ${formatRupiah(prevMonthExpenses)}`,
     `Total Utang Aktif: ${dash.total_debts.formatted_total_outstanding} (Rasio DTI: ${dash.dti_ratio}%)`,
     `Skor Kesehatan: ${dash.health_score.score}/100 (${dash.health_score.rating})`,
     `Dana Darurat: ${ef.total_emergency_fund.formatted_value} / ${ef.target_amount.formatted_value} (${ef.coverage_months} bulan)`,
@@ -232,9 +248,15 @@ function parseHybridAdvisorResponse(
         ? parsedActions
         : fallbackActions;
 
+  const suggestedReplies =
+    finalActions.length > 0
+      ? ['Cek sisa anggaran makan', 'Tagihan bulan ini apa saja?']
+      : ['Cek kuota jajan harian bulan ini', 'Bandingkan pengeluaran vs bulan lalu', 'Tagihan jatuh tempo dekat'];
+
   return {
     response: mainResponse,
     reason,
+    suggested_replies: suggestedReplies,
     ...(finalActions.length > 0 ? { proposed_actions: finalActions } : {}),
   };
 }

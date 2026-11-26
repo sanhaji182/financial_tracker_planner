@@ -193,3 +193,42 @@ def test_multi_item_transaction_splitting_and_llm_guardrail():
     )
     assert len(res_local["proposed_actions"]) == 3
     assert "21.000" in res_local["response"]
+
+    # V2: qty multiplication, slang, reverse transfer, mixed polarity & multi-turn follow-up
+    assert parse_indonesian_amount("2x 10rb") == 20_000
+    assert parse_indonesian_amount("goceng") == 5_000
+    assert parse_indonesian_amount("ceban") == 10_000
+
+    accounts_v2 = accounts + [{"id": "acc-gopay-v2", "name": "GoPay", "type": "e_wallet", "balance": 200_000}]
+    rev_transfer = parse_indonesian_action_commands(
+        "3 hari lalu topup GoPay 200rb dr BCA",
+        accounts_v2,
+        categories,
+    )
+    assert len(rev_transfer) == 1
+    assert rev_transfer[0]["type"] == "create_transfer"
+    assert rev_transfer[0]["payload"]["amount"] == 200_000
+    assert rev_transfer[0]["payload"]["source_account_id"] == "acc-bca"
+    assert rev_transfer[0]["payload"]["target_account_id"] == "acc-gopay"
+
+    mixed_actions = parse_indonesian_action_commands(
+        "gaji masuk 10jt ke BCA, bayar listrik 300rb, beli kopi 15rb",
+        accounts_v2,
+        categories,
+    )
+    assert len(mixed_actions) == 3
+    assert [item["payload"]["type"] for item in mixed_actions] == ["income", "expense", "expense"]
+    assert [item["payload"]["amount"] for item in mixed_actions] == [10_000_000, 300_000, 15_000]
+
+    followup_res = asyncio.run(
+        chat_advisor(
+            "yang kopi jadi 12rb",
+            {"dashboard": {}, "emergency_fund": {}, "budget": {}, "accounts": accounts, "categories": categories},
+            provider="local",
+            model_name="default",
+            api_key=None,
+            history=[{"role": "user", "content": "beli kopi 10rb, susu 6rb dan warteg 5rb"}],
+        )
+    )
+    assert len(followup_res["proposed_actions"]) == 3
+    assert [item["payload"]["amount"] for item in followup_res["proposed_actions"]] == [12_000, 6_000, 5_000]

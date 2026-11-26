@@ -47,6 +47,7 @@ export interface AIChatMessage {
   response: string;
   reason?: string;
   proposed_actions?: AgenticAction[];
+  suggested_replies?: string[];
 }
 
 export interface VoiceTranscribeResponse {
@@ -89,7 +90,11 @@ export const aiSettingsService = {
     message: string,
     history: AIChatTurn[],
     handlers: {
-      onMeta?: (meta: { reason?: string; proposed_actions?: AgenticAction[] }) => void;
+      onMeta?: (meta: {
+        reason?: string;
+        proposed_actions?: AgenticAction[];
+        suggested_replies?: string[];
+      }) => void;
       onDelta?: (chunk: string) => void;
       onDone?: (finalResult: AIChatMessage) => void;
     }
@@ -102,7 +107,11 @@ export const aiSettingsService = {
         if (hybridRes) return hybridRes;
       }
       const res = await aiSettingsService.chat(message, history);
-      handlers.onMeta?.({ reason: res.reason, proposed_actions: res.proposed_actions });
+      handlers.onMeta?.({
+        reason: res.reason,
+        proposed_actions: res.proposed_actions,
+        suggested_replies: res.suggested_replies,
+      });
       handlers.onDelta?.(res.response);
       handlers.onDone?.(res);
       return res;
@@ -123,7 +132,11 @@ export const aiSettingsService = {
 
       if (!resp.ok || !resp.body || typeof resp.body.getReader !== 'function') {
         const res = await aiSettingsService.chat(message, history);
-        handlers.onMeta?.({ reason: res.reason, proposed_actions: res.proposed_actions });
+        handlers.onMeta?.({
+          reason: res.reason,
+          proposed_actions: res.proposed_actions,
+          suggested_replies: res.suggested_replies,
+        });
         handlers.onDelta?.(res.response);
         handlers.onDone?.(res);
         return res;
@@ -135,6 +148,7 @@ export const aiSettingsService = {
       let accText = '';
       let reason = '';
       let proposedActions: AgenticAction[] | undefined;
+      let suggestedReplies: string[] | undefined;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -152,13 +166,19 @@ export const aiSettingsService = {
               type?: string;
               reason?: string;
               proposed_actions?: AgenticAction[];
+              suggested_replies?: string[];
               content?: string;
               message?: string;
             };
             if (evt.type === 'meta') {
-              reason = evt.reason || '';
-              proposedActions = evt.proposed_actions;
-              handlers.onMeta?.({ reason, proposed_actions: proposedActions });
+              if (evt.reason !== undefined) reason = evt.reason;
+              if (evt.proposed_actions !== undefined) proposedActions = evt.proposed_actions;
+              if (evt.suggested_replies !== undefined) suggestedReplies = evt.suggested_replies;
+              handlers.onMeta?.({
+                reason,
+                proposed_actions: proposedActions,
+                suggested_replies: suggestedReplies,
+              });
             } else if (evt.type === 'delta' && evt.content) {
               accText += evt.content;
               handlers.onDelta?.(evt.content);
@@ -177,12 +197,17 @@ export const aiSettingsService = {
         response: accText || 'Respons AI selesai.',
         reason,
         proposed_actions: proposedActions,
+        suggested_replies: suggestedReplies,
       };
       handlers.onDone?.(finalResult);
       return finalResult;
     } catch {
       const res = await aiSettingsService.chat(message, history);
-      handlers.onMeta?.({ reason: res.reason, proposed_actions: res.proposed_actions });
+      handlers.onMeta?.({
+        reason: res.reason,
+        proposed_actions: res.proposed_actions,
+        suggested_replies: res.suggested_replies,
+      });
       handlers.onDelta?.(res.response);
       handlers.onDone?.(res);
       return res;

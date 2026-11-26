@@ -30,6 +30,7 @@ import {
   pushEncryptedSync,
 } from '../offline/e2eeSync';
 import {
+  mergeIndonesianFollowUp,
   parseIndonesianFinancialCommand,
   parseIndonesianFinancialCommands,
   parseIndonesianSpokenAmount,
@@ -372,6 +373,131 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
 
     const kopiLookup = await aiSettingsService.chat('Habis berapa buat kopi bulan ini?');
     expect(kopiLookup.response).toMatch(/90\.000|Kopi/i);
+
+    // V2 NLP: qty multiplication, slang, reverse transfer, relative dates & mixed polarity
+    expect(parseIndonesianSpokenAmount('2x 10rb')).toBe(20_000);
+    expect(parseIndonesianSpokenAmount('goceng')).toBe(5_000);
+    expect(parseIndonesianSpokenAmount('ceban')).toBe(10_000);
+    expect(parseIndonesianSpokenAmount('gocap')).toBe(50_000);
+
+    const threeDaysAgo = new Date();
+    threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
+    const threeDaysAgoIso = `${threeDaysAgo.getFullYear()}-${String(threeDaysAgo.getMonth() + 1).padStart(2, '0')}-${String(threeDaysAgo.getDate()).padStart(2, '0')}`;
+
+    const v2Accounts = [
+      ...dbNow.accounts,
+      {
+        ...bca,
+        id: 'acc-gopay-v2',
+        name: 'GoPay',
+        bank_provider: 'GoPay',
+        balance: 200_000,
+      },
+    ];
+    const reverseTransfer = parseIndonesianFinancialCommands(
+      '3 hari lalu topup GoPay 200rb dr BCA',
+      v2Accounts,
+      dbNow.categories
+    );
+    expect(reverseTransfer).toHaveLength(1);
+    expect(reverseTransfer[0].intent).toBe('create_transfer');
+    expect(reverseTransfer[0].amount).toBe(200_000);
+    expect(reverseTransfer[0].txDate).toBe(threeDaysAgoIso);
+    expect(reverseTransfer[0].accountId).toBe(bca.id);
+    expect(reverseTransfer[0].targetAccountId).toBe('acc-gopay-v2');
+
+    const mixedPolarity = parseIndonesianFinancialCommands(
+      'gaji masuk 10jt ke BCA, bayar listrik 300rb dan beli kopi 15rb',
+      v2Accounts,
+      dbNow.categories
+    );
+    expect(mixedPolarity).toHaveLength(3);
+    expect(mixedPolarity.map((item) => item.type)).toEqual(['income', 'expense', 'expense']);
+    expect(mixedPolarity.map((item) => item.amount)).toEqual([10_000_000, 300_000, 15_000]);
+
+    // V2 conversational follow-up refinement
+    const editedFollowUp = mergeIndonesianFollowUp(
+      'yang kopi ubah jadi 12rb',
+      'beli kopi 10rb, susu 6rb dan warteg 5rb'
+    );
+    expect(editedFollowUp).toBeTruthy();
+    expect(
+      parseIndonesianFinancialCommands(editedFollowUp!, v2Accounts, dbNow.categories).map((x) => x.amount)
+    ).toEqual([12_000, 6_000, 5_000]);
+
+    const addedFollowUp = mergeIndonesianFollowUp(
+      'tambah teh 4rb',
+      'beli kopi 10rb, susu 6rb dan warteg 5rb'
+    );
+    expect(addedFollowUp).toBeTruthy();
+    expect(
+      parseIndonesianFinancialCommands(addedFollowUp!, v2Accounts, dbNow.categories).map((x) => x.amount)
+    ).toEqual([10_000, 6_000, 5_000, 4_000]);
+
+    const deletedFollowUp = mergeIndonesianFollowUp(
+      'hapus warteg',
+      'beli kopi 10rb, susu 6rb dan warteg 5rb'
+    );
+    expect(deletedFollowUp).toBeTruthy();
+    expect(
+      parseIndonesianFinancialCommands(deletedFollowUp!, v2Accounts, dbNow.categories).map((x) => x.amount)
+    ).toEqual([10_000, 6_000]);
+
+    // V2 Local Q&A + suggested_replies + What-If verdict
+    const quotaReply = await aiSettingsService.chat('Kuota jajan harian bulan ini?');
+    expect(quotaReply.response).toMatch(/Kuota|Harian|Runway|Burn/i);
+    expect(quotaReply.suggested_replies?.length).toBeGreaterThan(0);
+
+    const momReply = await aiSettingsService.chat('Bandingkan pengeluaran dengan bulan lalu');
+    expect(momReply.response).toMatch(/Bulan Lalu|Perbandingan/i);
+    expect(momReply.suggested_replies?.length).toBeGreaterThan(0);
+
+    const allocReply = await aiSettingsService.chat('Atur alokasi 50/30/20');
+    expect(allocReply.response).toMatch(/50%|Kebutuhan|30%/i);
+    expect(allocReply.suggested_replies?.length).toBeGreaterThan(0);
+
+    const whatIfReply = await aiSettingsService.chat('Simulasi cicil 3jt/bulan aman?');
+    expect(whatIfReply.response).toMatch(/AMAN|KETAT|BERISIKO DEFISIT/);
+    expect(whatIfReply.suggested_replies?.length).toBeGreaterThan(0);
+
+    // V2 UI: Inline quick-edit action card + clickable suggested reply chip
+    await user.clear(chatBox);
+    await user.type(chatBox, 'beli es teh 8rb pakai BCA');
+    await user.keyboard('{Enter}');
+    const editActionBtn = await screen.findByRole('button', { name: 'Edit aksi AI' });
+    await user.click(editActionBtn);
+
+    const amountInput = await screen.findByLabelText('Nominal aksi AI');
+    await user.clear(amountInput);
+    await user.type(amountInput, '10000');
+    await user.click(screen.getByRole('button', { name: /Simpan Perubahan/i }));
+
+    expect((await screen.findAllByText(/10\.000/)).length).toBeGreaterThanOrEqual(2);
+    const balanceBeforeEdit = (await accountsService.getAccount(bca.id)).balance;
+    const confirmBtns = screen.getAllByRole('button', { name: /Konfirmasi & Jalankan/i });
+    await user.click(confirmBtns[confirmBtns.length - 1]);
+
+    await waitFor(async () => {
+      const updatedBca = await accountsService.getAccount(bca.id);
+      expect(updatedBca.balance).toBe(balanceBeforeEdit - 10_000);
+    });
+
+    // Click rendered suggested reply chip and verify message sends
+    const suggestedChip = screen
+      .getAllByRole('button')
+      .find((btn) =>
+        /saldo rekening|kuota|banding|alokasi|ringkas|budget|tagihan|rekening|cek|anomali/i.test(
+          btn.textContent || ''
+        )
+      );
+    expect(suggestedChip).toBeDefined();
+    if (suggestedChip) {
+      const chipText = suggestedChip.textContent || '';
+      await user.click(suggestedChip);
+      await waitFor(() => {
+        expect(screen.getAllByText(chipText).length).toBeGreaterThanOrEqual(1);
+      });
+    }
   });
 
   // ---------------- TAHAP 4 ----------------

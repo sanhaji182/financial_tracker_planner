@@ -51,9 +51,10 @@ type AgenticActionDTO struct {
 }
 
 type AIChatResponse struct {
-	Response        string             `json:"response"`
-	Reason          string             `json:"reason"`
-	ProposedActions []AgenticActionDTO `json:"proposed_actions,omitempty"`
+	Response         string             `json:"response"`
+	Reason           string             `json:"reason"`
+	ProposedActions  []AgenticActionDTO `json:"proposed_actions,omitempty"`
+	SuggestedReplies []string           `json:"suggested_replies,omitempty"`
 }
 
 type AnomalyCheckResponse struct {

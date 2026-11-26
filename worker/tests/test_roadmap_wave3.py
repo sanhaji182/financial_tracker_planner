@@ -235,3 +235,157 @@ def test_advisor_rich_go_context_relative_dates_and_live_llm_streaming(monkeypat
     assert "Alasan:" not in delta_text
     assert any(f["type"] == "meta" and "DTI 18.5%" in f.get("reason", "") for f in live_frames)
     assert live_frames[-1]["type"] == "done"
+
+
+def test_smart_advisor_slang_mixed_polarity_reverse_transfer_and_followup():
+    from datetime import datetime, timedelta
+    import app.services.ai_service as ai_svc
+
+    accounts = [
+        {"id": "acc-bca", "name": "BCA Utama", "bank_provider": "BCA", "type": "bank", "balance": 15_000_000},
+        {"id": "acc-gopay", "name": "GoPay Harian", "bank_provider": "GoPay", "type": "e_wallet", "balance": 500_000},
+    ]
+    categories = [
+        {"id": "cat-makan", "name": "Makanan & Minuman", "type": "expense"},
+        {"id": "cat-gaji", "name": "Gaji & Bonus", "type": "income"},
+    ]
+
+    # Mixed income + multiple expenses in one prompt (must NOT leak income onto expenses)
+    mixed = ai_svc.parse_indonesian_action_commands(
+        "gaji masuk 10jt ke BCA, bayar kos 1,5jt, listrik 300rb dan beli kopi 15rb pakai GoPay",
+        accounts,
+        categories,
+    )
+    assert len(mixed) == 4
+    assert [m["payload"]["type"] for m in mixed] == ["income", "expense", "expense", "expense"]
+    assert [m["payload"]["amount"] for m in mixed] == [10_000_000, 1_500_000, 300_000, 15_000]
+
+    # Quantity multiplication, Indonesian slang, and "N hari lalu" date
+    three_days_ago = (datetime.now() - timedelta(days=3)).strftime("%Y-%m-%d")
+    slang_cmds = ai_svc.parse_indonesian_action_commands(
+        "3 hari lalu beli 2x kopi 10rb dan gorengan goceng pakai BCA",
+        accounts,
+        categories,
+    )
+    assert len(slang_cmds) == 2
+    assert [c["payload"]["amount"] for c in slang_cmds] == [20_000, 5_000]
+    assert slang_cmds[0]["payload"]["date"] == three_days_ago
+
+    # Reverse transfer wording ("topup gopay 200rb dr bca")
+    rev_trf = ai_svc.parse_indonesian_action_commands("topup gopay 200rb dr bca", accounts, categories)
+    assert len(rev_trf) == 1
+    assert rev_trf[0]["type"] == "create_transfer"
+    assert rev_trf[0]["payload"]["source_account_id"] == "acc-bca"
+    assert rev_trf[0]["payload"]["target_account_id"] == "acc-gopay"
+    assert rev_trf[0]["payload"]["amount"] == 200_000
+
+    # Targeted follow-up ("yang kopi jadi 12rb") keeps sibling items untouched
+    follow_res = asyncio.run(
+        ai_svc.chat_advisor(
+            message="yang kopi jadi 12rb",
+            context_data={"accounts": accounts, "categories": categories},
+            provider="local",
+            model_name="default",
+            api_key=None,
+            history=[{"role": "user", "content": "beli kopi 10rb, susu 6rb dan warteg 5rb"}],
+        )
+    )
+    assert len(follow_res["proposed_actions"]) == 3
+    assert [a["payload"]["amount"] for a in follow_res["proposed_actions"]] == [12_000, 6_000, 5_000]
+
+    # Daily quota & MoM spending comparison using spending_analytics
+    analytics_ctx = {
+        "dashboard": {
+            "cash_available": {"value": 10_000_000},
+            "safe_to_spend": {"value": 3_000_000},
+        },
+        "emergency_fund": {},
+        "budget": {"total_budget": {"value": 5_000_000}, "total_spent": {"value": 2_000_000}},
+        "spending_analytics": {
+            "current_month_expense": 2_400_000,
+            "prev_month_expense": 1_800_000,
+            "expense_change_pct": 33.3,
+            "daily_burn_rate": 120_000,
+            "remaining_days_in_month": 10,
+            "top_categories": [{"category": "Makanan & Minuman", "amount": 1_500_000}],
+        },
+        "accounts": accounts,
+        "categories": categories,
+    }
+    quota_res = asyncio.run(ai_svc.chat_advisor("Cek kuota harian cukup sampai akhir bulan?", analytics_ctx, "local", "default", None))
+    assert "300,000" in quota_res["response"]
+    assert quota_res.get("suggested_replies")
+
+    mom_res = asyncio.run(ai_svc.chat_advisor("Apakah bulan ini lebih boros dibanding bulan lalu?", analytics_ctx, "local", "default", None))
+    assert "naik" in mom_res["response"].lower()
+    assert "33.3%" in mom_res["response"]
+
+
+def test_advisor_v2_spending_analytics_and_suggested_replies():
+    import asyncio
+    import json
+    from app.services.ai_service import chat_advisor, stream_chat_advisor
+
+    rich_ctx = {
+        "dashboard": {
+            "total_liquid_cash": 6_000_000,
+            "monthly_income": 10_000_000,
+            "monthly_expense": 3_000_000,
+        },
+        "emergency_fund": {"ideal_amount": 18_000_000, "current_amount": 6_000_000},
+        "budget": {},
+        "accounts": [{"id": "acc-bca", "name": "BCA Utama", "type": "bank", "balance": 6_000_000}],
+        "categories": [{"id": "cat-makan", "name": "Makanan & Minuman", "type": "expense"}],
+        "spending_analytics": {
+            "current_month": "2026-11",
+            "current_month_expense": 3_000_000,
+            "prev_month_expense": 2_500_000,
+            "expense_change_pct": 20.0,
+            "daily_burn_rate": 120_000,
+            "remaining_days_in_month": 5,
+            "top_categories": [{"category": "Makanan & Minuman", "amount": 1_800_000}],
+        },
+    }
+
+    quota_res = asyncio.run(
+        chat_advisor(
+            "Kuota jajan harian bulan ini?",
+            rich_ctx,
+            provider="local",
+            model_name="default",
+            api_key=None,
+        )
+    )
+    assert "response" in quota_res and len(quota_res["response"]) > 20
+    assert quota_res.get("suggested_replies"), "Expected suggested_replies for quota question"
+
+    mom_res = asyncio.run(
+        chat_advisor(
+            "Bandingkan pengeluaran bulan lalu",
+            rich_ctx,
+            provider="local",
+            model_name="default",
+            api_key=None,
+        )
+    )
+    assert "2,500,000" in mom_res["response"] or "3,000,000" in mom_res["response"]
+    assert mom_res.get("suggested_replies"), "Expected suggested_replies for MoM question"
+
+    async def collect_meta():
+        meta_payload = None
+        async for chunk in stream_chat_advisor(
+            "Kuota jajan harian bulan ini?",
+            rich_ctx,
+            provider="local",
+            model_name="default",
+            api_key=None,
+        ):
+            for line in chunk.splitlines():
+                if line.startswith("data: "):
+                    data = json.loads(line[6:])
+                    if "suggested_replies" in data and data.get("type") in ("meta", "done", None):
+                        meta_payload = data
+        return meta_payload
+
+    meta = asyncio.run(collect_meta())
+    assert meta is not None and len(meta.get("suggested_replies", [])) > 0

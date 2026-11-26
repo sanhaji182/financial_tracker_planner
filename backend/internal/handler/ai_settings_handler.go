@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -260,8 +262,15 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 	}
 
 	var recentTransactions []map[string]interface{}
+	var spendingAnalytics map[string]interface{}
 	if h.txService != nil {
-		if txList, tErr := h.txService.GetTransactions(ctx, ownerID, map[string]interface{}{}, 1, 20, "date", "desc"); tErr == nil && txList != nil {
+		if txList, tErr := h.txService.GetTransactions(ctx, ownerID, map[string]interface{}{}, 1, 100, "date", "desc"); tErr == nil && txList != nil {
+			now := time.Now()
+			curMonthPrefix := now.Format("2006-01")
+			prevMonthPrefix := now.AddDate(0, -1, 0).Format("2006-01")
+			var curMonthExpense, prevMonthExpense float64
+			catTotals := make(map[string]float64)
+
 			for _, t := range txList.Data {
 				if sharedOnly && !allowedAccountIDs[t.AccountID] {
 					continue
@@ -274,18 +283,64 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 				if t.CategoryName != nil {
 					catName = *t.CategoryName
 				}
-				recentTransactions = append(recentTransactions, map[string]interface{}{
-					"id":            t.ID,
-					"date":          t.Date.Format("2006-01-02"),
-					"type":          t.Type,
-					"amount":        t.Amount,
-					"description":   desc,
-					"account_name":  t.AccountName,
-					"category_name": catName,
-				})
-				if len(recentTransactions) >= 15 {
-					break
+				dateStr := t.Date.Format("2006-01-02")
+				if len(recentTransactions) < 15 {
+					recentTransactions = append(recentTransactions, map[string]interface{}{
+						"id":            t.ID,
+						"date":          dateStr,
+						"type":          t.Type,
+						"amount":        t.Amount,
+						"description":   desc,
+						"account_name":  t.AccountName,
+						"category_name": catName,
+					})
 				}
+				if t.Type == "expense" {
+					if strings.HasPrefix(dateStr, curMonthPrefix) {
+						curMonthExpense += t.Amount
+						cname := catName
+						if cname == "" {
+							cname = "Lainnya"
+						}
+						catTotals[cname] += t.Amount
+					} else if strings.HasPrefix(dateStr, prevMonthPrefix) {
+						prevMonthExpense += t.Amount
+					}
+				}
+			}
+
+			daysElapsed := now.Day()
+			if daysElapsed < 1 {
+				daysElapsed = 1
+			}
+			daysInMonth := time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, now.Location()).Day()
+			remainingDays := daysInMonth - now.Day() + 1
+			if remainingDays < 1 {
+				remainingDays = 1
+			}
+			dailyBurn := curMonthExpense / float64(daysElapsed)
+			changePct := 0.0
+			if prevMonthExpense > 0 {
+				changePct = ((curMonthExpense - prevMonthExpense) / prevMonthExpense) * 100
+			}
+			topCats := make([]map[string]interface{}, 0, len(catTotals))
+			for name, total := range catTotals {
+				topCats = append(topCats, map[string]interface{}{"category": name, "amount": total})
+			}
+			sort.Slice(topCats, func(i, j int) bool {
+				return topCats[i]["amount"].(float64) > topCats[j]["amount"].(float64)
+			})
+			if len(topCats) > 5 {
+				topCats = topCats[:5]
+			}
+			spendingAnalytics = map[string]interface{}{
+				"current_month":           curMonthPrefix,
+				"current_month_expense":   curMonthExpense,
+				"prev_month_expense":      prevMonthExpense,
+				"expense_change_pct":      changePct,
+				"daily_burn_rate":         dailyBurn,
+				"remaining_days_in_month": remainingDays,
+				"top_categories":          topCats,
 			}
 		}
 	}
@@ -350,6 +405,7 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 		"accounts":            accountCatalog,
 		"categories":          categoryCatalog,
 		"recent_transactions": recentTransactions,
+		"spending_analytics":  spendingAnalytics,
 		"debts":               activeDebts,
 		"goals":               activeGoals,
 		"financial_guidance_policy": map[string]interface{}{

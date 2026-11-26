@@ -491,11 +491,31 @@ _SPOKEN_UNITS = {
 def parse_indonesian_amount(text: str) -> float:
     """
     Parses Indonesian spoken or shorthand monetary amounts:
-    e.g. '28rb', '1,5jt', '50k', 'Rp 150.000', 'seratus ribu', 'setengah juta'.
+    e.g. '28rb', '1,5jt', '50k', '2x 10rb', 'goceng', 'ceban', 'Rp 150.000', 'seratus ribu', 'setengah juta'.
     """
     if not text:
         return 0.0
     low = text.lower()
+
+    # 0. Explicit multiplication: "2x 10rb", "2x kopi 10rb", "3 x 6rb", "2 * Rp 15.000"
+    m_qty = re.search(
+        r"\b(\d{1,2})\s*(?:x|×|\*)\s*(?:(?:(?!\b(?:dan|atau|serta|pakai|pake|via|dr|dari|ke|lalu)\b)[a-z]+\s+){0,3})(?:rp\.?\s*)?(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|k)?\b",
+        low,
+    )
+    if m_qty:
+        qty = int(m_qty.group(1))
+        raw_base = m_qty.group(2).replace(",", ".")
+        if re.match(r"^\d{1,3}(?:\.\d{3})+$", m_qty.group(2)):
+            raw_base = m_qty.group(2).replace(".", "")
+        unit_q = m_qty.group(3) or ""
+        try:
+            base_q = float(raw_base)
+        except ValueError:
+            base_q = 0.0
+        mult_q = 1_000_000.0 if unit_q in ("jt", "juta") else (1_000.0 if unit_q in ("rb", "ribu", "k") else 1.0)
+        total_q = round(qty * base_q * mult_q)
+        if total_q >= 100:
+            return float(total_q)
 
     # 1. Explicit half-unit idioms
     if "setengah juta" in low:
@@ -526,7 +546,14 @@ def parse_indonesian_amount(text: str) -> float:
             mult = 1_000.0
         elif unit in ("m", "miliar", "milyar"):
             mult = 1_000_000_000.0
-        return round(base * mult)
+        first_val = round(base * mult)
+        if unit in ("jt", "juta"):
+            rem = low[m_mult.end():]
+            m_extra = re.match(r"^\s*(?:lebih\s+)?(\d+(?:[.,]\d+)?)\s*(ribu|rb|k)\b", rem)
+            if m_extra:
+                extra = float(m_extra.group(1).replace(",", ".")) * 1_000.0
+                return float(round(first_val + extra))
+        return float(first_val)
 
     # 3. Standard formatted rupiah / digits: Rp 150.000 / 75000
     m_std = re.search(r"(?:rp\.?\s*)(\d[\d.,]*)|(\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b)", low)
@@ -610,6 +637,20 @@ def parse_indonesian_amount(text: str) -> float:
         if matched_word_number and (total + current + pending) > 0:
             return float(total + current + pending)
 
+    # 5. Indonesian colloquial shorthand slang
+    if re.search(r"\bcepek\s*(?:rb|ribu|k)\b", low):
+        return 100_000.0
+    if re.search(r"\bgocap\b", low):
+        return 50_000.0
+    if re.search(r"\bnoban\b", low):
+        return 20_000.0
+    if re.search(r"\bceban\b", low):
+        return 10_000.0
+    if re.search(r"\bgoceng\b", low):
+        return 5_000.0
+    if re.search(r"\bseceng\b", low):
+        return 1_000.0
+
     return 0.0
 
 
@@ -666,11 +707,13 @@ def _resolve_category_from_text(
 
 
 _COMPOUND_MONEY_SPAN_RE = re.compile(
-    r"(?:(?:rp\.?|idr)\s*)?(?:"
+    r"(?:\b\d{1,2}\s*(?:x|×|\*)\s*(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:juta|jt|ribu|rb|k)?\b"
+    r"|(?:(?:rp\.?|idr)\s*)?(?:"
     r"\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt)\b(?:\s+(?:lebih\s+)?\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b)?"
     r"|\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b"
     r"|(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b"
-    r"|\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,10}\b)",
+    r"|\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,10}\b)"
+    r"|\b(?:seceng|goceng|ceban|noban|gocap|cepek\s*(?:rb|ribu|k))\b)",
     re.IGNORECASE,
 )
 
@@ -720,6 +763,13 @@ def _split_indonesian_transaction_clauses(text: str) -> List[str]:
 def extract_indonesian_relative_date(text: str) -> str:
     low = (text or "").lower()
     now = datetime.now()
+    m_ago = re.search(r"\b(\d{1,3})\s+hari\s+(?:(?:yang|yg)\s+)?lalu\b", low)
+    if m_ago:
+        offset = int(m_ago.group(1))
+        if 1 <= offset <= 365:
+            return (now - timedelta(days=offset)).strftime("%Y-%m-%d")
+    if re.search(r"\b(?:se)?(?:minggu|pekan)\s+(?:(?:yang|yg)\s+)?lalu\b", low):
+        return (now - timedelta(days=7)).strftime("%Y-%m-%d")
     if re.search(r"\bkemarin\s+lusa\b", low):
         return (now - timedelta(days=2)).strftime("%Y-%m-%d")
     if re.search(r"\bkemarin\b", low):
@@ -728,13 +778,27 @@ def extract_indonesian_relative_date(text: str) -> str:
         return (now + timedelta(days=2)).strftime("%Y-%m-%d")
     if re.search(r"\bbesok\b", low):
         return (now + timedelta(days=1)).strftime("%Y-%m-%d")
+    m_tgl = re.search(r"\b(?:tanggal|tgl)\s+(\d{1,2})\b", low)
+    if m_tgl:
+        day = int(m_tgl.group(1))
+        next_m = (now.replace(day=28) + timedelta(days=4)).replace(day=1)
+        max_day = (next_m - timedelta(days=1)).day
+        if 1 <= day <= max_day:
+            return f"{now.year:04d}-{now.month:02d}-{day:02d}"
     return now.strftime("%Y-%m-%d")
 
 
 def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
     desc = clause
+    desc = re.sub(
+        r"\b\d{1,2}\s*(?:x|×|\*)\s*(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:juta|jt|ribu|rb|k)?\b",
+        " ",
+        desc,
+        flags=re.IGNORECASE,
+    )
     desc = re.sub(r"(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b", " ", desc, flags=re.IGNORECASE)
     desc = re.sub(r"\b\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt|ribu|rb|k)\b", " ", desc, flags=re.IGNORECASE)
+    desc = re.sub(r"\b(?:seceng|goceng|ceban|noban|gocap|cepek\s*(?:rb|ribu|k)?)\b", " ", desc, flags=re.IGNORECASE)
     desc = re.sub(
         r"\b(?:setengah\s+juta|sejuta|seratus|seribu|(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas)\s+(?:puluh\s+|ratus\s+)?(?:ribu|juta))\b",
         " ",
@@ -742,8 +806,9 @@ def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
         flags=re.IGNORECASE,
     )
     desc = re.sub(r"\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b", " ", desc)
+    desc = re.sub(r"\b\d{1,3}\s+hari\s+(?:(?:yang|yg)\s+)?lalu\b", " ", desc, flags=re.IGNORECASE)
     desc = re.sub(
-        r"\b(?:kemarin\s+lusa|kemarin|lusa|besok|hari\s+ini|tadi\s+(?:pagi|siang|sore|malam))\b",
+        r"\b(?:(?:se)?(?:minggu|pekan)\s+(?:(?:yang|yg)\s+)?lalu|kemarin\s+lusa|kemarin|lusa|besok|hari\s+ini|tadi\s+(?:pagi|siang|sore|malam)|(?:tanggal|tgl)\s+\d{1,2})\b",
         " ",
         desc,
         flags=re.IGNORECASE,
@@ -755,7 +820,7 @@ def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
         flags=re.IGNORECASE,
     )
     desc = re.sub(
-        r"\b(?:tolong|coba|catat|catatkan|beli|bayar|jajan|pakai|pake|via|dengan|dari|untuk|sebesar|seharga|harga|senilai|nominal)\b",
+        r"\b(?:tolong|coba|catat|catatkan|beli|bayar|jajan|cicil|patungan|sedekah|infaq|zakat|pakai|pake|dr|via|dengan|dari|ke|masuk|untuk|sebesar|seharga|harga|senilai|nominal)\b",
         " ",
         desc,
         flags=re.IGNORECASE,
@@ -787,13 +852,32 @@ def parse_indonesian_action_commands(
     today = extract_indonesian_relative_date(clean)
     month = today[:7]
 
-    # 1. Transfer intent: "transfer 500rb dari BCA ke GoPay"
-    if re.search(r"\b(transfer|kirim|pindah(?:\s+dana)?|topup|top\s*up)\b", low):
-        m_pair = re.search(r"(?:dari|from)\s+([a-z0-9\s]+?)\s+(?:ke|to)\s+([a-z0-9\s]+)$", low)
-        if m_pair and len(accounts) >= 2:
-            src = _resolve_account_from_text(m_pair.group(1), accounts)
-            remaining = [a for a in accounts if src and a.get("id") != src.get("id")]
-            tgt = _resolve_account_from_text(m_pair.group(2), remaining) if remaining else None
+    # 1. Transfer intent: "transfer 500rb dari BCA ke GoPay", "topup gopay 200rb dr bca", "tarik tunai 300rb dr BCA"
+    if re.search(r"\b(transfer|tf|kirim|pindah(?:in|kan)?(?:\s+dana)?|top\s?up|isi\s+saldo|tarik\s+tunai)\b", low):
+        m_pair = re.search(r"\b(?:dari|dr|from)\s+([a-z0-9\s]+?)\s+(?:ke|to)\s+([a-z0-9\s]+)$", low)
+        if len(accounts) >= 2:
+            src: Optional[Dict[str, Any]] = None
+            tgt: Optional[Dict[str, Any]] = None
+            if m_pair:
+                src = _resolve_account_from_text(m_pair.group(1), accounts, fallback_first=False)
+                remaining = [a for a in accounts if not src or a.get("id") != src.get("id")]
+                tgt = _resolve_account_from_text(m_pair.group(2), remaining, fallback_first=False)
+            else:
+                m_dari = re.search(r"\b(?:dari|dr)\s+([a-z0-9\s]+)", low)
+                m_ke = re.search(r"\bke\s+([a-z0-9\s]+)", low)
+                src = _resolve_account_from_text(m_dari.group(1), accounts, fallback_first=False) if m_dari else None
+                rem_tgt = [a for a in accounts if not src or a.get("id") != src.get("id")]
+                if m_ke:
+                    tgt = _resolve_account_from_text(m_ke.group(1), rem_tgt, fallback_first=False)
+                if not tgt and re.search(r"\b(top\s?up|isi\s+saldo|transfer|tf|kirim)\b", low):
+                    tgt = _resolve_account_from_text(low, rem_tgt, fallback_first=False)
+                if not tgt and re.search(r"\btarik\s+tunai\b", low):
+                    tgt = next(
+                        (a for a in rem_tgt if re.search(r"tunai|cash|dompet|kas", f"{a.get('name', '')} {a.get('type', '')}", re.IGNORECASE)),
+                        None,
+                    )
+                if not src and tgt:
+                    src = next((a for a in accounts if a.get("id") != tgt.get("id")), None)
             if src and tgt and src.get("id") != tgt.get("id"):
                 return [
                     {
@@ -860,26 +944,27 @@ def parse_indonesian_action_commands(
             }
         ]
 
-    # 4. Transaction intent (single or multi-item list)
+    # 4. Transaction intent (single or multi-item list with per-item polarity)
     has_tx_verb = bool(
         re.search(
-            r"\b(catat|catatkan|rekam|beli|bayar|jajan|makan|ngopi|isi\s+bensin|belanja|pengeluaran|keluar|terima|gaji|pemasukan|masuk|dapat)\b",
+            r"\b(catat|catatkan|rekam|beli|bayar|jajan|makan|ngopi|isi\s+bensin|belanja|cicil|sedekah|infaq|zakat|pengeluaran|keluar|terima|trima|gaji|pemasukan|masuk|dapat)\b",
             low,
         )
     )
     clauses_preview = _split_indonesian_transaction_clauses(clean)
     has_multi_item_amounts = sum(1 for c in clauses_preview if parse_indonesian_amount(c) > 0) >= 2
     is_hypothetical = bool(
-        re.search(r"\b(simulasi|what[\s-]*if|andai|kalau|jika|kira[\s-]*kira|berapa|apakah|bagaimana)\b", low)
+        re.search(r"\b(simulasi|what[\s-]*if|andai|kalau|jika|kira[\s-]*kira|berapa|apakah|bagaimana|gimana)\b", low)
     ) or ("?" in clean and not has_tx_verb)
     if (has_tx_verb or has_multi_item_amounts) and not is_hypothetical:
-        income_re = re.compile(r"\b(terima|gaji|pemasukan|masuk|dapat|bonus|thr|freelance)\b", re.IGNORECASE)
+        income_re = re.compile(r"\b(terima|trima|gaji|salary|pemasukan|masuk|dapat|bonus|thr|freelance|komisi|honor|dividen|refund)\b", re.IGNORECASE)
+        expense_cue_re = re.compile(r"\b(beli|bayar|keluar|pengeluaran|jajan|makan|minum|kopi|susu|warteg|bensin|parkir|belanja|listrik|air|pdam|wifi|kos|kontrakan|cicil|cicilan|kredit|tagihan|pulsa|paket|obat|sedekah|zakat|infaq|patungan)\b", re.IGNORECASE)
         global_is_income = bool(income_re.search(low))
         shared_acc = _resolve_account_from_text(low, accounts)
         if not shared_acc:
             return []
 
-        clauses = _split_indonesian_transaction_clauses(clean)
+        clauses = clauses_preview
         if len(clauses) >= 2:
             multi_actions: List[Dict[str, Any]] = []
             for clause in clauses:
@@ -887,10 +972,7 @@ def parse_indonesian_action_commands(
                 if c_amt <= 0:
                     continue
                 c_low = clause.lower()
-                c_is_income = bool(income_re.search(c_low)) or (
-                    global_is_income
-                    and not re.search(r"\b(beli|bayar|keluar|pengeluaran|jajan|makan|kopi)\b", c_low)
-                )
+                c_is_income = bool(income_re.search(c_low)) and not bool(expense_cue_re.search(c_low))
                 c_type = "income" if c_is_income else "expense"
                 c_acc = _resolve_account_from_text(c_low, accounts, fallback_first=False) or shared_acc
                 c_cat = _resolve_category_from_text(c_low, categories, c_type)
@@ -987,20 +1069,34 @@ def _resolve_followup_command(
     message: str, history: Optional[List[Dict[str, str]]]
 ) -> str:
     """
-    Combines short follow-up refinements (e.g. 'ubah jadi 45rb', 'pakai BCA')
-    with the most recent user command in conversation history.
+    Combines targeted follow-up refinements (e.g. 'yang kopi jadi 12rb', 'tambah teh 4rb',
+    'hapus warteg', 'ubah jadi 45rb', 'pakai BCA') with the prior command.
     """
     clean = (message or "").strip()
     if not clean or not history:
         return clean
     low = clean.lower()
+    if re.match(
+        r"^(catat|catatkan|rekam|beli|bayar|makan|ngopi|isi|belanja|jajan|cicil|sedekah|infaq|zakat|terima|trima|dapat|gaji|bonus|thr|top\s?up|transfer|tf|kirim)\b",
+        low,
+    ):
+        return clean
     is_followup = bool(
         re.search(
-            r"\b(ubah|ganti|revisi|koreksi|jadikan|jadi|pakai|pake|via|dari|ke)\b",
+            r"^(ubah|ganti|revisi|koreksi|jadikan|jadi|pakai|pake|via|tambah|tambahin|hapus|hilangkan|tanpa|ga\s+jadi|gak\s+jadi|yang|utk|untuk|kemarin|besok|lusa)\b",
             low,
         )
+        or (
+            re.search(r"\b(ubah|ganti|revisi|koreksi|jadikan|tambah|hapus)\b", low)
+            and len(clean.split()) <= 8
+        )
+        or (
+            re.search(r"\b(pakai|pake|via)\b", low)
+            and parse_indonesian_amount(clean) <= 0
+            and len(clean.split()) <= 5
+        )
     )
-    if not is_followup or len(clean.split()) > 8:
+    if not is_followup or len(clean.split()) > 10:
         return clean
 
     turns = _normalize_history_turns(history)
@@ -1008,28 +1104,64 @@ def _resolve_followup_command(
     if not prev_user_msgs:
         return clean
     prev_msg = prev_user_msgs[-1]
-    if not re.search(
-        r"\b(catat|catatkan|beli|bayar|transfer|kirim|budget|anggaran|target|goal)\b",
-        prev_msg.lower(),
+    if not (
+        re.search(
+            r"\b(catat|catatkan|beli|bayar|transfer|tf|top\s?up|kirim|budget|anggaran|target|goal|gaji|terima)\b",
+            prev_msg.lower(),
+        )
+        or parse_indonesian_amount(prev_msg) > 0
     ):
         return clean
 
+    # 1. Append item: "tambah teh 4rb"
+    m_add = re.match(r"^(?:tolong\s+)?(?:tambah(?:kan|in)?)\s+(.+)$", clean, flags=re.IGNORECASE)
+    if m_add and parse_indonesian_amount(m_add.group(1)) > 0:
+        return f"{prev_msg}, {m_add.group(1).strip()}"
+
+    # 2. Remove item: "hapus warteg" / "tanpa susu"
+    m_rem = re.match(r"^(?:hapus|hilangkan|buang|tanpa|ga\s+jadi|gak\s+jadi)\s+(.+)$", clean, flags=re.IGNORECASE)
+    if m_rem:
+        target = m_rem.group(1).strip().lower()
+        prev_clauses = _split_indonesian_transaction_clauses(prev_msg)
+        if len(prev_clauses) >= 2:
+            kept = [c for c in prev_clauses if target not in c.lower()]
+            if 0 < len(kept) < len(prev_clauses):
+                return ", ".join(kept)
+
+    # 3. Targeted clause edit: "yang kopi jadi 12rb"
+    m_tgt = re.match(
+        r"^(?:yang\s+|untuk\s+)?(?:(?:ubah|ganti|revisi|koreksi)\s+)?(?:yang\s+)?([a-z0-9\s]{2,25}?)\s+(?:ubah\s+|ganti\s+)?(?:jadi|menjadi|ke|=)\s+(.+)$",
+        clean,
+        flags=re.IGNORECASE,
+    )
+    if m_tgt:
+        item_hint = m_tgt.group(1).strip().lower()
+        new_amt_tgt = parse_indonesian_amount(m_tgt.group(2))
+        prev_clauses = _split_indonesian_transaction_clauses(prev_msg)
+        if new_amt_tgt > 0 and item_hint and item_hint not in ("nya", "itu", "total", "semua") and len(prev_clauses) >= 2:
+            replaced = False
+            updated: List[str] = []
+            for clause in prev_clauses:
+                if item_hint in clause.lower():
+                    replaced = True
+                    stripped = _COMPOUND_MONEY_SPAN_RE.sub(" ", clause)
+                    stripped = re.sub(r"\s+", " ", stripped).strip()
+                    updated.append(f"{stripped} {int(new_amt_tgt)}")
+                else:
+                    updated.append(clause)
+            if replaced:
+                return ", ".join(updated)
+
+    # 4. Single amount correction or account switch
     new_amt = parse_indonesian_amount(clean)
-    merged = prev_msg
-    if new_amt > 0:
-        # Remove numeric/shorthand amount from previous command before appending the updated amount
-        stripped_prev = re.sub(
-            r"(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:jt|juta|m|miliar|milyar|rb|ribu|k)?\b",
-            "",
-            prev_msg,
-            flags=re.IGNORECASE,
-        )
+    if new_amt > 0 and len(_split_indonesian_transaction_clauses(prev_msg)) <= 1:
+        stripped_prev = _COMPOUND_MONEY_SPAN_RE.sub("", prev_msg)
         stripped_prev = re.sub(r"\s+", " ", stripped_prev).strip()
-        merged = f"{stripped_prev} {int(new_amt)}"
-    elif re.search(r"\b(pakai|pake|via)\b", low):
+        return f"{stripped_prev} {int(new_amt)}"
+    if re.search(r"\b(pakai|pake|via|dari|dr)\b", low):
         stripped_prev = re.sub(r"\b(pakai|pake|via)\s+[a-z0-9\s]+$", "", prev_msg, flags=re.IGNORECASE).strip()
-        merged = f"{stripped_prev} {clean}"
-    return merged
+        return f"{stripped_prev} {clean}"
+    return clean
 
 
 async def chat_advisor(
@@ -1335,10 +1467,24 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
         for t in recent_tx[:10]
     ) or "Belum ada"
 
+    spending_analytics = context_data.get("spending_analytics") or {}
+    sa_cur = float(spending_analytics.get("current_month_expense") or 0)
+    sa_prev = float(spending_analytics.get("prev_month_expense") or 0)
+    sa_burn = float(spending_analytics.get("daily_burn_rate") or 0)
+    sa_rem_days = int(spending_analytics.get("remaining_days_in_month") or 1)
+    sa_quota = round(max(0.0, safe_spend) / max(1, sa_rem_days))
+    analytics_line = ""
+    if sa_cur > 0 or sa_prev > 0:
+        analytics_line = (
+            f"Belanja Bulan Ini: Rp {sa_cur:,.0f} (rata-rata Rp {sa_burn:,.0f}/hari) vs Bulan Lalu Rp {sa_prev:,.0f} • "
+            f"Sisa {sa_rem_days} hari (kuota harian ~Rp {sa_quota:,.0f}/hari)\n"
+        )
+
     ctx_str = (
         f"Tanggal Hari Ini: {today_iso}\n"
         f"Kekayaan Bersih: Rp {net_worth:,.2f}\n"
         f"Kas Tersedia: Rp {cash:,.2f} (Safe-to-Spend: Rp {safe_spend:,.2f})\n"
+        f"{analytics_line}"
         f"Total Utang: Rp {debts_total:,.2f} (Rincian: {debts_summary})\n"
         f"Rasio DTI: {dti_val}% ({dashboard.get('dti_status', 'N/A')})\n"
         f"Skor Kesehatan Keuangan: {score_num}/100 ({score_lbl})\n"
@@ -1411,11 +1557,13 @@ async def stream_chat_advisor(
             api_key=api_key,
             history=history,
         )
-        meta_event = {
+        meta_event: Dict[str, Any] = {
             "type": "meta",
             "reason": result.get("reason", ""),
             "proposed_actions": result.get("proposed_actions") or [],
         }
+        if result.get("suggested_replies"):
+            meta_event["suggested_replies"] = result["suggested_replies"]
         yield f"data: {json.dumps(meta_event, ensure_ascii=False)}\n\n"
 
         full_text = str(result.get("response") or "")
@@ -1479,7 +1627,14 @@ async def stream_chat_advisor(
                 tail = final_text[emitted_len:]
                 if tail:
                     yield f"data: {json.dumps({'type': 'delta', 'content': tail}, ensure_ascii=False)}\n\n"
-            yield f"data: {json.dumps({'type': 'meta', 'reason': parsed.get('reason', ''), 'proposed_actions': parsed.get('proposed_actions') or []}, ensure_ascii=False)}\n\n"
+            end_meta: Dict[str, Any] = {
+                "type": "meta",
+                "reason": parsed.get("reason", ""),
+                "proposed_actions": parsed.get("proposed_actions") or [],
+            }
+            if parsed.get("suggested_replies"):
+                end_meta["suggested_replies"] = parsed["suggested_replies"]
+            yield f"data: {json.dumps(end_meta, ensure_ascii=False)}\n\n"
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
             return
     except Exception as exc:
@@ -1494,7 +1649,14 @@ async def stream_chat_advisor(
         api_key=api_key,
         history=history,
     )
-    yield f"data: {json.dumps({'type': 'meta', 'reason': result.get('reason', ''), 'proposed_actions': result.get('proposed_actions') or []}, ensure_ascii=False)}\n\n"
+    fb_meta: Dict[str, Any] = {
+        "type": "meta",
+        "reason": result.get("reason", ""),
+        "proposed_actions": result.get("proposed_actions") or [],
+    }
+    if result.get("suggested_replies"):
+        fb_meta["suggested_replies"] = result["suggested_replies"]
+    yield f"data: {json.dumps(fb_meta, ensure_ascii=False)}\n\n"
     full_text = str(result.get("response") or "")
     if full_text:
         yield f"data: {json.dumps({'type': 'delta', 'content': full_text}, ensure_ascii=False)}\n\n"
@@ -1606,9 +1768,15 @@ def parse_advisor_response(
     else:
         final_actions = parsed_actions if parsed_actions else (fallback_actions or [])
 
+    suggested_replies = (
+        ["Cek sisa anggaran bulan ini", "Cek kuota jajan harian bulan ini"]
+        if final_actions
+        else ["Cek kuota jajan harian bulan ini", "Tagihan bulan ini apa saja?", "Bandingkan pengeluaran bulan lalu"]
+    )
     result: Dict[str, Any] = {
         "response": main_response,
         "reason": reason,
+        "suggested_replies": suggested_replies,
     }
     if final_actions:
         result["proposed_actions"] = final_actions
@@ -1639,10 +1807,11 @@ def generate_mock_chat_response(
         return {
             "response": (
                 f"Siap! Saya sudah menyiapkan draf aksi **{single['title']}** "
-                f"({single['summary']}). Ketuk Konfirmasi di kartu aksi di bawah untuk menjalankan."
+                f"({single['summary']}). Ketuk Konfirmasi atau ubah detail di kartu aksi di bawah."
             ),
             "reason": "agentic-nlp-worker",
             "proposed_actions": actions,
+            "suggested_replies": ["Cek kuota jajan harian bulan ini", "Cek pengeluaran terbesar bulan ini"],
         }
 
     if len(actions) >= 2:
@@ -1660,6 +1829,7 @@ def generate_mock_chat_response(
             ),
             "reason": "agentic-nlp-worker-multi",
             "proposed_actions": actions,
+            "suggested_replies": ["Cek kuota jajan harian bulan ini", "Cek tagihan bulan ini"],
         }
 
     # Safe extractor for MoneyValue, DebtSummaryDto, or plain float
@@ -1693,10 +1863,62 @@ def generate_mock_chat_response(
     debts_list = context_data.get("debts") or []
     goals_list = context_data.get("goals") or []
     budget_cats = context_data.get("budget_categories") or []
+    spending_analytics = context_data.get("spending_analytics") or {}
 
     msg_lower = message.lower()
+    suggested_replies = [
+        "Cek kuota jajan harian bulan ini",
+        "Tagihan bulan ini apa saja?",
+        "Bandingkan pengeluaran bulan lalu",
+    ]
 
-    if any(k in msg_lower for k in ("tagihan", "bill", "jatuh tempo")):
+    if any(k in msg_lower for k in ("kuota harian", "cukup sampai", "sehari boleh", "runway", "sisa hari", "aman sampai")):
+        rem_days = max(1, int(spending_analytics.get("remaining_days_in_month") or 1))
+        daily_burn = float(spending_analytics.get("daily_burn_rate") or 0)
+        cur_spent = float(spending_analytics.get("current_month_expense") or 0)
+        daily_quota = round(max(0.0, safe_spend) / rem_days)
+        gap = safe_spend - (daily_burn * rem_days)
+        response = (
+            f"Analisis Kuota Harian & Ketahanan Kas ({rem_days} hari tersisa bulan ini):\n"
+            f"- **Kuota aman harian**: **Rp {daily_quota:,.0f}/hari** (dari Safe-to-Spend **Rp {safe_spend:,.0f}**).\n"
+            f"- **Rata-rata belanja aktual**: **Rp {daily_burn:,.0f}/hari** (total bulan ini Rp {cur_spent:,.0f}).\n"
+            + (
+                f"- Ritme saat ini masih **cukup** hingga akhir bulan (estimasi sisa **Rp {gap:,.0f}**)."
+                if gap >= 0
+                else f"- **Peringatan**: berpotensi kurang **Rp {abs(gap):,.0f}** di akhir bulan — batasi di bawah Rp {daily_quota:,.0f}/hari."
+            )
+        )
+        reason = "Dihitung dari Safe-to-Spend berbanding sisa hari kalender dan burn rate harian Anda."
+    elif any(k in msg_lower for k in ("lebih boros", "banding", "bulan lalu", "dibanding", "tren pengeluaran")):
+        cur_sum = float(spending_analytics.get("current_month_expense") or budget_spent)
+        prev_sum = float(spending_analytics.get("prev_month_expense") or 0)
+        diff = cur_sum - prev_sum
+        top_cats = spending_analytics.get("top_categories") or []
+        top_line = (
+            "\nPos terbesar bulan ini: "
+            + ", ".join(
+                f"{c.get('category') or c.get('name') or 'Lainnya'} (Rp {float(c.get('amount') if c.get('amount') is not None else (c.get('total') or 0)):,.0f})"
+                for c in top_cats[:3]
+            )
+            if top_cats
+            else ""
+        )
+        response = (
+            f"Perbandingan Pengeluaran Bulan Ini vs Bulan Lalu:\n"
+            f"- **Bulan ini**: **Rp {cur_sum:,.0f}** • **Bulan lalu**: **Rp {prev_sum:,.0f}**.\n"
+            + (
+                "- Belum ada transaksi pembanding di bulan lalu."
+                if prev_sum <= 0
+                else (
+                    f"- Belanja naik **Rp {diff:,.0f}** ({(diff / prev_sum * 100):.1f}%)."
+                    if diff > 0
+                    else f"- Belanja lebih hemat **Rp {abs(diff):,.0f}** ({abs(diff / prev_sum * 100):.1f}%)."
+                )
+            )
+            + top_line
+        )
+        reason = "Membandingkan arus pengeluaran bulan berjalan dengan bulan sebelumnya."
+    elif any(k in msg_lower for k in ("tagihan", "bill", "jatuh tempo")):
         if upcoming_bills:
             total_b = sum(float(b.get("amount") or 0) for b in upcoming_bills)
             lines = "\n".join(
@@ -1762,6 +1984,7 @@ def generate_mock_chat_response(
                 f"2. Manfaatkan simulator pelunasan utang di menu Utang untuk mensimulasikan percepatan cicilan."
             )
         reason = "Rekomendasi diberikan berdasarkan rasio utang berbanding pendapatan (DTI) sebesar " + str(dti) + "%."
+        suggested_replies = ["Cek kuota jajan harian bulan ini", "Tagihan bulan ini apa saja?"]
     elif "anggaran" in msg_lower or "budget" in msg_lower or "hemat" in msg_lower or "boros" in msg_lower or "pengeluaran" in msg_lower:
         remaining = budget_limit - budget_spent
         cat_detail = ""
@@ -1792,7 +2015,8 @@ def generate_mock_chat_response(
 
     return {
         "response": response,
-        "reason": reason
+        "reason": reason,
+        "suggested_replies": suggested_replies,
     }
 
 

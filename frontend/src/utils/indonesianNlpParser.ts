@@ -138,6 +138,26 @@ export function parseIndonesianSpokenAmount(text: string): number | null {
   const input = String(text || '').trim();
   if (!input) return null;
 
+  // 0. Explicit multiplication: "2x 10rb", "2x kopi 10rb", "3 x Rp 15.000", "2 * 5rb"
+  const qtyMatch = input.match(
+    /\b(\d{1,2})\s*(?:x|×|\*)\s*(?:(?:(?!\b(?:dan|atau|serta|pakai|pake|via|dr|dari|ke|lalu)\b)[a-zA-Z]+\s+){0,3})(?:rp\.?\s*)?(\d+(?:[.,]\d+)?)\s*(juta|jt|ribu|rb|k)?\b/i
+  );
+  if (qtyMatch) {
+    const qty = Number(qtyMatch[1]);
+    const rawUnit = qtyMatch[2];
+    const unitSuffix = (qtyMatch[3] || '').toLowerCase();
+    const baseNum = /^\d{1,3}(?:\.\d{3})+$/.test(rawUnit)
+      ? Number(rawUnit.replace(/\./g, ''))
+      : Number(rawUnit.replace(',', '.'));
+    if (Number.isFinite(qty) && qty >= 1 && Number.isFinite(baseNum) && baseNum > 0) {
+      let mult = 1;
+      if (unitSuffix === 'juta' || unitSuffix === 'jt') mult = 1_000_000;
+      else if (unitSuffix === 'ribu' || unitSuffix === 'rb' || unitSuffix === 'k') mult = 1_000;
+      const total = Math.round(qty * baseNum * mult);
+      if (total >= 100) return total;
+    }
+  }
+
   // 1. Decimal/numeric with unit suffix (1,5jt | 1.5 juta | 28rb | 50 ribu | 75k | 2 miliar)
   const suffixMatch = input.match(
     /(?:rp\.?\s*)?(\d+(?:[.,]\d+)?)\s*(miliar|milyar|juta|jt|ribu|rb|k)\b/i
@@ -193,6 +213,15 @@ export function parseIndonesianSpokenAmount(text: string): number | null {
     const n = Number(plainDigitsMatch[1].replace(/\./g, ''));
     if (Number.isFinite(n) && n >= 100) return Math.round(n);
   }
+
+  // 4. Common Indonesian colloquial currency slang
+  const low = input.toLowerCase();
+  if (/\bcepek\s*(?:rb|ribu|k)\b/.test(low)) return 100_000;
+  if (/\bgocap\b/.test(low)) return 50_000;
+  if (/\bnoban\b/.test(low)) return 20_000;
+  if (/\bceban\b/.test(low)) return 10_000;
+  if (/\bgoceng\b/.test(low)) return 5_000;
+  if (/\bseceng\b/.test(low)) return 1_000;
 
   return null;
 }
@@ -316,10 +345,29 @@ function formatDateOffsetLocal(offsetDays: number): string {
 
 export function extractRelativeIndonesianDate(text: string): string | undefined {
   const low = String(text || '').toLowerCase();
+  const daysAgoMatch = low.match(/\b(\d{1,3})\s+hari\s+(?:(?:yang|yg)\s+)?lalu\b/);
+  if (daysAgoMatch) {
+    const offset = Number(daysAgoMatch[1]);
+    if (Number.isFinite(offset) && offset >= 1 && offset <= 365) {
+      return formatDateOffsetLocal(-offset);
+    }
+  }
+  if (/\b(?:se)?(?:minggu|pekan)\s+(?:(?:yang|yg)\s+)?lalu\b/.test(low)) return formatDateOffsetLocal(-7);
   if (/\bkemarin\s+lusa\b/.test(low)) return formatDateOffsetLocal(-2);
   if (/\bkemarin\b/.test(low)) return formatDateOffsetLocal(-1);
   if (/\blusa\b/.test(low)) return formatDateOffsetLocal(2);
   if (/\bbesok\b/.test(low)) return formatDateOffsetLocal(1);
+  const tglMatch = low.match(/\b(?:tanggal|tgl)\s+(\d{1,2})\b/);
+  if (tglMatch) {
+    const day = Number(tglMatch[1]);
+    const now = new Date();
+    const maxDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    if (day >= 1 && day <= maxDay) {
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(day).padStart(2, '0');
+      return `${now.getFullYear()}-${m}-${d}`;
+    }
+  }
   return undefined;
 }
 
@@ -329,11 +377,14 @@ function escapeRegExp(s: string): string {
 
 function cleanTransactionDescription(raw: string, matchedAccount?: Account): string {
   let desc = raw
+    .replace(/\b\d{1,2}\s*(?:x|×|\*)\s*(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:juta|jt|ribu|rb|k)?\b/gi, ' ')
     .replace(/(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b/gi, ' ')
     .replace(/\b\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt|ribu|rb|k)\b/gi, ' ')
+    .replace(/\b(?:seceng|goceng|ceban|noban|gocap|cepek\s*(?:rb|ribu|k)?)\b/gi, ' ')
     .replace(/\b(?:setengah\s+juta|sejuta|seratus|seribu|(?:satu|dua|tiga|empat|lima|enam|tujuh|delapan|sembilan|sepuluh|sebelas)\s+(?:puluh\s+|ratus\s+)?(?:ribu|juta))\b/gi, ' ')
     .replace(/\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,}\b/g, ' ')
-    .replace(/\b(?:kemarin\s+lusa|kemarin|lusa|besok|hari\s+ini|tadi\s+(?:pagi|siang|sore|malam))\b/gi, ' ');
+    .replace(/\b\d{1,3}\s+hari\s+(?:(?:yang|yg)\s+)?lalu\b/gi, ' ')
+    .replace(/\b(?:(?:se)?(?:minggu|pekan)\s+(?:(?:yang|yg)\s+)?lalu|kemarin\s+lusa|kemarin|lusa|besok|hari\s+ini|tadi\s+(?:pagi|siang|sore|malam)|(?:tanggal|tgl)\s+\d{1,2})\b/gi, ' ');
 
   if (matchedAccount) {
     const accTokens = [matchedAccount.name, matchedAccount.bank_provider]
@@ -342,18 +393,18 @@ function cleanTransactionDescription(raw: string, matchedAccount?: Account): str
       .map((t) => escapeRegExp(t.trim()));
     if (accTokens.length > 0) {
       desc = desc.replace(
-        new RegExp(`\\b(?:pakai|pake|dari|via|lewat|menggunakan|dengan)?\\s*(?:rekening\\s+|akun\\s+|dompet\\s+)?(?:${accTokens.join('|')})\\b`, 'gi'),
+        new RegExp(`\\b(?:pakai|pake|dr|dari|via|lewat|menggunakan|dengan|ke|masuk\\s+ke)?\\s*(?:rekening\\s+|akun\\s+|dompet\\s+)?(?:${accTokens.join('|')})\\b`, 'gi'),
         ' '
       );
     }
   }
 
   desc = desc
-    .replace(/\b(?:pakai|pake|dari|via|lewat|menggunakan|dengan)\s+(?:rekening\s+|akun\s+|dompet\s+)?(?:mybca|bca|blu|livin|mandiri|brimo|bri|wondr|bni|seabank|jago|gopay|ovo|dana|shopeepay|linkaja|tunai|cash)\b/gi, ' ')
+    .replace(/\b(?:pakai|pake|dr|dari|via|lewat|menggunakan|dengan)\s+(?:rekening\s+|akun\s+|dompet\s+)?(?:mybca|bca|blu|livin|mandiri|brimo|bri|wondr|bni|seabank|jago|gopay|ovo|dana|shopeepay|linkaja|tunai|cash)\b/gi, ' ')
     .replace(/\b(?:seharga|harga|sebesar|senilai|nominal|total|sejumlah)\b/gi, ' ')
     .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, '')
     .replace(/^(?:dan|serta|lalu|terus|sama|kemudian|plus)\b\s*/i, '')
-    .replace(/^(?:tolong\s+|coba\s+)?(?:catatkan|catat|rekam|tambahkan|tambah|beli|bayar|jajan|terima|dapat|dpt|keluar|pengeluaran|pemasukan)\b\s*/i, '')
+    .replace(/^(?:tolong\s+|coba\s+)?(?:catatkan|catat|rekam|tambahkan|tambah|beli|bayar|jajan|cicil|patungan|sedekah|infaq|zakat|terima|trima|dapat|dpt|keluar|pengeluaran|pemasukan)\b\s*/i, '')
     .replace(/^[\s,.;:-]+|[\s,.;:-]+$/g, '')
     .replace(/\s+/g, ' ')
     .trim();
@@ -363,7 +414,7 @@ function cleanTransactionDescription(raw: string, matchedAccount?: Account): str
 }
 
 const COMPOUND_MONEY_SPAN_RE =
-  /(?:(?:rp\.?|idr)\s*)?(?:\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt)\b(?:\s+(?:lebih\s+)?\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b)?|\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b|(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b|\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,10}\b)/gi;
+  /(?:\b\d{1,2}\s*(?:x|×|\*)\s*(?:rp\.?\s*)?\d+(?:[.,]\d+)?\s*(?:juta|jt|ribu|rb|k)?\b|(?:(?:rp\.?|idr)\s*)?(?:\d+(?:[.,]\d+)?\s*(?:miliar|milyar|juta|jt)\b(?:\s+(?:lebih\s+)?\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b)?|\d+(?:[.,]\d+)?\s*(?:ribu|rb|k)\b|(?:rp\.?|idr)\s*\d[\d.]*(?:,\d{1,2})?\b|\b\d{1,3}(?:\.\d{3})+\b|\b\d{4,10}\b)|\b(?:seceng|goceng|ceban|noban|gocap|cepek\s*(?:rb|ribu|k))\b)/gi;
 
 function splitSubClausesByAmountPairs(clause: string): string[] {
   const trimmed = clause.trim();
@@ -408,6 +459,96 @@ function splitTransactionClauses(rawText: string): string[] {
 }
 
 /**
+ * Merges conversational follow-ups ("tambah teh 4rb", "yang kopi jadi 12rb",
+ * "hapus warteg", "pakai GoPay", "ubah jadi 45rb") into the prior command string.
+ */
+export function mergeIndonesianFollowUp(
+  followUpText: string,
+  prevCommand: string
+): string | null {
+  const clean = String(followUpText || '').trim();
+  const prev = String(prevCommand || '').trim();
+  if (!clean || !prev) return null;
+
+  const isNewStandaloneCommand =
+    /^(catat|catatkan|rekam|beli|bayar|makan|ngopi|isi|belanja|jajan|cicil|sedekah|infaq|zakat|terima|trima|dapat|gaji|bonus|thr|top\s?up|transfer|tf|kirim)\b/i.test(
+      clean
+    );
+  if (isNewStandaloneCommand) return null;
+
+  const isFollowUp =
+    /^(ubah|ganti|revisi|koreksi|jadikan|jadi|pakai|pake|via|tambah|tambahin|hapus|hilangkan|tanpa|ga\s+jadi|gak\s+jadi|yang|utk|untuk|kemarin|besok|lusa)\b/i.test(
+      clean
+    ) ||
+    (/\b(ubah|ganti|revisi|koreksi|jadikan|tambah|hapus)\b/i.test(clean) &&
+      clean.split(/\s+/).length <= 8) ||
+    (/\b(pakai|pake|via)\b/i.test(clean) &&
+      !parseIndonesianSpokenAmount(clean) &&
+      clean.split(/\s+/).length <= 5);
+  if (!isFollowUp) return null;
+
+  // 1. Append new item ("tambah teh 4rb")
+  const addMatch = clean.match(/^(?:tolong\s+)?(?:tambah(?:kan|in)?)\s+(.+)$/i);
+  if (addMatch && parseIndonesianSpokenAmount(addMatch[1])) {
+    return `${prev}, ${addMatch[1].trim()}`;
+  }
+
+  // 2. Remove an item ("hapus warteg", "tanpa susu", "ga jadi kopi")
+  const removeMatch = clean.match(/^(?:hapus|hilangkan|buang|tanpa|ga\s+jadi|gak\s+jadi)\s+(.+)$/i);
+  if (removeMatch) {
+    const target = removeMatch[1].trim().toLowerCase();
+    const prevClauses = splitTransactionClauses(prev);
+    if (prevClauses.length >= 2) {
+      const kept = prevClauses.filter((c) => !c.toLowerCase().includes(target));
+      if (kept.length > 0 && kept.length < prevClauses.length) {
+        return kept.join(', ');
+      }
+    }
+  }
+
+  // 3. Targeted clause amount replacement ("yang kopi jadi 12rb", "ubah susu 8rb")
+  const targetedMatch = clean.match(
+    /^(?:yang\s+|untuk\s+)?(?:(?:ubah|ganti|revisi|koreksi)\s+)?(?:yang\s+)?([a-z0-9\s]{2,25}?)\s+(?:ubah\s+|ganti\s+)?(?:jadi|menjadi|ke|=)\s+(.+)$/i
+  );
+  if (targetedMatch) {
+    const itemHint = targetedMatch[1].trim().toLowerCase();
+    const newAmt = parseIndonesianSpokenAmount(targetedMatch[2]);
+    const prevClauses = splitTransactionClauses(prev);
+    if (newAmt && itemHint && !/^(nya|itu|total|semua)$/.test(itemHint) && prevClauses.length >= 2) {
+      let replaced = false;
+      const updated = prevClauses.map((clause) => {
+        if (clause.toLowerCase().includes(itemHint)) {
+          replaced = true;
+          const stripped = clause.replace(COMPOUND_MONEY_SPAN_RE, ' ').replace(/\s+/g, ' ').trim();
+          return `${stripped} ${Math.round(newAmt)}`;
+        }
+        return clause;
+      });
+      if (replaced) return updated.join(', ');
+    }
+  }
+
+  // 4. Relative date follow-up ("kemarin", "itu kemarin lusa")
+  if (extractRelativeIndonesianDate(clean) && !parseIndonesianSpokenAmount(clean) && clean.split(/\s+/).length <= 5) {
+    return `${prev} ${clean}`;
+  }
+
+  // 5. Account switch or single-amount update
+  const newAmt = parseIndonesianSpokenAmount(clean);
+  if (newAmt && splitTransactionClauses(prev).length <= 1) {
+    const strippedPrev = prev.replace(COMPOUND_MONEY_SPAN_RE, ' ').replace(/\s+/g, ' ').trim();
+    return `${strippedPrev} ${Math.round(newAmt)}`;
+  }
+
+  if (/\b(pakai|pake|via|dari)\b/i.test(clean) || clean.split(/\s+/).length <= 4) {
+    const cleanedPrev = prev.replace(/\s+\b(?:pakai|pake|via)\s+[a-z0-9\s]+$/i, '').trim();
+    return /\b(pakai|pake|via|dari)\b/i.test(clean) ? `${cleanedPrev} ${clean}` : `${cleanedPrev} pakai ${clean}`;
+  }
+
+  return `${prev} ${clean}`;
+}
+
+/**
  * Parses Indonesian voice or natural-language financial commands into one or more structured actions
  * (supporting multi-item messages like "beli kopi 10rb, susu 6rb dan warteg 5rb").
  */
@@ -418,10 +559,11 @@ export function parseIndonesianFinancialCommands(
 ): ParsedFinancialCommand[] {
   const text = String(rawText || '').trim();
   const amount = parseIndonesianSpokenAmount(text);
+  const txDate = extractRelativeIndonesianDate(text);
 
   // What-If Simulation intent
   if (
-    /\b(kalau|jika|misal|seandainya|simulasi|what[\s-]?if)\b/i.test(text) &&
+    /\b(kalau|jika|misal|seandainya|simulasi|what[\s-]?if|kira[\s-]?kira)\b/i.test(text) &&
     /\b(cicil|cicilan|kpr|utang|ambil|beli|dana darurat|aman|cukup|tahan)\b/i.test(text)
   ) {
     return [
@@ -437,7 +579,7 @@ export function parseIndonesianFinancialCommands(
   }
 
   // Budget setting intent
-  if (/\b(budget|anggaran|batasi|limit)\b/i.test(text) && amount) {
+  if (/\b(budget|anggaran|batasi|limit)\b/i.test(text) && amount && !/\?/.test(text) && !/\b(berapa|sisa|status|cek)\b/i.test(text)) {
     const category = matchCategoryByText(text, 'expense', categories);
     return [
       {
@@ -453,7 +595,7 @@ export function parseIndonesianFinancialCommands(
   }
 
   // Goal creation intent
-  if (/\b(buat(?:kan)?\s+target|target\s+tabungan|target\s+keuangan|goal|nabung\s+untuk)\b/i.test(text) && amount) {
+  if (/\b(buat(?:kan)?\s+target|target\s+tabungan|target\s+keuangan|goal|nabung\s+untuk)\b/i.test(text) && amount && !/\?/.test(text)) {
     const desc = cleanTransactionDescription(
       text.replace(/\b(buat(?:kan)?\s+target|target\s+tabungan|target\s+keuangan|goal)\b/gi, ' ')
     );
@@ -470,10 +612,10 @@ export function parseIndonesianFinancialCommands(
     ];
   }
 
-  // Transfer / Top-up intent
-  const isTransferVerb = /\b(transfer|pindah(?:kan)?|kirim\s+ke\s+rekening|top\s?up|isi\s+saldo|tarik\s+tunai)\b/i.test(text);
-  const dariKeMatch = text.match(/dari\s+([a-z0-9\s']+?)\s+ke\s+([a-z0-9\s']+?)(?:\s|$)/i);
-  if (isTransferVerb && (dariKeMatch || accounts.length >= 2)) {
+  // Transfer / Top-up intent (supports "transfer 500rb dari BCA ke GoPay", "topup gopay 200rb dr bca", "tarik tunai 300rb dr BCA")
+  const isTransferVerb = /\b(transfer|tf|pindah(?:in|kan)?|kirim\s+ke\s+rekening|top\s?up|isi\s+saldo|tarik\s+tunai)\b/i.test(text);
+  const dariKeMatch = text.match(/\b(?:dari|dr|from)\s+([a-z0-9\s']+?)\s+(?:ke|to)\s+([a-z0-9\s']+?)(?:\s|$)/i);
+  if (isTransferVerb && accounts.length >= 2) {
     let srcAcc: Account | undefined;
     let dstAcc: Account | undefined;
     if (dariKeMatch) {
@@ -481,9 +623,20 @@ export function parseIndonesianFinancialCommands(
       dstAcc = matchAccountByText(dariKeMatch[2], accounts, srcAcc?.id);
     } else {
       const keMatch = text.match(/\bke\s+([a-z0-9\s']+)/i);
-      const dariMatch = text.match(/\bdari\s+([a-z0-9\s']+)/i);
-      dstAcc = keMatch ? matchAccountByText(keMatch[1], accounts) : undefined;
-      srcAcc = dariMatch ? matchAccountByText(dariMatch[1], accounts, dstAcc?.id) : accounts.find((a) => a.id !== dstAcc?.id);
+      const dariMatch = text.match(/\b(?:dari|dr)\s+([a-z0-9\s']+)/i);
+      srcAcc = dariMatch ? matchAccountByText(dariMatch[1], accounts) : undefined;
+      dstAcc = keMatch ? matchAccountByText(keMatch[1], accounts, srcAcc?.id) : undefined;
+      if (!dstAcc && /\b(top\s?up|isi\s+saldo|transfer|tf|kirim)\b/i.test(text)) {
+        dstAcc = matchAccountByText(text, accounts, srcAcc?.id);
+      }
+      if (!dstAcc && /\btarik\s+tunai\b/i.test(text)) {
+        dstAcc = accounts.find(
+          (a) => a.id !== srcAcc?.id && /tunai|cash|dompet|kas/i.test(`${a.name} ${a.type}`)
+        );
+      }
+      if (!srcAcc && dstAcc) {
+        srcAcc = accounts.find((a) => a.id !== dstAcc?.id);
+      }
     }
     if (srcAcc && dstAcc && amount) {
       return [
@@ -495,16 +648,17 @@ export function parseIndonesianFinancialCommands(
           accountName: srcAcc.name,
           targetAccountId: dstAcc.id,
           targetAccountName: dstAcc.name,
+          ...(txDate ? { txDate } : {}),
           description: `Transfer ${srcAcc.name} → ${dstAcc.name}`,
-          confidence: 0.9,
+          confidence: 0.92,
         },
       ];
     }
   }
 
   // Query intent (questions without create verbs)
-  const hasCreateVerb = /\b(catat|catatkan|rekam|beli|bayar|makan|ngopi|isi bensin|belanja|jajan|terima|dapat|pemasukan|pengeluaran)\b/i.test(text);
-  const isQuestion = text.endsWith('?') || /\b(bagaimana|berapa|apakah|kenapa|dimana|di mana|cek\s+anomali|analisis|ringkas|ringkasan|saran)\b/i.test(text);
+  const hasCreateVerb = /\b(catat|catatkan|rekam|beli|bayar|makan|ngopi|isi bensin|belanja|jajan|cicil|sedekah|infaq|zakat|terima|trima|dapat|pemasukan|pengeluaran)\b/i.test(text);
+  const isQuestion = text.endsWith('?') || /\b(bagaimana|gimana|berapa|apakah|apa\s+saja|kenapa|dimana|di mana|cek\s+anomali|analisis|ringkas|ringkasan|saran|cukup|aman|lebih\s+boros|banding)\b/i.test(text);
   if (isQuestion && !hasCreateVerb) {
     return [
       {
@@ -517,10 +671,10 @@ export function parseIndonesianFinancialCommands(
     ];
   }
 
-  const incomeRegex = /\b(gaji|salary|bonus|thr|terima|diterima|dapat|pemasukan|masuk|dividen|freelance|honor|komisi|refund)\b/i;
+  const incomeRegex = /\b(gaji|salary|bonus|thr|terima|trima|diterima|dapat|pemasukan|masuk|dividen|freelance|honor|komisi|refund|hasil\s+jual)\b/i;
+  const expenseCueRegex = /\b(beli|bayar|keluar|pengeluaran|jajan|makan|minum|kopi|susu|warteg|bensin|parkir|belanja|listrik|air|pdam|wifi|kos|kontrakan|cicil|cicilan|kredit|tagihan|pulsa|paket|obat|sedekah|zakat|infaq|patungan)\b/i;
   const globalIsIncome = incomeRegex.test(text);
   const sharedAccount = matchAccountByText(text, accounts) || accounts[0];
-  const txDate = extractRelativeIndonesianDate(text);
   const clauses = splitTransactionClauses(text);
 
   if (clauses.length >= 2) {
@@ -528,18 +682,16 @@ export function parseIndonesianFinancialCommands(
     for (const clause of clauses) {
       const clauseAmount = parseIndonesianSpokenAmount(clause);
       if (!clauseAmount) continue;
-      const clauseTxType: 'expense' | 'income' = incomeRegex.test(clause)
-        ? 'income'
-        : globalIsIncome && !/\b(beli|bayar|keluar|pengeluaran|jajan|makan|kopi)\b/i.test(clause)
-          ? 'income'
-          : 'expense';
+      const clauseHasIncome = incomeRegex.test(clause);
+      const clauseHasExpense = expenseCueRegex.test(clause);
+      const clauseTxType: 'expense' | 'income' = clauseHasIncome && !clauseHasExpense ? 'income' : 'expense';
       const explicitClauseAcc = matchAccountByText(clause, accounts);
       const clauseAccount = explicitClauseAcc || sharedAccount;
       const clauseCategory = matchCategoryByText(clause, clauseTxType, categories);
       const clauseDesc = cleanTransactionDescription(clause, clauseAccount);
-      let clauseConf = 0.82;
-      if (clauseAccount) clauseConf += 0.08;
-      if (clauseCategory) clauseConf += 0.08;
+      let clauseConf = 0.84;
+      if (clauseAccount) clauseConf += 0.07;
+      if (clauseCategory) clauseConf += 0.07;
       clauseCommands.push({
         intent: 'create_transaction',
         type: clauseTxType,
