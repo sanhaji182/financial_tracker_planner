@@ -259,8 +259,8 @@ export function generateDailyAdvisorBriefing(
 
   const summary =
     watchdog.findings.length > 0
-      ? `${watchdog.findings[0].title} — ${watchdog.findings[0].message} (Safe-to-Spend ${formatRupiah(safeToSpend)})`
-      : `Kondisi kas terkendali. Safe-to-Spend 7 hari ke depan ${formatRupiah(safeToSpend)}.`;
+      ? `${watchdog.findings[0].title} — ${watchdog.findings[0].message}`
+      : 'Seluruh pos kas, anggaran, dan tagihan terdekat berada dalam batas terkendali.';
 
   return {
     briefing_date: today,

@@ -3027,7 +3027,8 @@ def generate_mock_chat_response(
     elif any(k in msg_lower for k in ("pph", "pajak penghasilan", "ptkp", "hitung pajak")):
         ptkp_match = re.search(r"\b(tk/[0-3]|k/[0-3])\b", msg_lower)
         ptkp_st = ptkp_match.group(1).upper() if ptkp_match else "TK/0"
-        parsed_inc = parse_indonesian_amount(message)
+        money_msg = re.sub(r"\bpph\s*21\b|\b(?:tk|k)/[0-3]\b|\b\d{1,2}\s*tahun\b", " ", message, flags=re.IGNORECASE)
+        parsed_inc = parse_indonesian_amount(money_msg)
         is_annual = any(k in msg_lower for k in ("setahun", "tahunan", "per tahun", "/tahun"))
         sim = _tool_simulate_indonesia_wealth(
             context_data,
@@ -3059,7 +3060,8 @@ def generate_mock_chat_response(
     elif any(k in msg_lower for k in ("dana pendidikan", "biaya kuliah", "uang pangkal", "pendidikan anak", "sekolah anak")):
         yrs_match = re.search(r"(\d{1,2})\s*tahun", msg_lower)
         yrs = int(yrs_match.group(1)) if yrs_match else 10
-        parsed_cost = parse_indonesian_amount(message)
+        money_msg = re.sub(r"\b\d{1,2}\s*tahun\b", " ", message, flags=re.IGNORECASE)
+        parsed_cost = parse_indonesian_amount(money_msg)
         cur_cost = parsed_cost if parsed_cost >= 1_000_000 else 50_000_000.0
         sim = _tool_simulate_indonesia_wealth(context_data, mode="education", years_until_entry=yrs, current_cost=cur_cost)
         response = (

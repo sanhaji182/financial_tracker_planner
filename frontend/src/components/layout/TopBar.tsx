@@ -104,27 +104,27 @@ export const TopBar: React.FC<TopBarProps> = ({ onMenuClick }) => {
       role="banner"
       className="sticky top-0 z-30 pt-safe bg-white/85 dark:bg-slate-900/85 backdrop-blur-md border-b border-slate-200/80 dark:border-slate-800"
     >
-      <div className="h-14 sm:h-16 px-3 sm:px-6 lg:px-8 flex items-center justify-between gap-2 sm:gap-3">
+      <div className="h-14 sm:h-16 px-2.5 sm:px-6 lg:px-8 flex items-center justify-between gap-1.5 sm:gap-3">
         {/* Left: Mobile drawer button + Page Context */}
-        <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
           <button
             type="button"
             onClick={onMenuClick}
-            className="lg:hidden p-2 -ml-1 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0"
+            className="lg:hidden p-1.5 -ml-1 rounded-xl text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:text-slate-400 dark:hover:text-white dark:hover:bg-slate-800 transition-colors shrink-0"
             aria-label="Buka menu navigasi"
           >
             <Menu className="w-5 h-5" aria-hidden="true" />
           </button>
 
           <div className="min-w-0">
-            <span className="font-display font-bold text-[15px] text-slate-900 dark:text-white truncate block">
+            <span className="font-display font-bold text-sm sm:text-[15px] text-slate-900 dark:text-white truncate block">
               {pageTitle}
             </span>
           </div>
         </div>
 
         {/* Right: Mode Toggle, Command Palette, Quick Add, Theme, Notifications, Profile */}
-        <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        <div className="flex items-center gap-1 sm:gap-2 shrink-0">
           <ModeToggle size="sm" className="hidden sm:inline-flex" />
 
           <button

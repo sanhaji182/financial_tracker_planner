@@ -8,6 +8,7 @@ import { getCurrentLocalMonth, getTodayLocalDate } from '../../utils/date';
 import {
   mergeIndonesianFollowUp,
   parseIndonesianFinancialCommands,
+  parseIndonesianSpokenAmount,
 } from '../../utils/indonesianNlpParser';
 import {
   captureExplicitMemoryInstruction,
@@ -865,15 +866,22 @@ function dispatchAiAgentRoute(
 
     // 12b. Indonesia Wealth Calculators: PPh 21, Zakat, Dana Pendidikan & Dana Pensiun
     if (/(?:\bpph\b|pph\s*21|pajak\s*penghasilan|\bptkp\b|\bzakat\b|nishab|nisab|\bmaal\b|dana\s*pendidikan|biaya\s*kuliah|uang\s*pangkal|pendidikan\s*anak|\bpensiun\b|hari\s*tua)/i.test(message)) {
-      const numMatch = message.match(/(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|m|miliar)?/i);
-      let parsedNum = 0;
-      if (numMatch) {
-        const rawVal = Number(numMatch[1].replace(',', '.'));
-        const unit = (numMatch[2] || '').toLowerCase();
-        if (unit === 'm' || unit === 'miliar') parsedNum = rawVal * 1_000_000_000;
-        else if (unit === 'jt' || unit === 'juta') parsedNum = rawVal * 1_000_000;
-        else if (unit === 'rb' || unit === 'ribu') parsedNum = rawVal * 1_000;
-        else parsedNum = rawVal;
+      // Strip non-monetary numbers ("PPh 21", "K/1", "10 tahun", "usia 30") before extracting Rp amounts
+      const moneyText = message
+        .replace(/\bpph\s*21\b/gi, 'pph')
+        .replace(/\b(?:tk|k)\/[0-3]\b/gi, ' ')
+        .replace(/\b\d{1,2}\s*tahun\b/gi, ' ')
+        .replace(/\b(?:usia|umur)\s*\d{2}\b/gi, ' ');
+      let parsedNum = parseIndonesianSpokenAmount(moneyText) || 0;
+      if (!parsedNum) {
+        const numMatch = moneyText.match(/(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|m|miliar)/i);
+        if (numMatch) {
+          const rawVal = Number(numMatch[1].replace(',', '.'));
+          const unit = numMatch[2].toLowerCase();
+          if (unit === 'm' || unit === 'miliar') parsedNum = rawVal * 1_000_000_000;
+          else if (unit === 'jt' || unit === 'juta') parsedNum = rawVal * 1_000_000;
+          else if (unit === 'rb' || unit === 'ribu') parsedNum = rawVal * 1_000;
+        }
       }
 
       if (/(?:\bpph\b|pph\s*21|pajak\s*penghasilan|\bptkp\b)/i.test(message)) {

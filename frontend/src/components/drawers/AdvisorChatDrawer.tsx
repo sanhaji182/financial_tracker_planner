@@ -358,13 +358,37 @@ export const AdvisorChatDrawer: React.FC = () => {
   }, [isOpen, alertsDismissed, messages.length]);
 
   useEffect(() => {
-    if (messagesEndRef.current && typeof messagesEndRef.current.scrollIntoView === 'function') {
-      messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [messages, isLoading]);
+    if (!isOpen) return;
+    const scrollToLatest = () => {
+      const endEl = messagesEndRef.current;
+      if (!endEl) return;
+      const parent = endEl.parentElement;
+      if (parent && parent.scrollHeight > parent.clientHeight) {
+        parent.scrollTop = parent.scrollHeight;
+      } else if (typeof endEl.scrollIntoView === 'function') {
+        endEl.scrollIntoView({ block: 'end' });
+      }
+    };
+    const rafId =
+      typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function'
+        ? window.requestAnimationFrame(scrollToLatest)
+        : (scrollToLatest(), 0);
+    const tId = setTimeout(scrollToLatest, 180);
+    const vv = typeof window !== 'undefined' ? window.visualViewport : undefined;
+    vv?.addEventListener?.('resize', scrollToLatest);
+    return () => {
+      if (rafId && typeof window.cancelAnimationFrame === 'function') {
+        window.cancelAnimationFrame(rafId);
+      }
+      clearTimeout(tId);
+      vv?.removeEventListener?.('resize', scrollToLatest);
+    };
+  }, [messages, isLoading, isOpen]);
 
   useEffect(() => {
-    if (isOpen && inputRef.current) {
+    // Only auto-focus on desktop (>=640px) so mobile soft keyboards do not cover popular prompts/input
+    const isDesktop = typeof window === 'undefined' || window.innerWidth >= 640;
+    if (isOpen && isDesktop && inputRef.current) {
       setTimeout(() => inputRef.current?.focus(), 100);
     }
   }, [isOpen]);
@@ -639,17 +663,35 @@ export const AdvisorChatDrawer: React.FC = () => {
         briefing.highlights && briefing.highlights.length > 0
           ? `\n\n• ${briefing.highlights.join('\n• ')}`
           : '';
+      const msgId = `brf-${Date.now()}`;
+      const fullText = `**${briefing.title}**\n\n${briefing.summary}${bulletText}`;
+      const replies = [
+        'Simulasikan dana pensiun saya',
+        'Hitung estimasi PPh 21 tahunan',
+        'Cek kuota jajan harian bulan ini',
+      ];
       const briefingMsg: ChatMessage = {
-        clientId: `brf-${Date.now()}`,
+        clientId: msgId,
         role: 'assistant',
-        text: `**${briefing.title}**\n\n${briefing.summary}${bulletText}`,
-        suggested_replies: [
-          'Simulasikan dana pensiun saya',
-          'Hitung estimasi PPh 21 tahunan',
-          'Cek kuota jajan harian bulan ini',
-        ],
+        text: fullText,
+        suggested_replies: replies,
       };
       setMessages((prev) => [...prev, briefingMsg]);
+      if (getAppMode() === 'local') {
+        const { loadLocalDB: getDb, saveLocalDB: putDb } = await import('../../offline/storage');
+        const db = getDb();
+        db.advisor_chat_history = [
+          ...(db.advisor_chat_history || []),
+          {
+            id: msgId,
+            sender: 'ai' as const,
+            text: fullText,
+            suggestedReplies: replies,
+            timestamp: new Date().toISOString(),
+          },
+        ].slice(-60);
+        putDb(db);
+      }
     } catch {
       toast.error('Gagal memuat briefing harian');
     } finally {
@@ -692,31 +734,33 @@ export const AdvisorChatDrawer: React.FC = () => {
             onClick={() => setIsOpen(false)}
           />
           <div className="fixed bottom-0 right-0 sm:bottom-6 sm:right-6 z-50 w-full sm:w-[400px] h-[85dvh] sm:h-auto sm:max-h-[600px] flex flex-col shadow-2xl rounded-t-2xl sm:rounded-2xl overflow-hidden bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 pb-safe sm:pb-0 animate-slide-up sm:animate-scale-up">
-          <div className="flex items-center justify-between px-4 py-3.5 bg-indigo-600 text-white shrink-0">
-            <div className="flex items-center gap-2.5">
-              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center">
+          <div className="flex items-center justify-between gap-2 px-3.5 py-3 bg-indigo-600 text-white shrink-0">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center shrink-0">
                 <Bot className="w-5 h-5" />
               </div>
-              <div>
-                <h3 className="font-display text-sm font-bold leading-none">AI Financial Advisor</h3>
-                <p className="text-[11px] text-indigo-100 mt-0.5">Asisten Analisis Keuangan Keluarga</p>
+              <div className="min-w-0">
+                <h3 className="font-display text-sm font-bold leading-tight truncate">AI Financial Advisor</h3>
+                <p className="text-[11px] text-indigo-100 mt-0.5 truncate">Asisten Keuangan Keluarga</p>
               </div>
             </div>
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1 shrink-0">
               <button
                 type="button"
                 disabled={isLoading}
                 onClick={() => void handleShowBriefing()}
-                className="text-indigo-100 hover:text-white px-2 py-1 rounded-lg hover:bg-white/10 transition-colors text-xs font-medium"
+                aria-label="Briefing Harian"
+                className="whitespace-nowrap bg-white/15 hover:bg-white/25 text-white px-2.5 py-1 rounded-lg transition-colors text-[11px] font-semibold"
                 title="Tampilkan briefing keuangan hari ini"
               >
-                Briefing Harian
+                <span className="sm:hidden">Briefing</span>
+                <span className="hidden sm:inline">Briefing Harian</span>
               </button>
               {messages.length > 0 && (
                 <button
                   type="button"
                   onClick={handleClearChat}
-                  className="text-indigo-100 hover:text-white px-2 py-1 rounded-lg hover:bg-white/10 transition-colors text-xs font-medium"
+                  className="whitespace-nowrap text-indigo-100 hover:text-white px-2 py-1 rounded-lg hover:bg-white/10 transition-colors text-xs font-medium"
                 >
                   Hapus
                 </button>
@@ -975,7 +1019,40 @@ export const AdvisorChatDrawer: React.FC = () => {
                       {msg.role === 'assistant' && msg.reason && (
                         <div className="pt-1.5 border-t border-slate-200 dark:border-slate-700 mt-1.5">
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            <strong>Alasan:</strong> {msg.reason}
+                            <strong>Alasan:</strong>{' '}
+                              {(
+                              {
+                                'agentic-nlp-on-device': 'Diproses otomatis dari perintah transaksi Anda di perangkat.',
+                                'agentic-nlp-on-device-multi': 'Memisahkan beberapa item transaksi sekaligus berdasarkan akun dan kategori Anda.',
+                                'agentic-transfer-on-device': 'Diproses otomatis sebagai transfer antar rekening Anda.',
+                                'agentic-pay-bill-on-device': 'Mencocokkan tagihan aktif beserta rekening pembayarannya.',
+                                'agentic-pay-debt-on-device': 'Mencocokkan kewajiban/cicilan aktif beserta rekening pembayarannya.',
+                                'agentic-contribute-goal-on-device': 'Menyiapkan setoran ke target tabungan yang sesuai.',
+                                'agentic-delete-transaction-on-device': 'Mencocokkan transaksi terakhir yang ingin dibatalkan.',
+                                'agentic-budget-on-device': 'Menyiapkan batas anggaran kategori bulan ini.',
+                                'agentic-goal-on-device': 'Menyiapkan target tabungan baru.',
+                                'local-what-if-simulation': 'Simulasi dampak komitmen cicilan baru terhadap surplus kas & DTI Anda.',
+                                'local-daily-quota-runway': 'Dihitung dari sisa safe-to-spend dibagi sisa hari pada bulan berjalan.',
+                                'local-mom-comparison': 'Membandingkan total pengeluaran bulan ini terhadap bulan sebelumnya.',
+                                'local-503020-planner': 'Dihitung memakai alokasi sehat 50% kebutuhan, 30% keinginan, dan 20% tabungan.',
+                                'local-bills-analysis': 'Disarikan dari tagihan rutin aktif terdekat dan saldo rekening.',
+                                'local-debt-analysis': 'Disusun dari daftar utang aktif beserta rasio cicilan Anda.',
+                                'local-debt-avalanche-snowball': 'Disimulasikan dengan strategi Avalanche/Snowball beserta percepatan cicilan.',
+                                'local-wealth-overview': 'Menggabungkan saldo kas likuid, portofolio aset, dan total kewajiban aktif.',
+                                'local-subscriptions-audit': 'Dihitung dari daftar langganan berulang aktif saat ini.',
+                                'local-transaction-search': 'Dihitung dari riwayat transaksi yang cocok pada data perangkat Anda.',
+                                'local-accounts-snapshot': 'Merangkum saldo seluruh rekening aktif yang tersimpan.',
+                                'local-goals-progress': 'Merangkum progres seluruh target tabungan aktif Anda.',
+                                'local-pph21-calculator': 'Dihitung memakai lapisan tarif progresif UU HPP dan PTKP resmi.',
+                                'local-zakat-calculator': 'Mengacu pada ketentuan nishab 85 gram emas dan tarif zakat 2,5%.',
+                                'local-education-calculator': 'Memperhitungkan inflasi biaya pendidikan ~10%/tahun dan compounding bulanan.',
+                                'local-retirement-calculator': 'Dihitung dari estimasi pengeluaran pensiun, aset saat ini, dan imbal hasil.',
+                                'local-watchdog-analysis': 'Dihitung dari analisis pengeluaran bulan berjalan & sistem pemantau proaktif.',
+                                'local-offline-analysis': 'Dihitung langsung dari kas likuid, utang, dan cakupan dana darurat Anda.',
+                                'local-attachment-notice': 'Lampiran dideteksi di perangkat; aktifkan provider Vision AI untuk membaca gambar otomatis.',
+                                'local-advisor-memory': 'Preferensi disimpan aman ke memori AI Advisor.',
+                              } as Record<string, string>
+                            )[msg.reason] || msg.reason}
                           </p>
                         </div>
                       )}

@@ -893,6 +893,7 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
     // 2. Chat prompts for PPh 21 & Pensiun auto-persist into /ai/history and db.advisor_chat_history
     const pphChat = await aiSettingsService.chat('Hitung PPh 21 gaji 15jt K/1', []);
     expect(pphChat.response).toMatch(/PPh 21/i);
+    expect(pphChat.response).toMatch(/15\.000\.000/);
     expect(pphChat.response).toMatch(/63\.000\.000/);
 
     const pensChat = await aiSettingsService.chat('Simulasi dana pensiun usia 30 pensiun usia 55', []);

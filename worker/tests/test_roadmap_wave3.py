@@ -550,7 +550,7 @@ def test_v4_indonesia_wealth_calculators_in_tools_and_chat():
     assert ret["target_corpus"] > 0
 
     pph_chat = asyncio.run(chat_advisor("Tolong hitung PPh 21 gaji 15jt K/1", ctx, "local", "default", None))
-    assert "PPh 21" in pph_chat["response"] and "63.000.000" in pph_chat["response"]
+    assert "PPh 21" in pph_chat["response"] and "15.000.000" in pph_chat["response"] and "63.000.000" in pph_chat["response"]
 
     zakat_chat = asyncio.run(chat_advisor("Hitung zakat maal dan zakat profesi saya", ctx, "local", "default", None))
     assert "Zakat Maal" in zakat_chat["response"] and "Wajib" in zakat_chat["response"]
