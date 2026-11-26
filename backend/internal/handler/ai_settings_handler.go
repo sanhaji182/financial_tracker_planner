@@ -27,6 +27,9 @@ type AISettingsHandler struct {
 	txService         service.TransactionService
 	debtService       service.DebtService
 	goalService       service.GoalService
+	billService       service.BillService
+	assetService      service.AssetService
+	subService        service.SubscriptionService
 	householdResolver HouseholdOwnerResolver
 }
 
@@ -65,6 +68,18 @@ func (h *AISettingsHandler) WithPlannerContextServices(
 	h.txService = txService
 	h.debtService = debtService
 	h.goalService = goalService
+	return h
+}
+
+// WithExtendedWealthServices wires bill, asset, and subscription services so AI Advisor reasons over full household net worth & commitments.
+func (h *AISettingsHandler) WithExtendedWealthServices(
+	billService service.BillService,
+	assetService service.AssetService,
+	subService service.SubscriptionService,
+) *AISettingsHandler {
+	h.billService = billService
+	h.assetService = assetService
+	h.subService = subService
 	return h
 }
 
@@ -262,14 +277,17 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 	}
 
 	var recentTransactions []map[string]interface{}
+	var searchableTransactions []map[string]interface{}
+	var monthlyHistory []map[string]interface{}
 	var spendingAnalytics map[string]interface{}
 	if h.txService != nil {
-		if txList, tErr := h.txService.GetTransactions(ctx, ownerID, map[string]interface{}{}, 1, 100, "date", "desc"); tErr == nil && txList != nil {
+		if txList, tErr := h.txService.GetTransactions(ctx, ownerID, map[string]interface{}{}, 1, 200, "date", "desc"); tErr == nil && txList != nil {
 			now := time.Now()
 			curMonthPrefix := now.Format("2006-01")
 			prevMonthPrefix := now.AddDate(0, -1, 0).Format("2006-01")
 			var curMonthExpense, prevMonthExpense float64
 			catTotals := make(map[string]float64)
+			monthlyMap := make(map[string][2]float64) // [income, expense]
 
 			for _, t := range txList.Data {
 				if sharedOnly && !allowedAccountIDs[t.AccountID] {
@@ -284,8 +302,25 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 					catName = *t.CategoryName
 				}
 				dateStr := t.Date.Format("2006-01-02")
-				if len(recentTransactions) < 15 {
-					recentTransactions = append(recentTransactions, map[string]interface{}{
+				monthKey := t.Date.Format("2006-01")
+				row := map[string]interface{}{
+					"id":            t.ID,
+					"date":          dateStr,
+					"type":          t.Type,
+					"amount":        t.Amount,
+					"description":   desc,
+					"account_id":    t.AccountID,
+					"account_name":  t.AccountName,
+					"category_name": catName,
+				}
+				if t.CategoryID != nil {
+					row["category_id"] = *t.CategoryID
+				}
+				if len(recentTransactions) < 20 {
+					recentTransactions = append(recentTransactions, row)
+				}
+				if len(searchableTransactions) < 150 {
+					searchableTransactions = append(searchableTransactions, map[string]interface{}{
 						"id":            t.ID,
 						"date":          dateStr,
 						"type":          t.Type,
@@ -295,7 +330,14 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 						"category_name": catName,
 					})
 				}
-				if t.Type == "expense" {
+				if t.Type == "income" {
+					pair := monthlyMap[monthKey]
+					pair[0] += t.Amount
+					monthlyMap[monthKey] = pair
+				} else if t.Type == "expense" {
+					pair := monthlyMap[monthKey]
+					pair[1] += t.Amount
+					monthlyMap[monthKey] = pair
 					if strings.HasPrefix(dateStr, curMonthPrefix) {
 						curMonthExpense += t.Amount
 						cname := catName
@@ -307,6 +349,24 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 						prevMonthExpense += t.Amount
 					}
 				}
+			}
+
+			monthKeys := make([]string, 0, len(monthlyMap))
+			for mk := range monthlyMap {
+				monthKeys = append(monthKeys, mk)
+			}
+			sort.Sort(sort.Reverse(sort.StringSlice(monthKeys)))
+			if len(monthKeys) > 6 {
+				monthKeys = monthKeys[:6]
+			}
+			for _, mk := range monthKeys {
+				pair := monthlyMap[mk]
+				monthlyHistory = append(monthlyHistory, map[string]interface{}{
+					"month":   mk,
+					"income":  pair[0],
+					"expense": pair[1],
+					"net":     pair[0] - pair[1],
+				})
 			}
 
 			daysElapsed := now.Day()
@@ -346,6 +406,7 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 	}
 
 	var activeDebts []map[string]interface{}
+	var avalancheBaseline map[string]interface{}
 	if h.debtService != nil {
 		if debts, dErr := h.debtService.GetDebts(ctx, ownerID); dErr == nil {
 			for _, d := range debts {
@@ -356,6 +417,7 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 					continue
 				}
 				entry := map[string]interface{}{
+					"id":                  d.ID,
 					"name":                d.Name,
 					"type":                d.Type,
 					"outstanding_balance": d.OutstandingBalance,
@@ -370,7 +432,21 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 				if d.DueDay != nil {
 					entry["due_day"] = *d.DueDay
 				}
+				if d.AccountID != nil {
+					entry["account_id"] = *d.AccountID
+				}
 				activeDebts = append(activeDebts, entry)
+			}
+			if !sharedOnly && len(activeDebts) > 0 {
+				if sim, sErr := h.debtService.SimulateAvalanche(ctx, ownerID, 0); sErr == nil && sim != nil {
+					avalancheBaseline = map[string]interface{}{
+						"months_to_payoff":    sim.MonthsToPayoff,
+						"total_interest_paid": sim.TotalInterestPaid,
+					}
+					if len(sim.SchedulesWithExtra) > 0 {
+						avalancheBaseline["first_payoff_debt"] = sim.SchedulesWithExtra[0].DebtName
+					}
+				}
 			}
 		}
 	}
@@ -383,6 +459,7 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 					continue
 				}
 				entry := map[string]interface{}{
+					"id":             g.ID,
 					"name":           g.Name,
 					"target_amount":  g.TargetAmount,
 					"current_amount": g.CurrentAmount,
@@ -392,22 +469,125 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 				if g.TargetDate != nil {
 					entry["target_date"] = *g.TargetDate
 				}
+				if g.LinkedAccountID != nil {
+					entry["linked_account_id"] = *g.LinkedAccountID
+				}
 				activeGoals = append(activeGoals, entry)
 			}
 		}
 	}
 
+	var upcomingBills []map[string]interface{}
+	if h.billService != nil {
+		if bills, billErr := h.billService.ListBills(ctx, ownerID, "", ""); billErr == nil {
+			for _, b := range bills {
+				if b.Status == "paid" || b.Status == "cancelled" {
+					continue
+				}
+				if sharedOnly && b.AccountID != nil && !allowedAccountIDs[*b.AccountID] {
+					continue
+				}
+				entry := map[string]interface{}{
+					"id":            b.ID,
+					"name":          b.Name,
+					"amount":        b.Amount,
+					"next_due_date": b.NextDueDate,
+					"status":        b.Status,
+					"frequency":     b.Frequency,
+				}
+				if b.AccountID != nil {
+					entry["account_id"] = *b.AccountID
+				}
+				if b.AccountName != nil {
+					entry["account_name"] = *b.AccountName
+				}
+				upcomingBills = append(upcomingBills, entry)
+			}
+		}
+	}
+
+	var assetsList []map[string]interface{}
+	var assetSummary map[string]interface{}
+	if h.assetService != nil {
+		var sharedPtr *bool
+		if sharedOnly {
+			val := true
+			sharedPtr = &val
+		}
+		if assets, aErr := h.assetService.GetAssets(ctx, ownerID, nil, sharedPtr); aErr == nil {
+			var totalAssetsVal, totalLiquidVal float64
+			for _, a := range assets {
+				totalAssetsVal += a.CurrentValue
+				if a.IsLiquid {
+					totalLiquidVal += a.CurrentValue
+				}
+				assetsList = append(assetsList, map[string]interface{}{
+					"id":            a.ID,
+					"name":          a.Name,
+					"type":          a.Type,
+					"current_value": a.CurrentValue,
+					"is_liquid":     a.IsLiquid,
+				})
+			}
+			assetSummary = map[string]interface{}{
+				"total_assets": totalAssetsVal,
+				"total_liquid": totalLiquidVal,
+				"count":        len(assetsList),
+			}
+		}
+	}
+
+	var subscriptionsList []map[string]interface{}
+	var monthlySubCost float64
+	if h.subService != nil {
+		if subs, subErr := h.subService.ListSubscriptions(ctx, ownerID); subErr == nil {
+			for _, s := range subs {
+				if !s.IsActive {
+					continue
+				}
+				switch strings.ToLower(s.Frequency) {
+				case "yearly":
+					monthlySubCost += s.Amount / 12.0
+				case "weekly":
+					monthlySubCost += s.Amount * 4.33
+				default:
+					monthlySubCost += s.Amount
+				}
+				entry := map[string]interface{}{
+					"id":             s.ID,
+					"name":           s.Name,
+					"provider":       s.Provider,
+					"amount":         s.Amount,
+					"frequency":      s.Frequency,
+					"unused_warning": s.UnusedWarning,
+				}
+				if s.NextRenewalDate != nil {
+					entry["next_renewal_date"] = *s.NextRenewalDate
+				}
+				subscriptionsList = append(subscriptionsList, entry)
+			}
+		}
+	}
+
 	return map[string]interface{}{
-		"dashboard":           dashboard,
-		"emergency_fund":      efSummary,
-		"budget":              budgetSummary,
-		"budget_categories":   budgetCategories,
-		"accounts":            accountCatalog,
-		"categories":          categoryCatalog,
-		"recent_transactions": recentTransactions,
-		"spending_analytics":  spendingAnalytics,
-		"debts":               activeDebts,
-		"goals":               activeGoals,
+		"dashboard":                 dashboard,
+		"emergency_fund":            efSummary,
+		"budget":                    budgetSummary,
+		"budget_categories":         budgetCategories,
+		"accounts":                  accountCatalog,
+		"categories":                categoryCatalog,
+		"recent_transactions":       recentTransactions,
+		"searchable_transactions":   searchableTransactions,
+		"monthly_history":           monthlyHistory,
+		"spending_analytics":        spendingAnalytics,
+		"debts":                     activeDebts,
+		"avalanche_baseline":        avalancheBaseline,
+		"goals":                     activeGoals,
+		"upcoming_bills":            upcomingBills,
+		"assets":                    assetsList,
+		"asset_summary":             assetSummary,
+		"subscriptions":             subscriptionsList,
+		"monthly_subscription_cost": monthlySubCost,
 		"financial_guidance_policy": map[string]interface{}{
 			"purpose":      "education_and_decision_support_only",
 			"must_explain": []string{"data_used", "assumptions", "missing_data", "confidence", "alternatives"},
@@ -415,6 +595,35 @@ func (h *AISettingsHandler) buildChatWorkerContext(ctx context.Context, ownerID 
 			"disclaimer":   "Bukan nasihat investasi personal teregulasi; verifikasi keputusan material dengan profesional berizin.",
 		},
 	}, nil
+}
+
+func validateAndPrepareChatPayload(req dto.AIChatRequest, workerContext map[string]interface{}) (map[string]interface{}, int, string) {
+	if strings.TrimSpace(req.Message) == "" && len(req.Attachments) == 0 {
+		return nil, http.StatusBadRequest, "Pesan atau lampiran struk wajib diisi"
+	}
+	if len(req.Attachments) > 3 {
+		return nil, http.StatusBadRequest, "Maksimal 3 lampiran per pesan"
+	}
+	for _, att := range req.Attachments {
+		if len(att.DataBase64) > 7_000_000 {
+			return nil, http.StatusRequestEntityTooLarge, "Ukuran lampiran terlalu besar (maksimal 5MB per file)"
+		}
+	}
+	if len(req.Preferences) > 0 {
+		workerContext["learned_preferences"] = req.Preferences
+	}
+	payload := map[string]interface{}{
+		"message": req.Message,
+		"context": workerContext,
+		"history": req.History,
+	}
+	if len(req.Attachments) > 0 {
+		payload["attachments"] = req.Attachments
+	}
+	if len(req.Preferences) > 0 {
+		payload["preferences"] = req.Preferences
+	}
+	return payload, 0, ""
 }
 
 func (h *AISettingsHandler) Chat(c *gin.Context) {
@@ -446,10 +655,15 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 		return
 	}
 
-	workerPayload := map[string]interface{}{
-		"message": req.Message,
-		"context": workerContext,
-		"history": req.History,
+	workerPayload, errStatus, errMsg := validateAndPrepareChatPayload(req, workerContext)
+	if errStatus != 0 {
+		c.JSON(errStatus, gin.H{
+			"error": gin.H{
+				"code":    "BAD_REQUEST",
+				"message": errMsg,
+			},
+		})
+		return
 	}
 
 	var workerResp dto.AIChatResponse
@@ -492,10 +706,12 @@ func (h *AISettingsHandler) ChatStream(c *gin.Context) {
 		return
 	}
 
-	workerPayload := map[string]interface{}{
-		"message": req.Message,
-		"context": workerContext,
-		"history": req.History,
+	workerPayload, errStatus, errMsg := validateAndPrepareChatPayload(req, workerContext)
+	if errStatus != 0 {
+		c.JSON(errStatus, gin.H{
+			"error": gin.H{"code": "BAD_REQUEST", "message": errMsg},
+		})
+		return
 	}
 
 	c.Header("Content-Type", "text/event-stream")

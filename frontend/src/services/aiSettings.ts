@@ -28,7 +28,11 @@ export type AgenticActionType =
   | 'create_transaction'
   | 'create_transfer'
   | 'set_budget'
-  | 'create_goal';
+  | 'create_goal'
+  | 'pay_bill'
+  | 'pay_debt'
+  | 'contribute_goal'
+  | 'delete_transaction';
 
 export interface AgenticAction {
   id: string;
@@ -38,9 +42,20 @@ export interface AgenticAction {
   payload: Record<string, unknown>;
 }
 
+export interface AIChatAttachment {
+  name: string;
+  mime_type: string;
+  data_base64: string;
+}
+
 export interface AIChatTurn {
   role: 'user' | 'assistant';
   content: string;
+}
+
+export interface AIChatExtraOptions {
+  attachments?: AIChatAttachment[];
+  preferences?: Record<string, unknown>;
 }
 
 export interface AIChatMessage {
@@ -73,15 +88,23 @@ export const aiSettingsService = {
     await api.put('/settings/ai', settings);
   },
 
-  chat: async (message: string, history?: AIChatTurn[]): Promise<AIChatMessage> => {
+  chat: async (
+    message: string,
+    history?: AIChatTurn[],
+    options?: AIChatExtraOptions
+  ): Promise<AIChatMessage> => {
     if (getAppMode() === 'local') {
       const { runHybridAdvisorChat } = await import('../offline/hybridAdvisor');
-      const hybridRes = await runHybridAdvisorChat(message, history || []);
+      const hybridRes = await runHybridAdvisorChat(message, history || [], undefined, options);
       if (hybridRes) return hybridRes;
     }
     const response = await api.post<{ data: AIChatMessage }>('/ai/chat', {
       message,
       ...(history && history.length > 0 ? { history } : {}),
+      ...(options?.attachments && options.attachments.length > 0
+        ? { attachments: options.attachments }
+        : {}),
+      ...(options?.preferences ? { preferences: options.preferences } : {}),
     });
     return response.data.data;
   },
@@ -97,16 +120,17 @@ export const aiSettingsService = {
       }) => void;
       onDelta?: (chunk: string) => void;
       onDone?: (finalResult: AIChatMessage) => void;
-    }
+    },
+    options?: AIChatExtraOptions
   ): Promise<AIChatMessage> => {
     // In local offline mode, use direct Hybrid LLM stream if configured, else deterministic local engine
     if (getAppMode() === 'local' || typeof fetch !== 'function') {
       if (getAppMode() === 'local') {
         const { runHybridAdvisorChat } = await import('../offline/hybridAdvisor');
-        const hybridRes = await runHybridAdvisorChat(message, history, handlers);
+        const hybridRes = await runHybridAdvisorChat(message, history, handlers, options);
         if (hybridRes) return hybridRes;
       }
-      const res = await aiSettingsService.chat(message, history);
+      const res = await aiSettingsService.chat(message, history, options);
       handlers.onMeta?.({
         reason: res.reason,
         proposed_actions: res.proposed_actions,
@@ -127,11 +151,18 @@ export const aiSettingsService = {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         credentials: 'include',
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({
+          message,
+          history,
+          ...(options?.attachments && options.attachments.length > 0
+            ? { attachments: options.attachments }
+            : {}),
+          ...(options?.preferences ? { preferences: options.preferences } : {}),
+        }),
       });
 
       if (!resp.ok || !resp.body || typeof resp.body.getReader !== 'function') {
-        const res = await aiSettingsService.chat(message, history);
+        const res = await aiSettingsService.chat(message, history, options);
         handlers.onMeta?.({
           reason: res.reason,
           proposed_actions: res.proposed_actions,

@@ -465,13 +465,351 @@ def mock_categorize(description: str, merchant: str, available_categories: List[
     return {"category_id": "", "category_name": "", "confidence": 0.0}
 
 
-# 3. Advisor Chat Service — Indonesian Agentic Action Parser
+# 3. Advisor Chat Service — Indonesian Agentic Action Parser & V3 Tool Engine
 VALID_AGENTIC_ACTION_TYPES = {
     "create_transaction",
     "create_transfer",
     "set_budget",
     "create_goal",
+    "pay_bill",
+    "pay_debt",
+    "contribute_goal",
+    "delete_transaction",
 }
+
+
+def _format_rp(val: float) -> str:
+    return f"Rp {round(float(val or 0)):,}".replace(",", ".")
+
+
+def _tool_search_transactions(
+    context_data: Dict[str, Any],
+    keyword: str = "",
+    tx_type: str = "",
+    month: str = "",
+    limit: int = 12,
+) -> Dict[str, Any]:
+    txs = context_data.get("searchable_transactions") or context_data.get("recent_transactions") or []
+    kw = (keyword or "").strip().lower()
+    tp = (tx_type or "").strip().lower()
+    mn = (month or "").strip()
+    lim = max(1, min(int(limit or 12), 25))
+    matches: List[Dict[str, Any]] = []
+    total = 0.0
+    count = 0
+    for tx in txs:
+        if not isinstance(tx, dict):
+            continue
+        if tp and str(tx.get("type") or "").lower() != tp:
+            continue
+        d_str = str(tx.get("date") or "")
+        if mn and not d_str.startswith(mn):
+            continue
+        hay = " ".join(
+            str(tx.get(k) or "")
+            for k in ("description", "category_name", "account_name")
+        ).lower()
+        if kw and kw not in hay:
+            continue
+        amt = float(tx.get("amount") or 0)
+        count += 1
+        total += amt
+        if len(matches) < lim:
+            matches.append(
+                {
+                    "id": tx.get("id"),
+                    "date": d_str,
+                    "type": tx.get("type"),
+                    "amount": amt,
+                    "description": tx.get("description") or tx.get("category_name") or "-",
+                    "category_name": tx.get("category_name") or "-",
+                    "account_name": tx.get("account_name") or "-",
+                }
+            )
+    return {"count": count, "total_amount": total, "matches": matches}
+
+
+def _tool_simulate_debt_payoff(
+    context_data: Dict[str, Any],
+    strategy: str = "avalanche",
+    extra_monthly: float = 0.0,
+) -> Dict[str, Any]:
+    debts = context_data.get("debts") or []
+    active = [
+        {
+            "name": str(d.get("name") or "Utang"),
+            "balance": float(d.get("outstanding_balance") or 0),
+            "apr": float(d.get("interest_rate") or 0),
+            "min_pay": max(float(d.get("minimum_payment") or 0), float(d.get("outstanding_balance") or 0) * 0.03),
+        }
+        for d in debts
+        if isinstance(d, dict) and float(d.get("outstanding_balance") or 0) > 0
+    ]
+    if not active:
+        return {"active_debts": 0, "months_to_payoff": 0, "total_interest_paid": 0.0, "priority_order": []}
+
+    strat = (strategy or "avalanche").strip().lower()
+    if strat not in ("avalanche", "snowball"):
+        strat = "avalanche"
+
+    def _run_sim(extra: float) -> Tuple[int, float, List[str]]:
+        items = [dict(it) for it in active]
+        total_int = 0.0
+        months = 0
+        paid_order: List[str] = []
+        while months < 180 and any(it["balance"] > 1.0 for it in items):
+            months += 1
+            for it in items:
+                if it["balance"] <= 0:
+                    continue
+                interest = it["balance"] * (it["apr"] / 100.0 / 12.0)
+                total_int += interest
+                it["balance"] += interest
+            budget_left = extra
+            for it in items:
+                if it["balance"] <= 0:
+                    continue
+                pay = min(it["balance"], it["min_pay"])
+                it["balance"] -= pay
+                if it["balance"] <= 1.0:
+                    it["balance"] = 0.0
+                    if it["name"] not in paid_order:
+                        paid_order.append(it["name"])
+            if budget_left > 0:
+                rem = [it for it in items if it["balance"] > 1.0]
+                if strat == "avalanche":
+                    rem.sort(key=lambda x: (-x["apr"], x["balance"]))
+                else:
+                    rem.sort(key=lambda x: (x["balance"], -x["apr"]))
+                for it in rem:
+                    if budget_left <= 0:
+                        break
+                    apply_amt = min(it["balance"], budget_left)
+                    it["balance"] -= apply_amt
+                    budget_left -= apply_amt
+                    if it["balance"] <= 1.0:
+                        it["balance"] = 0.0
+                        if it["name"] not in paid_order:
+                            paid_order.append(it["name"])
+        return months, round(total_int), paid_order
+
+    base_m, base_int, _ = _run_sim(0.0)
+    extra_val = max(0.0, float(extra_monthly or 0.0))
+    sim_m, sim_int, order = _run_sim(extra_val)
+    if not order:
+        sorted_items = sorted(active, key=(lambda x: -x["apr"]) if strat == "avalanche" else (lambda x: x["balance"]))
+        order = [x["name"] for x in sorted_items]
+
+    return {
+        "strategy": strat,
+        "extra_monthly": extra_val,
+        "active_debts": len(active),
+        "months_baseline": base_m,
+        "interest_baseline": base_int,
+        "months_to_payoff": sim_m,
+        "total_interest_paid": sim_int,
+        "months_saved": max(0, base_m - sim_m),
+        "interest_saved": max(0, base_int - sim_int),
+        "priority_order": order,
+    }
+
+
+def _tool_get_wealth_overview(context_data: Dict[str, Any]) -> Dict[str, Any]:
+    dashboard = context_data.get("dashboard") or {}
+    accounts = context_data.get("accounts") or []
+    assets = context_data.get("assets") or []
+    asset_summary = context_data.get("asset_summary") or {}
+    bills = context_data.get("upcoming_bills") or dashboard.get("upcoming_bills") or []
+    subs = context_data.get("subscriptions") or []
+    monthly_sub = float(context_data.get("monthly_subscription_cost") or 0)
+    debts = context_data.get("debts") or []
+
+    total_cash = sum(float(a.get("balance") or 0) for a in accounts if isinstance(a, dict))
+    total_assets = float(
+        asset_summary.get("total_assets")
+        or sum(float(a.get("current_value") or 0) for a in assets if isinstance(a, dict))
+    )
+    total_debts = sum(float(d.get("outstanding_balance") or 0) for d in debts if isinstance(d, dict))
+    total_bills = sum(float(b.get("amount") or 0) for b in bills if isinstance(b, dict))
+    return {
+        "total_liquid_cash": total_cash,
+        "total_assets": total_assets,
+        "total_liquid_assets": float(asset_summary.get("total_liquid") or 0),
+        "total_debts": total_debts,
+        "estimated_net_worth": total_cash + total_assets - total_debts,
+        "upcoming_bills_count": len(bills),
+        "upcoming_bills_total": total_bills,
+        "active_subscriptions_count": len(subs),
+        "monthly_subscription_cost": round(monthly_sub),
+        "unused_subscriptions": [s.get("name") for s in subs if isinstance(s, dict) and s.get("unused_warning")],
+        "monthly_history": (context_data.get("monthly_history") or [])[:6],
+    }
+
+
+_ADVISOR_TOOL_DECLARATIONS = [
+    {
+        "name": "search_transactions",
+        "description": "Cari transaksi berdasarkan kata kunci (mis. kopi, listrik, gaji), tipe (expense/income), atau bulan YYYY-MM untuk menghitung total & frekuensi secara akurat.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keyword": {"type": "string", "description": "Kata kunci deskripsi, kategori, atau rekening"},
+                "tx_type": {"type": "string", "description": "Filter tipe transaksi: expense atau income"},
+                "month": {"type": "string", "description": "Bulan opsional format YYYY-MM"},
+                "limit": {"type": "integer", "description": "Maksimal item detail yang dikembalikan (default 12)"},
+            },
+        },
+    },
+    {
+        "name": "simulate_debt_payoff",
+        "description": "Simulasi pelunasan seluruh utang aktif memakai metode avalanche (bunga tertinggi dulu) atau snowball (saldo terkecil dulu) beserta tambahan cicilan bulanan.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "strategy": {"type": "string", "enum": ["avalanche", "snowball"]},
+                "extra_monthly": {"type": "number", "description": "Tambahan cicilan ekstra per bulan dalam Rupiah"},
+            },
+        },
+    },
+    {
+        "name": "get_wealth_overview",
+        "description": "Mengambil ringkasan kekayaan bersih (kas + aset - utang), total aset, tagihan jatuh tempo, biaya langganan bulanan, dan tren arus kas 6 bulan.",
+        "parameters": {"type": "object", "properties": {}},
+    },
+]
+
+
+def _execute_advisor_tool(name: str, args: Any, context_data: Dict[str, Any]) -> Dict[str, Any]:
+    safe_args = args if isinstance(args, dict) else {}
+    if name == "search_transactions":
+        return _tool_search_transactions(
+            context_data,
+            keyword=str(safe_args.get("keyword") or ""),
+            tx_type=str(safe_args.get("tx_type") or ""),
+            month=str(safe_args.get("month") or ""),
+            limit=int(safe_args.get("limit") or 12),
+        )
+    if name == "simulate_debt_payoff":
+        return _tool_simulate_debt_payoff(
+            context_data,
+            strategy=str(safe_args.get("strategy") or "avalanche"),
+            extra_monthly=float(safe_args.get("extra_monthly") or 0.0),
+        )
+    if name == "get_wealth_overview":
+        return _tool_get_wealth_overview(context_data)
+    return {"error": f"Unknown tool: {name}"}
+
+
+def _normalize_chat_attachments(attachments: Optional[List[Dict[str, Any]]]) -> List[Dict[str, str]]:
+    clean_atts: List[Dict[str, str]] = []
+    for att in (attachments or [])[:3]:
+        if not isinstance(att, dict):
+            continue
+        raw_b64 = str(att.get("data_base64") or "").strip()
+        if not raw_b64:
+            continue
+        mime = str(att.get("mime_type") or "").strip() or detect_image_mime(raw_b64, str(att.get("name") or ""))
+        pure_b64 = raw_b64.split(",", 1)[1] if raw_b64.startswith("data:") and "," in raw_b64 else raw_b64
+        clean_atts.append(
+            {
+                "name": str(att.get("name") or "receipt.jpg"),
+                "mime_type": mime,
+                "data_base64": pure_b64,
+            }
+        )
+    return clean_atts
+
+
+def _extract_chat_attachments_ocr(
+    attachments: List[Dict[str, str]],
+    message: str,
+    accounts: List[Dict[str, Any]],
+    categories: List[Dict[str, Any]],
+) -> Tuple[str, List[Dict[str, Any]]]:
+    if not attachments:
+        return "", []
+    summaries: List[str] = []
+    ocr_actions: List[Dict[str, Any]] = []
+    msg_low = (message or "").lower()
+    today_default = datetime.now().strftime("%Y-%m-%d")
+
+    for att in attachments:
+        try:
+            img_bytes = base64.b64decode(att["data_base64"], validate=False)
+        except Exception:
+            continue
+        if not img_bytes or len(img_bytes) > 7 * 1024 * 1024:
+            continue
+        try:
+            from app.services.ocr_service import process_ocr_receipt
+
+            ocr_res = process_ocr_receipt(img_bytes)
+        except Exception:
+            ocr_res = {}
+
+        parsed = ocr_res.get("parsed_data") or {}
+        merchant = str(parsed.get("merchant_name") or "").strip() or att.get("name") or "Struk Belanja"
+        pay_method = str(parsed.get("payment_method") or "").strip()
+        tx_date = str(parsed.get("date") or "").strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", tx_date):
+            tx_date = today_default
+        total_val = float(parsed.get("total") or 0)
+        items = _normalize_ocr_items(parsed.get("items"))
+
+        acc = _resolve_account_from_text(f"{msg_low} {pay_method.lower()}", accounts)
+        if acc:
+            if items and len(items) >= 2:
+                for idx, it in enumerate(items[:8], start=1):
+                    item_amt = float(it.get("total") or it.get("price") or 0)
+                    if item_amt <= 0:
+                        continue
+                    cat = _resolve_category_from_text(f"{it['name']} {merchant}".lower(), categories, "expense")
+                    desc = str(it["name"]).strip().capitalize()
+                    payload: Dict[str, Any] = {
+                        "date": tx_date,
+                        "amount": round(item_amt),
+                        "type": "expense",
+                        "account_id": acc["id"],
+                        "description": desc,
+                    }
+                    if cat:
+                        payload["category_id"] = cat["id"]
+                    ocr_actions.append(
+                        {
+                            "id": f"act-ocr-{uuid.uuid4().hex[:6]}-{idx}",
+                            "type": "create_transaction",
+                            "title": f"Catat Pengeluaran: {desc}",
+                            "summary": f"{_format_rp(item_amt)} • {acc.get('name', 'Rekening')}",
+                            "payload": payload,
+                        }
+                    )
+            elif total_val > 0:
+                cat = _resolve_category_from_text(f"{merchant} {msg_low}".lower(), categories, "expense")
+                payload = {
+                    "date": tx_date,
+                    "amount": round(total_val),
+                    "type": "expense",
+                    "account_id": acc["id"],
+                    "description": merchant,
+                }
+                if cat:
+                    payload["category_id"] = cat["id"]
+                ocr_actions.append(
+                    {
+                        "id": f"act-ocr-{uuid.uuid4().hex[:8]}",
+                        "type": "create_transaction",
+                        "title": f"Catat Pengeluaran: {merchant}",
+                        "summary": f"{_format_rp(total_val)} • {acc.get('name', 'Rekening')}",
+                        "payload": payload,
+                    }
+                )
+        raw_preview = str(ocr_res.get("raw_text") or "").strip()[:300].replace("\n", " | ")
+        if total_val > 0 or raw_preview:
+            summaries.append(
+                f"Lampiran {att.get('name')}: merchant={merchant}, total={_format_rp(total_val)}, tanggal={tx_date}, item={len(items)}"
+                + (f", teks='{raw_preview}'" if raw_preview else "")
+            )
+    return "\n".join(summaries), ocr_actions
 
 _SPOKEN_UNITS = {
     "nol": 0,
@@ -829,15 +1167,54 @@ def _clean_indonesian_tx_description(clause: str, is_income: bool) -> str:
     return desc.capitalize() if desc else ("Pemasukan" if is_income else "Pengeluaran Harian")
 
 
+def _match_entity_by_text(text_lower: str, items: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    best: Optional[Dict[str, Any]] = None
+    best_len = 0
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        raw_name = str(item.get("name") or "").lower().strip()
+        if not raw_name:
+            continue
+        if raw_name in text_lower and len(raw_name) > best_len:
+            best = item
+            best_len = len(raw_name)
+            continue
+        for tok in raw_name.split():
+            if len(tok) >= 3 and tok not in ("dan", "pt", "cv", "bank", "tagihan", "dana", "target"):
+                if re.search(rf"\b{re.escape(tok)}\b", text_lower) and len(tok) > best_len:
+                    best = item
+                    best_len = len(tok)
+    return best
+
+
+def _match_learned_rule(clause_lower: str, preferences: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not isinstance(preferences, dict):
+        return None
+    rules = preferences.get("learnedRules") or preferences.get("learned_rules") or []
+    for r in rules:
+        if not isinstance(r, dict):
+            continue
+        kw = str(r.get("keyword") or "").strip().lower()
+        if kw and re.search(rf"\b{re.escape(kw)}\b", clause_lower):
+            return r
+    return None
+
+
 def parse_indonesian_action_commands(
     message: str,
     accounts: Optional[List[Dict[str, Any]]] = None,
     categories: Optional[List[Dict[str, Any]]] = None,
+    bills: Optional[List[Dict[str, Any]]] = None,
+    debts: Optional[List[Dict[str, Any]]] = None,
+    goals: Optional[List[Dict[str, Any]]] = None,
+    recent_transactions: Optional[List[Dict[str, Any]]] = None,
+    preferences: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Parses natural Indonesian financial commands (including multi-item lists such as
-    'beli kopi 10rb, susu 6rb dan warteg 5rb') into one or more executable AgenticAction schemas
-    matching frontend AdvisorChatDrawer actions.
+    'beli kopi 10rb, susu 6rb dan warteg 5rb', plus bill payments, debt installments,
+    goal contributions, and mistaken transaction deletions).
     """
     clean = (message or "").strip()
     if not clean:
@@ -845,12 +1222,141 @@ def parse_indonesian_action_commands(
     low = clean.lower()
     accounts = accounts or []
     categories = categories or []
+    bills = bills or []
+    debts = debts or []
+    goals = goals or []
+    recent_transactions = recent_transactions or []
+    today = extract_indonesian_relative_date(clean)
+    month = today[:7]
+
+    # 0. Delete / undo mistaken transaction: "hapus transaksi kopi terakhir"
+    if (
+        recent_transactions
+        and re.search(r"\b(hapus|batalkan|cancel|urungkan)\b", low)
+        and re.search(r"\b(transaksi|catatan|barusan|terakhir)\b", low)
+        and "?" not in clean
+    ):
+        hint = re.sub(
+            r"\b(tolong|coba|hapus|batalkan|cancel|urungkan|transaksi|catatan|yang|barusan|terakhir|ini)\b",
+            " ",
+            low,
+            flags=re.IGNORECASE,
+        )
+        hint = re.sub(r"\s+", " ", hint).strip()
+        ordered = sorted(recent_transactions, key=lambda t: str(t.get("date") or ""), reverse=True)
+        matched_tx = next(
+            (
+                tx
+                for tx in ordered
+                if hint and hint in f"{tx.get('description', '')} {tx.get('category_name', '')}".lower()
+            ),
+            ordered[0] if ordered else None,
+        )
+        if matched_tx and matched_tx.get("id"):
+            tx_amt = float(matched_tx.get("amount") or 0)
+            tx_desc = str(matched_tx.get("description") or matched_tx.get("category_name") or "Transaksi")
+            return [
+                {
+                    "id": f"act-{uuid.uuid4().hex[:8]}",
+                    "type": "delete_transaction",
+                    "title": f"Hapus Transaksi: {tx_desc}",
+                    "summary": f"{_format_rp(tx_amt)} • {matched_tx.get('date', today)}",
+                    "payload": {
+                        "transaction_id": matched_tx["id"],
+                        "description": tx_desc,
+                        "amount": tx_amt,
+                        "date": str(matched_tx.get("date") or today),
+                    },
+                }
+            ]
+
     amount = parse_indonesian_amount(clean)
+
+    # 0b. Pay Bill intent: "bayar tagihan listrik pakai BCA"
+    if bills and re.search(r"\b(bayar|lunasi|lunasin|tagihan)\b", low) and "?" not in clean:
+        unpaid_bills = [b for b in bills if str(b.get("status") or "") not in ("paid", "cancelled")]
+        matched_bill = _match_entity_by_text(low, unpaid_bills)
+        if matched_bill and matched_bill.get("id"):
+            explicit_acc = _resolve_account_from_text(low, accounts, fallback_first=False)
+            linked_acc = next((a for a in accounts if a.get("id") == matched_bill.get("account_id")), None)
+            use_acc = explicit_acc or linked_acc or (accounts[0] if accounts else None)
+            bill_amt = amount if amount > 0 else float(matched_bill.get("amount") or 0)
+            if use_acc and bill_amt > 0:
+                return [
+                    {
+                        "id": f"act-{uuid.uuid4().hex[:8]}",
+                        "type": "pay_bill",
+                        "title": f"Bayar Tagihan: {matched_bill.get('name')}",
+                        "summary": f"{_format_rp(bill_amt)} • {use_acc.get('name', 'Rekening')} • {today}",
+                        "payload": {
+                            "bill_id": matched_bill["id"],
+                            "amount": bill_amt,
+                            "payment_date": today,
+                            "account_id": use_acc["id"],
+                            "notes": f"Dibayar via AI Advisor: {matched_bill.get('name')}",
+                        },
+                    }
+                ]
+
+    # 0c. Pay Debt intent: "bayar cicilan SPayLater 500rb pakai BCA"
+    if debts and re.search(r"\b(bayar|cicil|cicilan|lunasi|lunasin|angsur|angsuran|utang|hutang)\b", low) and "?" not in clean:
+        active_debts = [d for d in debts if str(d.get("status") or "active") in ("active", "")]
+        matched_debt = _match_entity_by_text(low, active_debts)
+        if matched_debt and matched_debt.get("id"):
+            explicit_acc = _resolve_account_from_text(low, accounts, fallback_first=False)
+            linked_acc = next((a for a in accounts if a.get("id") == matched_debt.get("account_id")), None)
+            use_acc = explicit_acc or linked_acc or (accounts[0] if accounts else None)
+            pay_amt = amount if amount > 0 else float(matched_debt.get("minimum_payment") or matched_debt.get("outstanding_balance") or 0)
+            if use_acc and pay_amt > 0:
+                return [
+                    {
+                        "id": f"act-{uuid.uuid4().hex[:8]}",
+                        "type": "pay_debt",
+                        "title": f"Bayar Cicilan: {matched_debt.get('name')}",
+                        "summary": f"{_format_rp(pay_amt)} • {use_acc.get('name', 'Rekening')} • {today}",
+                        "payload": {
+                            "debt_id": matched_debt["id"],
+                            "amount": pay_amt,
+                            "payment_date": today,
+                            "account_id": use_acc["id"],
+                            "is_extra_payment": bool(re.search(r"\b(ekstra|extra|tambahan|percepat)\b", low)),
+                            "notes": f"Cicilan via AI Advisor: {matched_debt.get('name')}",
+                        },
+                    }
+                ]
+
     if amount <= 0:
         return []
 
-    today = extract_indonesian_relative_date(clean)
-    month = today[:7]
+    # 0d. Contribute to existing Goal intent: "nabung 1jt ke target dana liburan dari BCA"
+    if (
+        goals
+        and re.search(r"\b(setor|isi|masukkan|top\s?up|nabung)\b", low)
+        and not re.search(r"\b(buat|bikin|mulai)\s+(?:target|goal)\b", low)
+        and "?" not in clean
+    ):
+        active_goals = [g for g in goals if str(g.get("status") or "active") in ("active", "")]
+        matched_goal = _match_entity_by_text(low, active_goals)
+        if matched_goal and matched_goal.get("id"):
+            explicit_acc = _resolve_account_from_text(low, accounts, fallback_first=False)
+            linked_acc = next((a for a in accounts if a.get("id") == matched_goal.get("linked_account_id")), None)
+            use_acc = explicit_acc or linked_acc or (accounts[0] if accounts else None)
+            if use_acc:
+                return [
+                    {
+                        "id": f"act-{uuid.uuid4().hex[:8]}",
+                        "type": "contribute_goal",
+                        "title": f"Setor Target: {matched_goal.get('name')}",
+                        "summary": f"{_format_rp(amount)} • dari {use_acc.get('name', 'Rekening')}",
+                        "payload": {
+                            "goal_id": matched_goal["id"],
+                            "source_account_id": use_acc["id"],
+                            "amount": amount,
+                            "date": today,
+                            "notes": "Setoran target via AI Advisor",
+                        },
+                    }
+                ]
 
     # 1. Transfer intent: "transfer 500rb dari BCA ke GoPay", "topup gopay 200rb dr bca", "tarik tunai 300rb dr BCA"
     if re.search(r"\b(transfer|tf|kirim|pindah(?:in|kan)?(?:\s+dana)?|top\s?up|isi\s+saldo|tarik\s+tunai)\b", low):
@@ -944,7 +1450,7 @@ def parse_indonesian_action_commands(
             }
         ]
 
-    # 4. Transaction intent (single or multi-item list with per-item polarity)
+    # 4. Transaction intent (single or multi-item list with per-item polarity + learned rules)
     has_tx_verb = bool(
         re.search(
             r"\b(catat|catatkan|rekam|beli|bayar|jajan|makan|ngopi|isi\s+bensin|belanja|cicil|sedekah|infaq|zakat|pengeluaran|keluar|terima|trima|gaji|pemasukan|masuk|dapat)\b",
@@ -960,7 +1466,8 @@ def parse_indonesian_action_commands(
         income_re = re.compile(r"\b(terima|trima|gaji|salary|pemasukan|masuk|dapat|bonus|thr|freelance|komisi|honor|dividen|refund)\b", re.IGNORECASE)
         expense_cue_re = re.compile(r"\b(beli|bayar|keluar|pengeluaran|jajan|makan|minum|kopi|susu|warteg|bensin|parkir|belanja|listrik|air|pdam|wifi|kos|kontrakan|cicil|cicilan|kredit|tagihan|pulsa|paket|obat|sedekah|zakat|infaq|patungan)\b", re.IGNORECASE)
         global_is_income = bool(income_re.search(low))
-        shared_acc = _resolve_account_from_text(low, accounts)
+        explicit_global_acc = _resolve_account_from_text(low, accounts, fallback_first=False)
+        shared_acc = explicit_global_acc or (accounts[0] if accounts else None)
         if not shared_acc:
             return []
 
@@ -974,8 +1481,23 @@ def parse_indonesian_action_commands(
                 c_low = clause.lower()
                 c_is_income = bool(income_re.search(c_low)) and not bool(expense_cue_re.search(c_low))
                 c_type = "income" if c_is_income else "expense"
-                c_acc = _resolve_account_from_text(c_low, accounts, fallback_first=False) or shared_acc
-                c_cat = _resolve_category_from_text(c_low, categories, c_type)
+                learned_c = _match_learned_rule(c_low, preferences)
+                learned_c_acc = (
+                    next((a for a in accounts if a.get("id") == learned_c.get("accountId")), None)
+                    if learned_c and learned_c.get("accountId")
+                    else None
+                )
+                learned_c_cat = (
+                    next((c for c in categories if c.get("id") == learned_c.get("categoryId")), None)
+                    if learned_c and learned_c.get("categoryId")
+                    else None
+                )
+                c_acc = (
+                    _resolve_account_from_text(c_low, accounts, fallback_first=False)
+                    or (learned_c_acc if not explicit_global_acc else None)
+                    or shared_acc
+                )
+                c_cat = learned_c_cat or _resolve_category_from_text(c_low, categories, c_type)
                 c_desc = _clean_indonesian_tx_description(clause, c_is_income)
                 # Strip explicitly matched account name tokens when user writes "warteg 5rb pakai BCA"
                 acc_name_raw = str(c_acc.get("name") or "").strip()
@@ -1012,8 +1534,19 @@ def parse_indonesian_action_commands(
                 return multi_actions
 
         tx_type = "income" if global_is_income else "expense"
-        acc = shared_acc
-        cat = _resolve_category_from_text(low, categories, tx_type)
+        learned_s = _match_learned_rule(low, preferences)
+        learned_s_acc = (
+            next((a for a in accounts if a.get("id") == learned_s.get("accountId")), None)
+            if learned_s and learned_s.get("accountId")
+            else None
+        )
+        learned_s_cat = (
+            next((c for c in categories if c.get("id") == learned_s.get("categoryId")), None)
+            if learned_s and learned_s.get("categoryId")
+            else None
+        )
+        acc = explicit_global_acc or learned_s_acc or shared_acc
+        cat = learned_s_cat or _resolve_category_from_text(low, categories, tx_type)
         desc = _clean_indonesian_tx_description(clean, global_is_income)
         payload = {
             "date": today,
@@ -1164,6 +1697,194 @@ def _resolve_followup_command(
     return clean
 
 
+async def _call_openai_with_tools(
+    *,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    history: List[Dict[str, str]],
+    user_text: str,
+    attachments: List[Dict[str, str]],
+    context_data: Dict[str, Any],
+) -> str:
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    if attachments:
+        user_content: Any = [{"type": "text", "text": user_text or "Analisa gambar/struk ini."}]
+        for att in attachments:
+            user_content.append(
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{att['mime_type']};base64,{att['data_base64']}"},
+                }
+            )
+    else:
+        user_content = user_text
+
+    messages: List[Dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        *history,
+        {"role": "user", "content": user_content},
+    ]
+    tools = [{"type": "function", "function": decl} for decl in _ADVISOR_TOOL_DECLARATIONS]
+    url = openai_chat_completions_url()
+
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for round_idx in range(3):
+            payload: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": 1300,
+                "tools": tools,
+            }
+            resp = await client.post(url, json=payload, headers=headers)
+            if resp.status_code >= 400 and round_idx == 0:
+                # Fallback without tools if an OpenAI-compatible gateway rejects `tools`
+                return await call_openai_chat(
+                    api_key=api_key,
+                    model=model,
+                    messages=messages,
+                    temperature=0.3,
+                    max_tokens=1200,
+                    timeout=45.0,
+                )
+            resp.raise_for_status()
+            msg = (resp.json().get("choices") or [{}])[0].get("message") or {}
+            tool_calls = msg.get("tool_calls") or []
+            if not tool_calls:
+                return str(msg.get("content") or "")
+            messages.append(msg)
+            for tc in tool_calls:
+                fn = tc.get("function") or {}
+                fn_name = str(fn.get("name") or "")
+                try:
+                    fn_args = json.loads(fn.get("arguments") or "{}")
+                except Exception:
+                    fn_args = {}
+                tool_out = _execute_advisor_tool(fn_name, fn_args, context_data)
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tc.get("id") or fn_name,
+                        "content": json.dumps(tool_out, ensure_ascii=False),
+                    }
+                )
+    return ""
+
+
+async def _call_gemini_with_tools(
+    *,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    history: List[Dict[str, str]],
+    user_text: str,
+    attachments: List[Dict[str, str]],
+    context_data: Dict[str, Any],
+) -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    contents: List[Dict[str, Any]] = [
+        {"role": "model" if t["role"] == "assistant" else "user", "parts": [{"text": t["content"]}]}
+        for t in history
+    ]
+    user_parts: List[Dict[str, Any]] = [{"text": user_text or "Analisa gambar/struk ini."}]
+    for att in attachments:
+        user_parts.append({"inline_data": {"mime_type": att["mime_type"], "data": att["data_base64"]}})
+    contents.append({"role": "user", "parts": user_parts})
+
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for _ in range(3):
+            payload = {
+                "system_instruction": {"parts": [{"text": system_prompt}]},
+                "contents": contents,
+                "tools": [{"functionDeclarations": _ADVISOR_TOOL_DECLARATIONS}],
+                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1300},
+            }
+            resp = await client.post(url, json=payload)
+            resp.raise_for_status()
+            cand_content = ((resp.json().get("candidates") or [{}])[0].get("content")) or {}
+            parts = cand_content.get("parts") or []
+            fn_calls = [p.get("functionCall") for p in parts if isinstance(p, dict) and p.get("functionCall")]
+            if not fn_calls:
+                return "".join(str(p.get("text") or "") for p in parts if isinstance(p, dict))
+            contents.append({"role": "model", "parts": parts})
+            resp_parts = []
+            for fc in fn_calls:
+                fname = str(fc.get("name") or "")
+                fargs = fc.get("args") or {}
+                tool_out = _execute_advisor_tool(fname, fargs, context_data)
+                resp_parts.append({"functionResponse": {"name": fname, "response": tool_out}})
+            contents.append({"role": "user", "parts": resp_parts})
+    return ""
+
+
+async def _call_anthropic_with_tools(
+    *,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    history: List[Dict[str, str]],
+    user_text: str,
+    attachments: List[Dict[str, str]],
+    context_data: Dict[str, Any],
+) -> str:
+    headers = {
+        "x-api-key": api_key,
+        "anthropic-version": "2023-06-01",
+        "Content-Type": "application/json",
+    }
+    if attachments:
+        user_content: Any = [
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": att["mime_type"], "data": att["data_base64"]},
+            }
+            for att in attachments
+        ]
+        user_content.append({"type": "text", "text": user_text or "Analisa gambar/struk ini."})
+    else:
+        user_content = user_text
+
+    messages: List[Dict[str, Any]] = [*history, {"role": "user", "content": user_content}]
+    tools = [
+        {
+            "name": decl["name"],
+            "description": decl["description"],
+            "input_schema": decl["parameters"],
+        }
+        for decl in _ADVISOR_TOOL_DECLARATIONS
+    ]
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for _ in range(3):
+            payload = {
+                "model": model,
+                "max_tokens": 1300,
+                "system": system_prompt,
+                "messages": messages,
+                "tools": tools,
+                "temperature": 0.3,
+            }
+            resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
+            resp.raise_for_status()
+            blocks = resp.json().get("content") or []
+            tool_uses = [b for b in blocks if isinstance(b, dict) and b.get("type") == "tool_use"]
+            if not tool_uses:
+                return "".join(str(b.get("text") or "") for b in blocks if isinstance(b, dict) and b.get("type") == "text")
+            messages.append({"role": "assistant", "content": blocks})
+            tool_results = []
+            for tu in tool_uses:
+                tool_out = _execute_advisor_tool(str(tu.get("name") or ""), tu.get("input") or {}, context_data)
+                tool_results.append(
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tu.get("id"),
+                        "content": json.dumps(tool_out, ensure_ascii=False),
+                    }
+                )
+            messages.append({"role": "user", "content": tool_results})
+    return ""
+
+
 async def chat_advisor(
     message: str,
     context_data: Dict[str, Any],
@@ -1171,108 +1892,118 @@ async def chat_advisor(
     model_name: str,
     api_key: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    preferences: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Chats with the AI Financial Advisor.
-    Prefixes responses with a disclaimer, reasons using provided context, and
-    emits executable `proposed_actions` when user commands a mutation.
+    Supports native function calling (`search_transactions`, `simulate_debt_payoff`, `get_wealth_overview`),
+    multimodal Vision + Tesseract receipt OCR, V3 entity actions (`pay_bill`, `pay_debt`, `contribute_goal`,
+    `delete_transaction`), and learned user preferences.
     """
-    # 1. Extract context sub-objects
-    dashboard = context_data.get("dashboard", {}) or {}
-    ef = context_data.get("emergency_fund", {}) or {}
-    budget = context_data.get("budget", {}) or {}
-    accounts = context_data.get("accounts", []) or []
-    categories = context_data.get("categories", []) or []
+    working_ctx = dict(context_data or {})
+    if preferences:
+        working_ctx["learned_preferences"] = preferences
+    dashboard = working_ctx.get("dashboard", {}) or {}
+    accounts = working_ctx.get("accounts", []) or []
+    categories = working_ctx.get("categories", []) or []
+    bills = working_ctx.get("upcoming_bills") or dashboard.get("upcoming_bills") or []
+    debts = working_ctx.get("debts") or []
+    goals = working_ctx.get("goals") or []
+    recent_txs = working_ctx.get("recent_transactions") or []
+    prefs = working_ctx.get("learned_preferences") or {}
+
+    clean_atts = _normalize_chat_attachments(attachments)
+    ocr_summary, ocr_actions = _extract_chat_attachments_ocr(clean_atts, message, accounts, categories)
+
     normalized_history = _normalize_history_turns(history)
     effective_message = _resolve_followup_command(message, normalized_history)
     deterministic_actions = parse_indonesian_action_commands(
-        effective_message, accounts, categories
+        effective_message,
+        accounts,
+        categories,
+        bills=bills,
+        debts=debts,
+        goals=goals,
+        recent_transactions=recent_txs,
+        preferences=prefs,
     )
+    if not deterministic_actions and ocr_actions:
+        deterministic_actions = ocr_actions
     deterministic_action = deterministic_actions[0] if deterministic_actions else None
     fallback_actions = deterministic_actions
-    today_iso = datetime.now().strftime("%Y-%m-%d")
 
-    system_prompt = _build_advisor_system_prompt(context_data)
+    prompt_message = message
+    if ocr_summary:
+        prompt_message = f"{message}\n\n[Hasil OCR Struk Terlampir]:\n{ocr_summary}".strip()
+
+    system_prompt = _build_advisor_system_prompt(working_ctx)
 
     if not api_key or provider == "local":
         logger.info("Using mock advisor response")
-        return generate_mock_chat_response(
-            effective_message,
-            context_data,
+        res = generate_mock_chat_response(
+            effective_message or message,
+            working_ctx,
             deterministic_action=deterministic_action,
             deterministic_actions=deterministic_actions,
         )
+        if clean_atts and not res.get("proposed_actions"):
+            res["response"] = (
+                "Gambar diterima. "
+                + (ocr_summary + "\n\n" if ocr_summary else "Aktifkan API Key (OpenAI/Gemini) atau jalankan OCR struk yang lebih jelas agar nominal terbaca otomatis.\n\n")
+                + res["response"]
+            )
+        return res
 
     try:
-        headers = {
-            "Authorization": f"Bearer {api_key}" if provider == "openai" else "",
-            "x-api-key": api_key if provider == "anthropic" else "",
-            "Content-Type": "application/json"
-        }
-
         if provider == "openai":
             llm_model = model_name if model_name != "default" else "gpt-4o-mini"
-            oai_messages = [{"role": "system", "content": system_prompt}]
-            oai_messages.extend(normalized_history)
-            oai_messages.append({"role": "user", "content": message})
-            content = await call_openai_chat(
+            content = await _call_openai_with_tools(
                 api_key=api_key,
                 model=llm_model,
-                messages=oai_messages,
-                temperature=0.3,
-                max_tokens=1200,
-                timeout=45.0,
+                system_prompt=system_prompt,
+                history=normalized_history,
+                user_text=prompt_message,
+                attachments=clean_atts,
+                context_data=working_ctx,
             )
-            return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
+            return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=working_ctx)
         elif provider == "anthropic":
-            headers["anthropic-version"] = "2023-06-01"
             llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
-            anth_messages = list(normalized_history) + [{"role": "user", "content": message}]
-            payload = {
-                "model": llm_model,
-                "max_tokens": 1200,
-                "system": system_prompt,
-                "messages": anth_messages,
-                "temperature": 0.3
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post("https://api.anthropic.com/v1/messages", json=payload, headers=headers)
-                resp.raise_for_status()
-                content = resp.json()["content"][0]["text"]
-                return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
+            content = await _call_anthropic_with_tools(
+                api_key=api_key,
+                model=llm_model,
+                system_prompt=system_prompt,
+                history=normalized_history,
+                user_text=prompt_message,
+                attachments=clean_atts,
+                context_data=working_ctx,
+            )
+            return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=working_ctx)
         elif provider == "gemini":
             llm_model = model_name if model_name != "default" else "gemini-2.5-flash"
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{llm_model}:generateContent?key={api_key}"
-            gem_contents = [
-                {
-                    "role": "model" if t["role"] == "assistant" else "user",
-                    "parts": [{"text": t["content"]}],
-                }
-                for t in normalized_history
-            ]
-            gem_contents.append({"role": "user", "parts": [{"text": message}]})
-            payload = {
-                "system_instruction": {"parts": [{"text": system_prompt}]},
-                "contents": gem_contents,
-                "generationConfig": {"temperature": 0.3, "maxOutputTokens": 1200},
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(url, json=payload)
-                resp.raise_for_status()
-                content = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-                return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=context_data)
+            content = await _call_gemini_with_tools(
+                api_key=api_key,
+                model=llm_model,
+                system_prompt=system_prompt,
+                history=normalized_history,
+                user_text=prompt_message,
+                attachments=clean_atts,
+                context_data=working_ctx,
+            )
+            return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=working_ctx)
     except Exception as e:
         logger.error(f"Error calling {provider} for advisor chat: {str(e)}")
         return generate_mock_chat_response(
-            effective_message,
-            context_data,
+            effective_message or message,
+            working_ctx,
             deterministic_action=deterministic_action,
             deterministic_actions=deterministic_actions,
         )
 
     return generate_mock_chat_response(
-        effective_message,
-        context_data,
+        effective_message or message,
+        working_ctx,
         deterministic_action=deterministic_action,
         deterministic_actions=deterministic_actions,
     )
@@ -1401,6 +2132,13 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
     recent_tx = context_data.get("recent_transactions", []) or []
     debts = context_data.get("debts", []) or []
     goals = context_data.get("goals", []) or []
+    bills = context_data.get("upcoming_bills") or dashboard.get("upcoming_bills") or []
+    assets = context_data.get("assets") or []
+    asset_summary = context_data.get("asset_summary") or {}
+    subs = context_data.get("subscriptions") or []
+    monthly_sub_cost = float(context_data.get("monthly_subscription_cost") or 0)
+    monthly_hist = context_data.get("monthly_history") or []
+    prefs = context_data.get("learned_preferences") or {}
 
     def _v(obj, key: str, default: float = 0.0) -> float:
         raw = obj.get(key, default)
@@ -1446,26 +2184,54 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
         if c.get("id")
     ) or "Belum ada"
     bills_summary = "; ".join(
-        f"{b.get('name')} Rp {float(b.get('amount') or 0):,.0f} ({b.get('days_remaining', '?')} hari lagi)"
-        for b in (dashboard.get("upcoming_bills") or [])[:6]
+        f"{b.get('name')} (id={b.get('id', '?')}, Rp {float(b.get('amount') or 0):,.0f}, tempo={b.get('next_due_date') or b.get('days_remaining', '?')})"
+        for b in bills[:8]
     ) or "Tidak ada"
     budget_cat_summary = "; ".join(
         f"{b.get('category_name')}: terpakai Rp {float(b.get('spent') or 0):,.0f}/{float(b.get('limit') or 0):,.0f} ({float(b.get('used_percentage') or 0):.0f}%)"
         for b in budget_cats[:8]
     ) or "Belum diatur"
     debts_summary = "; ".join(
-        f"{d.get('name')}: sisa Rp {float(d.get('outstanding_balance') or 0):,.0f}"
+        f"{d.get('name')} (id={d.get('id', '?')}): sisa Rp {float(d.get('outstanding_balance') or 0):,.0f}"
         + (f" bunga {d.get('interest_rate')}%" if d.get("interest_rate") is not None else "")
         for d in debts[:8]
     ) or "Tidak ada"
     goals_summary = "; ".join(
-        f"{g.get('name')}: Rp {float(g.get('current_amount') or 0):,.0f}/{float(g.get('target_amount') or 0):,.0f} ({float(g.get('progress') or 0):.0f}%)"
+        f"{g.get('name')} (id={g.get('id', '?')}): Rp {float(g.get('current_amount') or 0):,.0f}/{float(g.get('target_amount') or 0):,.0f} ({float(g.get('progress') or 0):.0f}%)"
         for g in goals[:6]
     ) or "Belum ada"
+    assets_summary = ", ".join(
+        f"{a.get('name')} ({a.get('type', 'asset')}): Rp {float(a.get('current_value') or 0):,.0f}"
+        for a in assets[:8]
+    ) or "Belum ada"
+    subs_summary = ", ".join(
+        f"{s.get('name')} Rp {float(s.get('amount') or 0):,.0f}/{s.get('frequency', 'monthly')}"
+        for s in subs[:6]
+    ) or "Tidak ada"
     tx_summary = "; ".join(
-        f"{t.get('date', '')} {t.get('type', '')} Rp {float(t.get('amount') or 0):,.0f} '{t.get('description') or t.get('category_name') or '-'}'"
+        f"{t.get('date', '')} (id={t.get('id', '?')}) {t.get('type', '')} Rp {float(t.get('amount') or 0):,.0f} '{t.get('description') or t.get('category_name') or '-'}'"
         for t in recent_tx[:10]
     ) or "Belum ada"
+
+    hist_line = ""
+    if monthly_hist:
+        hist_line = (
+            "Tren Bulanan Terakhir: "
+            + " | ".join(
+                f"{m.get('month')}: +Rp {float(m.get('income') or 0):,.0f} / -Rp {float(m.get('expense') or 0):,.0f}"
+                for m in monthly_hist[:6]
+            )
+            + "\n"
+        )
+
+    pref_parts = []
+    if prefs.get("paydayDay"):
+        pref_parts.append(f"tgl gajian {prefs['paydayDay']}")
+    if prefs.get("debtStrategy"):
+        pref_parts.append(f"strategi utang={prefs['debtStrategy']}")
+    if isinstance(prefs.get("notes"), list) and prefs["notes"]:
+        pref_parts.append("catatan=" + "; ".join(str(n) for n in prefs["notes"][:5]))
+    pref_line = f"Preferensi User: {', '.join(pref_parts)}\n" if pref_parts else ""
 
     spending_analytics = context_data.get("spending_analytics") or {}
     sa_cur = float(spending_analytics.get("current_month_expense") or 0)
@@ -1480,11 +2246,14 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
             f"Sisa {sa_rem_days} hari (kuota harian ~Rp {sa_quota:,.0f}/hari)\n"
         )
 
+    total_assets_val = float(asset_summary.get("total_assets") or sum(float(a.get("current_value") or 0) for a in assets))
     ctx_str = (
         f"Tanggal Hari Ini: {today_iso}\n"
-        f"Kekayaan Bersih: Rp {net_worth:,.2f}\n"
+        f"{pref_line}"
+        f"Kekayaan Bersih: Rp {net_worth:,.2f} (Portofolio Aset: Rp {total_assets_val:,.0f}: {assets_summary})\n"
         f"Kas Tersedia: Rp {cash:,.2f} (Safe-to-Spend: Rp {safe_spend:,.2f})\n"
         f"{analytics_line}"
+        f"{hist_line}"
         f"Total Utang: Rp {debts_total:,.2f} (Rincian: {debts_summary})\n"
         f"Rasio DTI: {dti_val}% ({dashboard.get('dti_status', 'N/A')})\n"
         f"Skor Kesehatan Keuangan: {score_num}/100 ({score_lbl})\n"
@@ -1492,7 +2261,8 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
         f"Status Dana Darurat: Target Rp {ef_tgt:,.2f}, Terkumpul Rp {ef_cur:,.2f} ({ef_m} bulan tercover)\n"
         f"Status Anggaran Bulan Ini: Limit Rp {b_lim:,.2f}, Terpakai Rp {b_spn:,.2f} ({b_rem_pct:.1f}% tersisa)\n"
         f"Rincian Anggaran per Kategori: {budget_cat_summary}\n"
-        f"Tagihan Jatuh Tempo Dekat: {bills_summary}\n"
+        f"Tagihan Aktif / Jatuh Tempo: {bills_summary}\n"
+        f"Langganan Rutin (~Rp {monthly_sub_cost:,.0f}/bln): {subs_summary}\n"
         f"Target Tabungan: {goals_summary}\n"
         f"Transaksi Terbaru: {tx_summary}\n"
         f"Daftar Rekening Aktif: {acc_summary}\n"
@@ -1500,19 +2270,22 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
     )
     return (
         "Anda adalah asisten perencana keuangan pribadi profesional (AI Advisor) untuk keluarga Indonesia. "
-        "Jawab pertanyaan user dalam Bahasa Indonesia yang ringkas, akurat, solutif, dan berbasis angka nyata dari data di bawah ini.\n\n"
+        "Gunakan tools (`search_transactions`, `simulate_debt_payoff`, `get_wealth_overview`) bila butuh data historis mendalam atau simulasi cicilan akurat. "
+        "Jawab dalam Bahasa Indonesia yang ringkas, akurat, solutif, dan berbasis angka nyata.\n\n"
         f"Konteks Finansial User:\n{ctx_str}\n\n"
         "PENTING:\n"
         "1. JAWABAN ANDA HARUS SELALU diawali dengan baris disclaimer tepat seperti ini:\n"
         "🤖 Saran AI — bukan nasihat keuangan profesional\n\n"
-        "2. Jika user meminta mencatat transaksi, transfer antar rekening, mengatur budget, atau membuat target keuangan, "
-        "Anda WAJIB menyertakan blok ```actions JSON array menggunakan HANYA ID rekening/kategori yang valid di atas:\n"
-        "- ATURAN MULTI-ITEM: Jika user menyebut beberapa pembelian/item dalam satu pesan "
-        "(contoh: 'beli kopi 10rb, susu 6rb dan warteg 5rb'), Anda WAJIB memecahnya menjadi beberapa objek terpisah di dalam array ```actions "
-        "(satu objek `create_transaction` per item dengan nominal masing-masing: 10000, 6000, 5000). JANGAN gabung menjadi satu transaksi dan JANGAN hanya ambil item terakhir.\n"
+        "2. Jika user meminta mencatat transaksi, transfer antar rekening, membayar tagihan/cicilan, setor ke target, mengatur budget, membuat target, atau menghapus transaksi salah, "
+        "sertakan blok ```actions JSON array menggunakan HANYA ID entitas/rekening/kategori yang valid di atas:\n"
+        "- ATURAN MULTI-ITEM: Jika user menyebut beberapa item dalam satu pesan atau foto struk (contoh: 'beli kopi 10rb, susu 6rb dan warteg 5rb'), pecah menjadi objek terpisah di dalam array ```actions.\n"
         "- Skema payload per type:\n"
         "  - create_transaction: {\"date\": \"" + today_iso + "\", \"amount\": 10000, \"type\": \"expense|income\", \"account_id\": \"<id rekening>\", \"category_id\": \"<id kategori>\", \"description\": \"Kopi\"}\n"
         "  - create_transfer: {\"source_account_id\": \"<id asal>\", \"target_account_id\": \"<id tujuan>\", \"amount\": 500000, \"date\": \"" + today_iso + "\", \"notes\": \"Transfer via AI Advisor\"}\n"
+        "  - pay_bill: {\"bill_id\": \"<id tagihan>\", \"amount\": 250000, \"payment_date\": \"" + today_iso + "\", \"account_id\": \"<id rekening>\", \"notes\": \"Bayar tagihan\"}\n"
+        "  - pay_debt: {\"debt_id\": \"<id utang>\", \"amount\": 500000, \"payment_date\": \"" + today_iso + "\", \"account_id\": \"<id rekening>\", \"is_extra_payment\": false, \"notes\": \"Cicilan\"}\n"
+        "  - contribute_goal: {\"goal_id\": \"<id target>\", \"source_account_id\": \"<id rekening>\", \"amount\": 1000000, \"date\": \"" + today_iso + "\", \"notes\": \"Setor target\"}\n"
+        "  - delete_transaction: {\"transaction_id\": \"<id transaksi>\", \"description\": \"Kopi\", \"amount\": 10000, \"date\": \"" + today_iso + "\"}\n"
         "  - set_budget: {\"category_id\": \"<id kategori>\", \"month\": \"" + today_iso[:7] + "\", \"amount\": 2000000}\n"
         "  - create_goal: {\"name\": \"Nama Target\", \"type\": \"custom\", \"target_amount\": 10000000}\n"
         "```actions\n"
@@ -1533,29 +2306,54 @@ async def stream_chat_advisor(
     model_name: str,
     api_key: Optional[str],
     history: Optional[List[Dict[str, str]]] = None,
+    attachments: Optional[List[Dict[str, Any]]] = None,
+    preferences: Optional[Dict[str, Any]] = None,
 ) -> AsyncGenerator[str, None]:
     """
     Streams advisor chat responses as Server-Sent Events (SSE):
       1. Initial `meta` frame with fast deterministic `proposed_actions`
-      2. Live token `delta` frames directly from LLM (or instant chunked reply in local/action mode)
-      3. Updated `meta` (if LLM emitted extra actions/reason) and final `done` frame
+      2. Live token `delta` frames directly from LLM (or instant chunked reply when local/action/tool/vision mode runs)
+      3. Updated `meta` and final `done` frame
     """
-    accounts = context_data.get("accounts", []) or []
-    categories = context_data.get("categories", []) or []
+    working_ctx = dict(context_data or {})
+    if preferences:
+        working_ctx["learned_preferences"] = preferences
+    dashboard = working_ctx.get("dashboard", {}) or {}
+    accounts = working_ctx.get("accounts", []) or []
+    categories = working_ctx.get("categories", []) or []
+    bills = working_ctx.get("upcoming_bills") or dashboard.get("upcoming_bills") or []
+    debts = working_ctx.get("debts") or []
+    goals = working_ctx.get("goals") or []
+    recent_txs = working_ctx.get("recent_transactions") or []
+    prefs = working_ctx.get("learned_preferences") or {}
+
+    clean_atts = _normalize_chat_attachments(attachments)
     normalized_history = _normalize_history_turns(history)
     effective_message = _resolve_followup_command(message, normalized_history)
     deterministic_actions = parse_indonesian_action_commands(
-        effective_message, accounts, categories
+        effective_message,
+        accounts,
+        categories,
+        bills=bills,
+        debts=debts,
+        goals=goals,
+        recent_transactions=recent_txs,
+        preferences=prefs,
+    )
+    needs_tools_or_vision = bool(clean_atts) or bool(
+        re.search(r"\b(simulasi|avalanche|snowball|ekstra|cari\s+transaksi|kekayaan|net\s+worth|aset|langganan)\b", (message or "").lower())
     )
 
-    if not api_key or provider == "local" or deterministic_actions:
+    if not api_key or provider == "local" or deterministic_actions or needs_tools_or_vision:
         result = await chat_advisor(
             message=message,
-            context_data=context_data,
+            context_data=working_ctx,
             provider=provider,
             model_name=model_name,
             api_key=api_key,
             history=history,
+            attachments=attachments,
+            preferences=preferences,
         )
         meta_event: Dict[str, Any] = {
             "type": "meta",
@@ -1582,7 +2380,7 @@ async def stream_chat_advisor(
     # Real-time LLM SSE streaming for OpenAI / Gemini / Anthropic
     yield f"data: {json.dumps({'type': 'meta', 'reason': 'Menyusun saran dari data keuangan Anda...', 'proposed_actions': []}, ensure_ascii=False)}\n\n"
     disclaimer = "🤖 Saran AI — bukan nasihat keuangan profesional"
-    sys_prompt = _build_advisor_system_prompt(context_data)
+    sys_prompt = _build_advisor_system_prompt(working_ctx)
     raw_buffer = ""
     emitted_len = 0
     stop_delta = False
@@ -1620,7 +2418,7 @@ async def stream_chat_advisor(
             parsed = parse_advisor_response(
                 raw_buffer,
                 fallback_actions=deterministic_actions,
-                context_data=context_data,
+                context_data=working_ctx,
             )
             final_text = str(parsed.get("response") or "")
             if not stop_delta and len(final_text) > emitted_len:
@@ -1643,11 +2441,13 @@ async def stream_chat_advisor(
     # Graceful fallback to non-streaming completion / local brain
     result = await chat_advisor(
         message=message,
-        context_data=context_data,
+        context_data=working_ctx,
         provider=provider,
         model_name=model_name,
         api_key=api_key,
         history=history,
+        attachments=attachments,
+        preferences=preferences,
     )
     fb_meta: Dict[str, Any] = {
         "type": "meta",
@@ -1711,7 +2511,14 @@ def _sanitize_llm_actions(
     for act in actions:
         act_type = act.get("type")
         payload = dict(act.get("payload") or {})
-        if act_type in ("create_transaction", "create_transfer", "set_budget"):
+        if act_type in (
+            "create_transaction",
+            "create_transfer",
+            "set_budget",
+            "pay_bill",
+            "pay_debt",
+            "contribute_goal",
+        ):
             raw_amt = payload.get("amount")
             if isinstance(raw_amt, str):
                 amt_val = parse_indonesian_amount(raw_amt)
@@ -1731,6 +2538,19 @@ def _sanitize_llm_actions(
                 payload["type"] = "expense"
             if account_ids and str(payload.get("account_id") or "") not in account_ids and default_acc_id:
                 payload["account_id"] = default_acc_id
+        elif act_type in ("pay_bill", "pay_debt"):
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(payload.get("payment_date") or "")):
+                payload["payment_date"] = today
+            if account_ids and str(payload.get("account_id") or "") not in account_ids and default_acc_id:
+                payload["account_id"] = default_acc_id
+        elif act_type == "contribute_goal":
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", str(payload.get("date") or "")):
+                payload["date"] = today
+            if account_ids and str(payload.get("source_account_id") or "") not in account_ids and default_acc_id:
+                payload["source_account_id"] = default_acc_id
+        elif act_type == "delete_transaction":
+            if not str(payload.get("transaction_id") or "").strip():
+                continue
 
         sanitized.append({**act, "payload": payload})
     return sanitized
@@ -1789,18 +2609,32 @@ def generate_mock_chat_response(
     deterministic_action: Optional[Dict[str, Any]] = None,
     deterministic_actions: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
-    dashboard = context_data.get("dashboard", {})
-    ef = context_data.get("emergency_fund", {})
-    budget = context_data.get("budget", {})
+    dashboard = context_data.get("dashboard", {}) or {}
+    ef = context_data.get("emergency_fund", {}) or {}
+    budget = context_data.get("budget", {}) or {}
     accounts = context_data.get("accounts", []) or []
     categories = context_data.get("categories", []) or []
+    bills_all = context_data.get("upcoming_bills") or dashboard.get("upcoming_bills") or []
+    debts_list = context_data.get("debts") or []
+    goals_list = context_data.get("goals") or []
+    recent_txs = context_data.get("recent_transactions") or []
+    preferences = context_data.get("learned_preferences") or {}
 
     actions = list(deterministic_actions or [])
     if not actions:
         if deterministic_action is not None:
             actions = [deterministic_action]
         else:
-            actions = parse_indonesian_action_commands(message, accounts, categories)
+            actions = parse_indonesian_action_commands(
+                message,
+                accounts,
+                categories,
+                bills=bills_all,
+                debts=debts_list,
+                goals=goals_list,
+                recent_transactions=recent_txs,
+                preferences=preferences,
+            )
 
     if len(actions) == 1:
         single = actions[0]
@@ -1859,13 +2693,13 @@ def generate_mock_chat_response(
     ef_target = _val(ef, "target_amount")
     budget_limit = _val(budget, "total_budget")
     budget_spent = _val(budget, "total_spent")
-    upcoming_bills = dashboard.get("upcoming_bills") or []
-    debts_list = context_data.get("debts") or []
-    goals_list = context_data.get("goals") or []
+    upcoming_bills = bills_all
     budget_cats = context_data.get("budget_categories") or []
     spending_analytics = context_data.get("spending_analytics") or {}
+    assets_list = context_data.get("assets") or []
+    subs_list = context_data.get("subscriptions") or []
 
-    msg_lower = message.lower()
+    msg_lower = (message or "").lower()
     suggested_replies = [
         "Cek kuota jajan harian bulan ini",
         "Tagihan bulan ini apa saja?",
@@ -1889,6 +2723,24 @@ def generate_mock_chat_response(
             )
         )
         reason = "Dihitung dari Safe-to-Spend berbanding sisa hari kalender dan burn rate harian Anda."
+    elif any(k in msg_lower for k in ("cari transaksi", "riwayat transaksi", "berapa total buat", "total pengeluaran buat")):
+        stop_kw = {"cari", "transaksi", "riwayat", "berapa", "total", "buat", "untuk", "bulan", "ini", "lalu", "dan", "sekarang", "terakhir", "saya", "pengeluaran"}
+        tokens = [w for w in re.findall(r"[a-zA-Z0-9]{3,}", msg_lower) if w not in stop_kw]
+        kw = tokens[0] if tokens else ""
+        res_search = _tool_search_transactions(context_data, keyword=kw, limit=8)
+        kw_note = f' untuk "{kw}"' if kw else ""
+        if res_search["count"] > 0:
+            hit_lines = "\n".join(
+                f"- {m['date']} • **{m['description']}**: {_format_rp(m['amount'])} ({m['account_name']})"
+                for m in res_search["matches"][:6]
+            )
+            response = (
+                f"Hasil Pencarian Transaksi{kw_note}: "
+                f"**{res_search['count']} transaksi** dengan total **{_format_rp(res_search['total_amount'])}**:\n{hit_lines}"
+            )
+        else:
+            response = f"Tidak ditemukan transaksi yang cocok{kw_note}."
+        reason = "Disaring dari riwayat transaksi yang tersimpan di akun Anda."
     elif any(k in msg_lower for k in ("lebih boros", "banding", "bulan lalu", "dibanding", "tren pengeluaran")):
         cur_sum = float(spending_analytics.get("current_month_expense") or budget_spent)
         prev_sum = float(spending_analytics.get("prev_month_expense") or 0)
@@ -1918,16 +2770,52 @@ def generate_mock_chat_response(
             + top_line
         )
         reason = "Membandingkan arus pengeluaran bulan berjalan dengan bulan sebelumnya."
+    elif any(k in msg_lower for k in ("kekayaan bersih", "net worth", "portofolio", "aset", "investasi")):
+        overview = _tool_get_wealth_overview(context_data)
+        asset_lines = "\n".join(
+            f"- **{a.get('name')}** ({a.get('type', 'asset')}): {_format_rp(a.get('current_value'))}"
+            for a in assets_list[:6]
+        )
+        hist_lines = " | ".join(
+            f"{h.get('month')}: net {_format_rp(h.get('net'))}"
+            for h in (overview.get("monthly_history") or [])[:4]
+        )
+        response = (
+            f"Ringkasan Kekayaan Bersih & Aset Anda:\n"
+            f"- **Estimasi Net Worth**: **{_format_rp(overview['estimated_net_worth'])}** "
+            f"(Kas **{_format_rp(overview['total_liquid_cash'])}** + Aset **{_format_rp(overview['total_assets'])}** − Utang **{_format_rp(overview['total_debts'])}**).\n"
+            + (f"\nDaftar Aset:\n{asset_lines}" if asset_lines else "\nBelum ada aset terpisah tercatat.")
+            + (f"\n\nTren Arus Kas Bulanan: {hist_lines}" if hist_lines else "")
+        )
+        reason = "Menggabungkan kas rekening, portofolio aset, dan sisa kewajiban aktif."
+        suggested_replies = ["Simulasi percepatan pelunasan utang", "Cek langganan aktif & biaya bulanan"]
+    elif any(k in msg_lower for k in ("langganan", "subscription", "berulang", "auto debet")):
+        overview = _tool_get_wealth_overview(context_data)
+        if subs_list:
+            sub_lines = "\n".join(
+                f"- **{s.get('name')}**: {_format_rp(s.get('amount'))}/{s.get('frequency', 'monthly')}"
+                + (" ⚠️ Jarang dipakai" if s.get("unused_warning") else "")
+                for s in subs_list[:6]
+            )
+            response = (
+                f"Daftar Langganan Aktif (Total beban ~**{_format_rp(overview['monthly_subscription_cost'])}/bulan**):\n"
+                f"{sub_lines}"
+            )
+        else:
+            response = "Tidak ada langganan rutin aktif tercatat."
+        reason = "Dihitung dari daftar langganan berulang yang masih aktif."
+        suggested_replies = ["Cek pengeluaran terbesar bulan ini", "Cek kuota jajan harian bulan ini"]
     elif any(k in msg_lower for k in ("tagihan", "bill", "jatuh tempo")):
         if upcoming_bills:
             total_b = sum(float(b.get("amount") or 0) for b in upcoming_bills)
             lines = "\n".join(
-                f"{i}. **{b.get('name')}** — Rp {float(b.get('amount') or 0):,.0f} ({b.get('days_remaining', '?')} hari lagi)"
+                f"{i}. **{b.get('name')}** — Rp {float(b.get('amount') or 0):,.0f} ({b.get('next_due_date') or b.get('days_remaining', '?')})"
                 for i, b in enumerate(upcoming_bills[:6], start=1)
             )
             response = (
                 f"Tagihan Jatuh Tempo Dekat (Total **Rp {total_b:,.0f}**):\n{lines}\n\n"
-                f"Safe-to-Spend tersedia saat ini: **Rp {safe_spend:,.0f}**."
+                f"Safe-to-Spend tersedia saat ini: **Rp {safe_spend:,.0f}**.\n"
+                f"Ketik misalnya `bayar tagihan {upcoming_bills[0].get('name', 'listrik')} pakai BCA` untuk langsung membayar."
             )
         else:
             response = "Tidak ada tagihan mendesak dalam beberapa hari ke depan."
@@ -1953,17 +2841,23 @@ def generate_mock_chat_response(
         else:
             response = "Belum ada target tabungan aktif. Ketik misalnya `Buat target dana liburan 10jt` untuk membuatnya."
         reason = "Dihitung dari target tabungan aktif yang tersimpan di akun Anda."
-    elif "kondisi" in msg_lower or "keuangan" in msg_lower or "summary" in msg_lower or "dashboard" in msg_lower:
+    elif "kondisi" in msg_lower or "keuangan" in msg_lower or "summary" in msg_lower or "dashboard" in msg_lower or "briefing" in msg_lower:
+        overview = _tool_get_wealth_overview(context_data)
         response = (
             f"Berdasarkan analisis dashboard keuangan Anda:\n"
             f"- **Kekayaan Bersih Anda** saat ini berada di angka **Rp {net_worth:,.0f}** dengan **Kas Tersedia sebesar Rp {cash:,.0f}** (Safe-to-Spend **Rp {safe_spend:,.0f}**).\n"
+            f"- **Portofolio Aset**: **{_format_rp(overview['total_assets'])}** • **Langganan/bulan**: **{_format_rp(overview['monthly_subscription_cost'])}**.\n"
             f"- **Rasio Debt-to-Income (DTI)** Anda berada pada level **{dti}%**. Level ini tergolong aman jika di bawah 35%.\n"
             f"- **Skor Kesehatan Keuangan** Anda adalah **{score}/100**.\n"
             f"- **Dana Darurat** Anda saat ini terkumpul **Rp {ef_current:,.0f}** dari target **Rp {ef_target:,.0f}**."
         )
-        reason = "Analisis didasarkan pada kekayaan bersih, tingkat utang (DTI), skor kesehatan keuangan, dan pencapaian target dana darurat Anda saat ini."
-    elif "utang" in msg_lower or "debt" in msg_lower or "cicilan" in msg_lower or "avalanche" in msg_lower:
+        reason = "Analisis didasarkan pada kekayaan bersih, portofolio aset, tingkat utang (DTI), skor kesehatan keuangan, dan pencapaian target dana darurat Anda saat ini."
+        suggested_replies = ["Simulasi percepatan pelunasan utang", "Cek kuota jajan harian bulan ini", "Cek langganan aktif & biaya bulanan"]
+    elif "utang" in msg_lower or "debt" in msg_lower or "cicilan" in msg_lower or "avalanche" in msg_lower or "snowball" in msg_lower:
         if debts_list:
+            extra_pay = parse_indonesian_amount(message)
+            pref_strat = "snowball" if "snowball" in msg_lower or str(preferences.get("debtStrategy") or "") == "snowball" else "avalanche"
+            sim_res = _tool_simulate_debt_payoff(context_data, strategy=pref_strat, extra_monthly=extra_pay)
             sorted_av = sorted(debts_list, key=lambda d: float(d.get("interest_rate") or 0), reverse=True)
             sorted_sn = sorted(debts_list, key=lambda d: float(d.get("outstanding_balance") or 0))
             d_lines = "\n".join(
@@ -1971,10 +2865,17 @@ def generate_mock_chat_response(
                 + (f" (bunga {d.get('interest_rate')}%)" if d.get("interest_rate") is not None else "")
                 for i, d in enumerate(sorted_av[:5], start=1)
             )
+            extra_note = (
+                f"\nSimulasi **{pref_strat.title()}** + ekstra **{_format_rp(extra_pay)}/bln**: lunas dalam **{sim_res['months_to_payoff']} bulan** "
+                f"(lebih cepat **{sim_res['months_saved']} bln**, hemat bunga **{_format_rp(sim_res['interest_saved'])}**)."
+                if extra_pay > 0
+                else f"\nEstimasi lunas dasar ({pref_strat.title()}): **{sim_res['months_to_payoff']} bulan** (estimasi total bunga {_format_rp(sim_res['total_interest_paid'])})."
+            )
             response = (
                 f"Melihat profil utang aktif (Total **Rp {debts:,.0f}**, DTI **{dti}%**):\n{d_lines}\n\n"
                 f"1. **Avalanche (hemat bunga)**: prioritaskan **{sorted_av[0].get('name')}**.\n"
                 f"2. **Snowball (cepat lunas 1 pos)**: prioritaskan **{sorted_sn[0].get('name')}**."
+                + extra_note
             )
         else:
             response = (
@@ -2009,7 +2910,7 @@ def generate_mock_chat_response(
             f"- **Kas Tersedia**: **Rp {cash:,.0f}** (Safe-to-Spend: **Rp {safe_spend:,.0f}**).\n"
             f"- **Rasio DTI**: **{dti}%** (ideal di bawah 35%).\n"
             f"- **Dana Darurat**: terisi **{((ef_current/ef_target)*100) if ef_target > 0 else 0:.1f}%** (**Rp {ef_current:,.0f}** dari **Rp {ef_target:,.0f}**).\n"
-            f"- Coba ketik perintah pencatatan cepat seperti `beli kopi 10rb, susu 6rb dan warteg 5rb`."
+            f"- Coba ketik perintah pencatatan cepat seperti `beli kopi 10rb, susu 6rb dan warteg 5rb`, `bayar tagihan listrik pakai BCA`, atau lampirkan foto struk."
         )
         reason = "Saran disesuaikan dengan saldo likuid, dana darurat, dan rasio utang Anda."
 

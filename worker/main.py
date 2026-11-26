@@ -280,10 +280,17 @@ class CategorizeRequest(BaseModel):
     merchant: str
     available_categories: List[Dict[str, str]]
 
+class ChatAttachmentItem(BaseModel):
+    name: str = ""
+    mime_type: str = "image/jpeg"
+    data_base64: str = ""
+
 class ChatRequest(BaseModel):
-    message: str
+    message: str = ""
     context: Dict[str, Any] = {}
     history: List[Dict[str, str]] = []
+    attachments: List[ChatAttachmentItem] = []
+    preferences: Dict[str, Any] = {}
 
 class DetectAnomalyRequest(BaseModel):
     recent_transactions: List[Dict[str, Any]]
@@ -364,6 +371,8 @@ async def chat(
             model_name=x_ai_model or "default",
             api_key=x_ai_api_key,
             history=req.history,
+            attachments=[a.model_dump() for a in req.attachments] if req.attachments else None,
+            preferences=req.preferences or None,
         )
         return res
     except Exception:
@@ -386,6 +395,8 @@ async def chat_stream(
             model_name=x_ai_model or "default",
             api_key=x_ai_api_key,
             history=req.history,
+            attachments=[a.model_dump() for a in req.attachments] if req.attachments else None,
+            preferences=req.preferences or None,
         ),
         media_type="text/event-stream",
         headers={

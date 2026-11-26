@@ -166,3 +166,26 @@ func TestAISettingsHandlerSpouseVoiceNoteResolvesHouseholdAndFiltersSharedAccoun
 		t.Fatalf("expected household categories for spouse AI context, got %+v", parsedCtx.Categories)
 	}
 }
+
+
+func TestValidateAndPrepareChatPayloadV3(t *testing.T) {
+	ctx := map[string]interface{}{"accounts": []string{}}
+	if _, status, _ := validateAndPrepareChatPayload(dto.AIChatRequest{}, ctx); status != http.StatusBadRequest {
+		t.Fatalf("expected 400 when both message and attachments are empty, got %d", status)
+	}
+
+	req := dto.AIChatRequest{
+		Message: "",
+		Attachments: []dto.AIChatAttachment{
+			{Name: "struk.png", MimeType: "image/png", DataBase64: "iVBORw0KGgo="},
+		},
+		Preferences: map[string]interface{}{"paydayDay": 25, "debtStrategy": "avalanche"},
+	}
+	payload, status, errMsg := validateAndPrepareChatPayload(req, ctx)
+	if status != 0 || errMsg != "" {
+		t.Fatalf("expected valid attachment-only payload, got status=%d msg=%s", status, errMsg)
+	}
+	if payload["attachments"] == nil || ctx["learned_preferences"] == nil {
+		t.Fatalf("expected attachments and learned_preferences propagated in worker payload")
+	}
+}

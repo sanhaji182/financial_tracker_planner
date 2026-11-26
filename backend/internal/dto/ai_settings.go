@@ -29,9 +29,17 @@ type AIChatTurn struct {
 	Content string `json:"content"`
 }
 
+type AIChatAttachment struct {
+	Name       string `json:"name"`
+	MimeType   string `json:"mime_type"`
+	DataBase64 string `json:"data_base64"`
+}
+
 type AIChatRequest struct {
-	Message string       `json:"message" binding:"required"`
-	History []AIChatTurn `json:"history,omitempty"`
+	Message     string                 `json:"message"`
+	History     []AIChatTurn           `json:"history,omitempty"`
+	Attachments []AIChatAttachment     `json:"attachments,omitempty"`
+	Preferences map[string]interface{} `json:"preferences,omitempty"`
 }
 
 type VoiceTranscribeResponse struct {

@@ -9,6 +9,15 @@ import {
   mergeIndonesianFollowUp,
   parseIndonesianFinancialCommands,
 } from '../../utils/indonesianNlpParser';
+import {
+  captureExplicitMemoryInstruction,
+  loadAdvisorMemory,
+} from '../../utils/advisorMemory';
+import {
+  getLocalWealthOverview,
+  searchLocalTransactions,
+  simulateLocalDebtPayoff,
+} from '../advisorTools';
 import { runProactiveWatchdog } from '../proactiveWatchdog';
 import { formatRupiah, monthKeyOf, saveLocalDB, uid } from '../storage';
 import type { LocalHandlerContext, LocalHandlerHelpers } from './types';
@@ -81,10 +90,31 @@ export function handleAiAgentRoutes(
     const body = parseJsonBody<{
       message: string;
       history?: Array<{ role: string; content: string }>;
+      attachments?: Array<{ name: string; mime_type: string; data_base64: string }>;
     }>(config.data);
     let message = String(body.message || '').trim();
+    const attachments = Array.isArray(body.attachments) ? body.attachments : [];
+
+    // V3 Explicit financial memory instructions ("ingat gaji masuk tgl 25", "lupakan preferensi")
+    if (message) {
+      const memResult = captureExplicitMemoryInstruction(message);
+      if (memResult.matched && memResult.reply) {
+        return makeOk(config, {
+          data: {
+            response: memResult.reply,
+            reason: 'local-advisor-memory',
+            suggested_replies: [
+              'Ringkas kondisi keuangan bulan ini',
+              'Simulasi percepatan pelunasan utang',
+              'Cek kuota jajan harian bulan ini',
+            ],
+          },
+        });
+      }
+    }
+
     const history = Array.isArray(body.history) ? body.history : [];
-    if (history.length > 0) {
+    if (history.length > 0 && message) {
       const prevUser = [...history].reverse().find((t) => t.role === 'user' && t.content);
       if (prevUser) {
         const merged = mergeIndonesianFollowUp(message, prevUser.content);
@@ -93,12 +123,138 @@ export function handleAiAgentRoutes(
         }
       }
     }
+
     const dash = computeDashboard(db);
     const ef = computeEmergencyFundSummary(db);
     const today = getTodayLocalDate();
     const month = getCurrentLocalMonth();
-    const parsedCommands = parseIndonesianFinancialCommands(message, db.accounts, db.categories);
-    const parsed = parsedCommands[0];
+    const memory = loadAdvisorMemory();
+    const parsedCommands = parseIndonesianFinancialCommands(message, db.accounts, db.categories, {
+      bills: db.bills,
+      debts: db.debts,
+      goals: db.goals,
+      recentTransactions: db.transactions,
+      memory,
+    });
+    const parsed = parsedCommands[0] || {
+      intent: 'query',
+      type: 'expense',
+      amount: null,
+      description: message,
+      confidence: 0.5,
+    };
+
+    if (attachments.length > 0 && parsed.intent === 'query') {
+      const attNames = attachments.map((a) => a.name || 'lampiran').join(', ');
+      return makeOk(config, {
+        data: {
+          response:
+            `Lampiran **${attNames}** diterima. Untuk analisis foto struk atau screenshot mutasi secara visual otomatis di mode offline, aktifkan **AI Provider + API Key** (OpenAI/Gemini) di Pengaturan AI, atau ketik nominal itemnya bersama gambar (contoh: \`kopi 18rb pakai GoPay\`).`,
+          reason: 'local-attachment-notice',
+          suggested_replies: ['Catat kopi 18rb pakai BCA', 'Cek pengeluaran terbesar bulan ini'],
+        },
+      });
+    }
+
+    // 0. V3 Entity Actions: pay_bill, pay_debt, contribute_goal, delete_transaction
+    if (parsed.intent === 'pay_bill' && parsed.entityId && parsed.amount && parsed.accountId) {
+      const payDate = parsed.txDate || today;
+      const action: AgenticAction = {
+        id: uid('act'),
+        type: 'pay_bill',
+        title: `Bayar Tagihan: ${parsed.entityName || parsed.description}`,
+        summary: `${formatRupiah(parsed.amount)} • ${parsed.accountName || 'Rekening'} • ${payDate}`,
+        payload: {
+          bill_id: parsed.entityId,
+          amount: parsed.amount,
+          payment_date: payDate,
+          account_id: parsed.accountId,
+          notes: `Dibayar via AI Advisor: ${parsed.entityName || parsed.description}`,
+        },
+      };
+      return makeOk(config, {
+        data: {
+          response: `Siap! Saya siapkan konfirmasi pembayaran tagihan **${parsed.entityName}** sebesar **${formatRupiah(parsed.amount)}** dari **${parsed.accountName}**.`,
+          reason: 'agentic-pay-bill-on-device',
+          proposed_actions: [action],
+          suggested_replies: ['Tagihan bulan ini apa saja?', 'Saldo rekening saya sekarang berapa?'],
+        },
+      });
+    }
+
+    if (parsed.intent === 'pay_debt' && parsed.entityId && parsed.amount && parsed.accountId) {
+      const payDate = parsed.txDate || today;
+      const action: AgenticAction = {
+        id: uid('act'),
+        type: 'pay_debt',
+        title: `Bayar Cicilan: ${parsed.entityName || parsed.description}`,
+        summary: `${formatRupiah(parsed.amount)} • ${parsed.accountName || 'Rekening'} • ${payDate}`,
+        payload: {
+          debt_id: parsed.entityId,
+          amount: parsed.amount,
+          payment_date: payDate,
+          account_id: parsed.accountId,
+          is_extra_payment: Boolean(parsed.isExtraPayment),
+          notes: `Cicilan via AI Advisor: ${parsed.entityName || parsed.description}`,
+        },
+      };
+      return makeOk(config, {
+        data: {
+          response: `Siap mencatat pembayaran cicilan **${parsed.entityName}** sebesar **${formatRupiah(parsed.amount)}** memakai **${parsed.accountName}**. Konfirmasi di bawah untuk memotong sisa pokok utang & saldo rekening.`,
+          reason: 'agentic-pay-debt-on-device',
+          proposed_actions: [action],
+          suggested_replies: ['Simulasi percepatan pelunasan utang', 'Saldo rekening saya sekarang berapa?'],
+        },
+      });
+    }
+
+    if (parsed.intent === 'contribute_goal' && parsed.entityId && parsed.amount && parsed.accountId) {
+      const goalDate = parsed.txDate || today;
+      const action: AgenticAction = {
+        id: uid('act'),
+        type: 'contribute_goal',
+        title: `Setor Target: ${parsed.entityName || parsed.description}`,
+        summary: `${formatRupiah(parsed.amount)} • dari ${parsed.accountName || 'Rekening'}`,
+        payload: {
+          goal_id: parsed.entityId,
+          source_account_id: parsed.accountId,
+          amount: parsed.amount,
+          date: goalDate,
+          notes: `Setoran target via AI Advisor`,
+        },
+      };
+      return makeOk(config, {
+        data: {
+          response: `Siap menambah tabungan target **${parsed.entityName}** sebesar **${formatRupiah(parsed.amount)}** dari **${parsed.accountName}**. Konfirmasi untuk mengeksekusi.`,
+          reason: 'agentic-contribute-goal-on-device',
+          proposed_actions: [action],
+          suggested_replies: ['Bagaimana progres target tabungan saya?', 'Cek kuota jajan harian bulan ini'],
+        },
+      });
+    }
+
+    if (parsed.intent === 'delete_transaction' && parsed.entityId) {
+      const action: AgenticAction = {
+        id: uid('act'),
+        type: 'delete_transaction',
+        title: `Hapus Transaksi: ${parsed.description}`,
+        summary: `${formatRupiah(parsed.amount || 0)} • ${parsed.txDate || today}`,
+        payload: {
+          transaction_id: parsed.entityId,
+          description: parsed.description,
+          amount: parsed.amount || 0,
+          date: parsed.txDate || today,
+        },
+      };
+      return makeOk(config, {
+        data: {
+          response: `Saya menemukan transaksi **${parsed.description}** senilai **${formatRupiah(parsed.amount || 0)}** (${parsed.txDate || today}). Ketuk Konfirmasi di bawah untuk menghapus dan mengembalikan saldo rekening.`,
+          reason: 'agentic-delete-transaction-on-device',
+          proposed_actions: [action],
+          suggested_replies: ['Saldo rekening saya sekarang berapa?', 'Cek pengeluaran terbesar bulan ini'],
+        },
+      });
+    }
 
     // 1. Agentic transaction proposal (supports 1 or multiple items in a single prompt)
     const txCommands = parsedCommands.filter(
@@ -421,7 +577,7 @@ export function handleAiAgentRoutes(
       });
     }
 
-    // 10. Debt payoff strategy (Avalanche vs Snowball)
+    // 10. Debt payoff strategy (Avalanche vs Snowball + extra monthly simulation)
     if (/\b(utang|hutang|cicilan|kredit|pinjaman|avalanche|snowball|lunas)\b/i.test(message)) {
       const activeDebts = db.debts.filter((d) => d.status === 'active');
       if (activeDebts.length === 0) {
@@ -433,6 +589,13 @@ export function handleAiAgentRoutes(
           },
         });
       }
+      const prefStrategy: 'avalanche' | 'snowball' = /\bsnowball\b/i.test(message)
+        ? 'snowball'
+        : /\bavalanche\b/i.test(message)
+          ? 'avalanche'
+          : memory.debtStrategy || 'avalanche';
+      const extraMonthly = parsed.amount && parsed.amount > 0 ? parsed.amount : 0;
+      const sim = simulateLocalDebtPayoff(db, prefStrategy, extraMonthly);
       const avalanche = [...activeDebts].sort(
         (a, b) => (b.interest_rate || 0) - (a.interest_rate || 0)
       );
@@ -448,17 +611,98 @@ export function handleAiAgentRoutes(
             (d.minimum_payment ? `, min. cicilan ${formatRupiah(d.minimum_payment)}/bln` : '')
         )
         .join('\n');
+      const simNote =
+        extraMonthly > 0
+          ? `• **Simulasi ${prefStrategy.toUpperCase()} + ekstra ${formatRupiah(extraMonthly)}/bln**: lunas dalam **${sim.months_to_payoff} bulan** (lebih cepat **${sim.months_saved} bln**, hemat bunga **${formatRupiah(sim.interest_saved)}**).`
+          : `• **Estimasi dasar (${prefStrategy.toUpperCase()})**: lunas dalam **${sim.months_to_payoff} bulan** (estimasi total bunga ${formatRupiah(sim.total_interest_paid)}).`;
       const reply = [
         `Strategi Pelunasan Utang (Total **${dash.total_debts.formatted_total_outstanding}**, DTI **${dash.dti_ratio}%**):`,
         listLines,
         `• **Avalanche (hemat bunga maksimal)**: dahulukan **${avalanche[0].name}**${avalanche[0].interest_rate ? ` (${avalanche[0].interest_rate}%)` : ''}.`,
         `• **Snowball (cepat lunas 1 pos)**: dahulukan **${snowball[0].name}** (${formatRupiah(snowball[0].outstanding_balance)}).`,
+        simNote,
       ].join('\n\n');
       return makeOk(config, {
         data: {
           response: reply,
           reason: 'local-debt-avalanche-snowball',
           suggested_replies: ['Simulasi cicil 1jt/bulan aman?', 'Atur alokasi keuangan 50/30/20'],
+        },
+      });
+    }
+
+    // 10b. Wealth Overview / Assets Portfolio / Net Worth & 6-month trend
+    if (/\b(kekayaan\s+bersih|net\s*worth|aset|portofolio|investasi|tren\s+bulanan)\b/i.test(message)) {
+      const overview = getLocalWealthOverview(db);
+      const assetLines = db.assets
+        .slice(0, 6)
+        .map((a) => `• **${a.name}** (${a.type}): ${formatRupiah(a.current_value)}`);
+      const histLines = overview.monthly_history
+        .slice(0, 4)
+        .map((h) => `${h.month}: net ${formatRupiah(h.net)}`)
+        .join(' | ');
+      const reply = [
+        `Ringkasan Kekayaan Bersih & Aset:`,
+        `• **Estimasi Net Worth**: **${formatRupiah(overview.estimated_net_worth)}** (Kas **${formatRupiah(overview.total_liquid_cash)}** + Aset **${formatRupiah(overview.total_assets)}** − Utang **${formatRupiah(overview.total_debts)}**).`,
+        assetLines.length > 0 ? `Portofolio Aset:\n${assetLines.join('\n')}` : 'Belum ada aset non-kas tercatat.',
+        histLines ? `Tren Arus Kas Bulanan: ${histLines}` : '',
+      ]
+        .filter(Boolean)
+        .join('\n\n');
+      return makeOk(config, {
+        data: {
+          response: reply,
+          reason: 'local-wealth-overview',
+          suggested_replies: ['Cek langganan aktif & biaya bulanan', 'Atur alokasi keuangan 50/30/20'],
+        },
+      });
+    }
+
+    // 10c. Recurring Subscriptions & unused alert detection
+    if (/\b(langganan|subscription|subscriptions|auto\s*debet)\b/i.test(message)) {
+      const overview = getLocalWealthOverview(db);
+      const activeSubs = db.subscriptions.filter((s) => s.is_active);
+      const lines = activeSubs
+        .slice(0, 8)
+        .map(
+          (s) =>
+            `• **${s.name}**: ${formatRupiah(s.amount)}/${s.frequency}` +
+            (s.unused_warning ? ' ⚠️ Jarang terpakai' : '')
+        );
+      const reply =
+        activeSubs.length > 0
+          ? `Langganan Aktif Anda (Total beban ~**${formatRupiah(overview.monthly_subscription_cost)}/bulan**):\n\n${lines.join('\n')}`
+          : 'Tidak ada langganan rutin aktif tercatat.';
+      return makeOk(config, {
+        data: {
+          response: reply,
+          reason: 'local-subscriptions-audit',
+          suggested_replies: ['Cek pengeluaran terbesar bulan ini', 'Cek kuota jajan harian bulan ini'],
+        },
+      });
+    }
+
+    // 10d. Historical Transaction Search ("cari transaksi kopi", "riwayat transaksi bca")
+    if (/\b(cari\s+transaksi|riwayat\s+transaksi|histori\s+transaksi|pencarian\s+transaksi)\b/i.test(message)) {
+      const cleanKw = message
+        .toLowerCase()
+        .replace(/\b(cari|riwayat|histori|pencarian|transaksi|bulan|ini|tolong|cek)\b/gi, ' ')
+        .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+        .trim()
+        .split(/\s+/)[0] || '';
+      const searchRes = searchLocalTransactions(db, { keyword: cleanKw, limit: 8 });
+      const lines = searchRes.matches
+        .slice(0, 6)
+        .map((m) => `• ${m.date} — **${m.description}**: ${formatRupiah(m.amount)} (${m.account_name})`);
+      const reply =
+        searchRes.count > 0
+          ? `Ditemukan **${searchRes.count} transaksi**${cleanKw ? ` terkait "${cleanKw}"` : ''} dengan total **${formatRupiah(searchRes.total_amount)}**:\n\n${lines.join('\n')}`
+          : `Tidak ada transaksi ditemukan${cleanKw ? ` untuk kata kunci "${cleanKw}"` : ''}.`;
+      return makeOk(config, {
+        data: {
+          response: reply,
+          reason: 'local-transaction-search',
+          suggested_replies: ['Bandingkan pengeluaran dengan bulan lalu', 'Cek kuota jajan harian bulan ini'],
         },
       });
     }

@@ -389,3 +389,128 @@ def test_advisor_v2_spending_analytics_and_suggested_replies():
 
     meta = asyncio.run(collect_meta())
     assert meta is not None and len(meta.get("suggested_replies", [])) > 0
+
+
+def test_advisor_v3_tool_engine_actions_and_multimodal():
+    import asyncio
+    import base64
+    from app.services.ai_service import (
+        _execute_advisor_tool,
+        chat_advisor,
+        parse_indonesian_action_commands,
+    )
+
+    accounts = [
+        {"id": "acc-bca", "name": "BCA Utama", "bank_provider": "BCA", "type": "bank", "balance": 10_000_000},
+        {"id": "acc-gopay", "name": "GoPay", "bank_provider": "GoPay", "type": "e_wallet", "balance": 350_000},
+    ]
+    categories = [
+        {"id": "cat-makan", "name": "Makanan & Minuman", "type": "expense"},
+        {"id": "cat-tagihan", "name": "Tagihan", "type": "expense"},
+    ]
+    bills = [
+        {"id": "bill-pln", "name": "Tagihan Listrik PLN", "amount": 275_000, "status": "unpaid", "account_id": "acc-bca"},
+    ]
+    debts = [
+        {"id": "debt-spay", "name": "SPayLater", "outstanding_balance": 3_000_000, "interest_rate": 24.0, "minimum_payment": 300_000, "status": "active"},
+        {"id": "debt-kta", "name": "KTA Bank", "outstanding_balance": 2_000_000, "interest_rate": 12.0, "minimum_payment": 250_000, "status": "active"},
+    ]
+    goals = [
+        {"id": "goal-libur", "name": "Dana Liburan", "target_amount": 10_000_000, "current_amount": 4_000_000, "progress": 40, "status": "active"},
+    ]
+    recent_txs = [
+        {"id": "tx-kopi-last", "date": "2026-11-26", "type": "expense", "amount": 18_000, "description": "Kopi Kenangan", "category_name": "Makanan & Minuman", "account_name": "GoPay"},
+        {"id": "tx-kopi-old", "date": "2026-10-15", "type": "expense", "amount": 22_000, "description": "Kopi Fore", "category_name": "Makanan & Minuman", "account_name": "BCA Utama"},
+    ]
+    learned_prefs = {
+        "debtStrategy": "avalanche",
+        "learnedRules": [{"keyword": "kopi", "accountId": "acc-gopay", "categoryId": "cat-makan"}],
+    }
+
+    # 1. V3 entity actions + learned merchant rule
+    pay_bill_cmds = parse_indonesian_action_commands("bayar tagihan listrik pakai GoPay", accounts, categories, bills=bills)
+    assert len(pay_bill_cmds) == 1
+    assert pay_bill_cmds[0]["type"] == "pay_bill"
+    assert pay_bill_cmds[0]["payload"]["bill_id"] == "bill-pln"
+    assert pay_bill_cmds[0]["payload"]["account_id"] == "acc-gopay"
+    assert pay_bill_cmds[0]["payload"]["amount"] == 275_000
+
+    pay_debt_cmds = parse_indonesian_action_commands("bayar cicilan spaylater 500rb pakai BCA", accounts, categories, debts=debts)
+    assert len(pay_debt_cmds) == 1
+    assert pay_debt_cmds[0]["type"] == "pay_debt"
+    assert pay_debt_cmds[0]["payload"]["debt_id"] == "debt-spay"
+    assert pay_debt_cmds[0]["payload"]["amount"] == 500_000
+
+    contrib_cmds = parse_indonesian_action_commands("nabung 1jt ke target dana liburan pakai BCA", accounts, categories, goals=goals)
+    assert len(contrib_cmds) == 1
+    assert contrib_cmds[0]["type"] == "contribute_goal"
+    assert contrib_cmds[0]["payload"]["goal_id"] == "goal-libur"
+    assert contrib_cmds[0]["payload"]["amount"] == 1_000_000
+
+    del_cmds = parse_indonesian_action_commands("hapus transaksi kopi terakhir", accounts, categories, recent_transactions=recent_txs)
+    assert len(del_cmds) == 1
+    assert del_cmds[0]["type"] == "delete_transaction"
+    assert del_cmds[0]["payload"]["transaction_id"] == "tx-kopi-last"
+
+    learned_cmds = parse_indonesian_action_commands("beli kopi 15rb", accounts, categories, preferences=learned_prefs)
+    assert len(learned_cmds) == 1
+    assert learned_cmds[0]["payload"]["account_id"] == "acc-gopay"
+
+    # 2. Tool execution engine (search_transactions, simulate_debt_payoff, get_wealth_overview)
+    full_ctx = {
+        "dashboard": {"cash_available": 10_350_000, "safe_to_spend": 6_000_000, "total_debts": 5_000_000, "dti_ratio": 18},
+        "emergency_fund": {"total_emergency_fund": 15_000_000, "target_amount": 30_000_000},
+        "budget": {},
+        "accounts": accounts,
+        "categories": categories,
+        "debts": debts,
+        "goals": goals,
+        "upcoming_bills": bills,
+        "assets": [{"id": "asset-1", "name": "Reksa Dana Pasar Uang", "type": "investment", "current_value": 25_000_000, "is_liquid": True}],
+        "asset_summary": {"total_assets": 25_000_000, "total_liquid": 25_000_000},
+        "subscriptions": [{"id": "sub-1", "name": "Netflix", "amount": 186_000, "frequency": "monthly", "unused_warning": True}],
+        "monthly_subscription_cost": 186_000,
+        "searchable_transactions": recent_txs,
+        "recent_transactions": recent_txs,
+        "monthly_history": [{"month": "2026-11", "income": 12_000_000, "expense": 4_000_000, "net": 8_000_000}],
+    }
+
+    search_out = _execute_advisor_tool("search_transactions", {"keyword": "kopi"}, full_ctx)
+    assert search_out["count"] == 2
+    assert search_out["total_amount"] == 40_000
+
+    sim_out = _execute_advisor_tool("simulate_debt_payoff", {"strategy": "avalanche", "extra_monthly": 500_000}, full_ctx)
+    assert sim_out["months_to_payoff"] < sim_out["months_baseline"]
+    assert sim_out["interest_saved"] > 0
+    assert sim_out["priority_order"][0] == "SPayLater"
+
+    wealth_out = _execute_advisor_tool("get_wealth_overview", {}, full_ctx)
+    assert wealth_out["total_assets"] == 25_000_000
+    assert wealth_out["estimated_net_worth"] == 30_350_000
+    assert wealth_out["monthly_subscription_cost"] == 186_000
+
+    # 3. Conversational V3 analyzers + attachment notice
+    net_res = asyncio.run(chat_advisor("Berapa kekayaan bersih dan aset saya?", full_ctx, "local", "default", None))
+    assert "30.350.000" in net_res["response"]
+
+    sub_res = asyncio.run(chat_advisor("Cek langganan aktif saya", full_ctx, "local", "default", None))
+    assert "Netflix" in sub_res["response"] and "186.000" in sub_res["response"]
+
+    search_chat = asyncio.run(chat_advisor("Cari transaksi kopi bulan lalu dan sekarang", full_ctx, "local", "default", None))
+    assert "40.000" in search_chat["response"]
+
+    # 1x1 valid PNG pixel base64
+    tiny_png = base64.b64encode(
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00\x00\x00\x0cIDATx\x9cc\xf8\xff\xff?\x00\x05\xfe\x02\xfe\xdc\xccY\xe7\x00\x00\x00\x00IEND\xaeB`\x82"
+    ).decode("ascii")
+    att_res = asyncio.run(
+        chat_advisor(
+            "Catat gambar ini",
+            full_ctx,
+            "local",
+            "default",
+            None,
+            attachments=[{"name": "struk.png", "mime_type": "image/png", "data_base64": tiny_png}],
+        )
+    )
+    assert "response" in att_res

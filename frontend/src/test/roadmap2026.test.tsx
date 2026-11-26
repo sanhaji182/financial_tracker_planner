@@ -30,6 +30,15 @@ import {
   pushEncryptedSync,
 } from '../offline/e2eeSync';
 import {
+  clearAdvisorMemory,
+  loadAdvisorMemory,
+} from '../utils/advisorMemory';
+import {
+  getLocalWealthOverview,
+  searchLocalTransactions,
+  simulateLocalDebtPayoff,
+} from '../offline/advisorTools';
+import {
   mergeIndonesianFollowUp,
   parseIndonesianFinancialCommand,
   parseIndonesianFinancialCommands,
@@ -498,6 +507,222 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
         expect(screen.getAllByText(chipText).length).toBeGreaterThanOrEqual(1);
       });
     }
+  });
+
+  it('Tahap 3b: AI Advisor V3 — pay_bill, pay_debt, contribute_goal, delete_transaction, learned memory, tool queries & image attachment UI', async () => {
+    clearAdvisorMemory();
+    const today = getTodayLocalDate();
+    const bca = await accountsService.createAccount({
+      name: 'BCA Utama',
+      type: 'bank',
+      bank_provider: 'BCA',
+      initial_balance: 10_000_000,
+    });
+    const gopay = await accountsService.createAccount({
+      name: 'GoPay Harian',
+      type: 'e_wallet',
+      bank_provider: 'GoPay',
+      initial_balance: 500_000,
+    });
+
+    const bill = await billsService.createBill({
+      name: 'Tagihan Listrik PLN',
+      amount: 250_000,
+      frequency: 'monthly',
+      due_day: 20,
+      account_id: bca.id,
+      category_id: 'cat-exp-tagihan',
+      auto_remind: true,
+      reminder_days_before: 3,
+    });
+    const debt = await debtsService.createDebt({
+      name: 'SPayLater',
+      type: 'installment',
+      creditor: 'Shopee',
+      original_amount: 3_000_000,
+      outstanding_balance: 3_000_000,
+      interest_rate: 24,
+      minimum_payment: 300_000,
+      due_day: 15,
+      account_id: bca.id,
+      is_shared: false,
+    });
+
+    // Seed goal, asset, subscription, and prior transaction into local DB
+    const dbSeed = loadLocalDB();
+    dbSeed.goals.push({
+      id: 'goal-v3-liburan',
+      user_id: 'local-user-1',
+      name: 'Dana Liburan',
+      type: 'vacation',
+      target_amount: 10_000_000,
+      current_amount: 0,
+      target_date: `${today.slice(0, 4)}-12-31`,
+      linked_account_id: bca.id,
+      icon: 'Plane',
+      color: '#4f46e5',
+      status: 'active',
+      notes: '',
+      progress: 0,
+      average_monthly_contribution: 0,
+      created_at: new Date().toISOString(),
+      contribution_history: [],
+    });
+    dbSeed.assets.push({
+      id: 'asset-v3-rdpu',
+      user_id: 'local-user-1',
+      name: 'Reksa Dana Pasar Uang',
+      type: 'investment',
+      current_value: 20_000_000,
+      formatted_value: 'Rp 20.000.000',
+      currency: 'IDR',
+      is_shared: false,
+      is_liquid: true,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    dbSeed.subscriptions.push({
+      id: 'sub-v3-netflix',
+      user_id: 'local-user-1',
+      name: 'Netflix',
+      provider: 'Netflix',
+      amount: 186_000,
+      currency: 'IDR',
+      frequency: 'monthly',
+      category_name: 'Hiburan',
+      is_active: true,
+      auto_renew: true,
+      notes: '',
+      unused_warning: true,
+      days_unused: 45,
+      warning_message: 'Jarang dipakai',
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+    saveLocalDB(dbSeed);
+
+    await aiSettingsService.updateSettings({
+      ai_enabled: true,
+      ai_provider: 'local',
+      ai_model: 'mlkit-offline',
+      ocr_escalation_enabled: false,
+      auto_categorization_enabled: true,
+      advisor_enabled: true,
+      anomaly_detection_enabled: true,
+    });
+
+    const qc = makeQueryClient();
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <AdvisorChatDrawer />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    await user.click(await screen.findByTitle(/Tanya AI Advisor/i));
+    const chatBox = await screen.findByPlaceholderText(/Tulis pertanyaan Anda/i);
+
+    // 1. Explicit preference memory command
+    await user.type(chatBox, 'ingat gaji masuk tiap tgl 25 dan utamakan strategi avalanche{enter}');
+    await waitFor(() => {
+      expect(loadAdvisorMemory().paydayDay).toBe(25);
+      expect(loadAdvisorMemory().debtStrategy).toBe('avalanche');
+    });
+
+    // 2. Pay Bill via Advisor action card
+    await user.type(chatBox, 'bayar tagihan listrik pakai BCA{enter}');
+    let confirmBtns = await screen.findAllByRole('button', { name: /Konfirmasi & Jalankan/i });
+    await user.click(confirmBtns[confirmBtns.length - 1]);
+    await waitFor(() => {
+      const dbAfterBill = loadLocalDB();
+      expect(dbAfterBill.bills.find((b) => b.id === bill.id)?.status).toBe('paid');
+      expect(dbAfterBill.accounts.find((a) => a.id === bca.id)?.balance).toBe(9_750_000);
+    });
+
+    // 3. Pay Debt installment via Advisor action card
+    await user.type(chatBox, 'bayar cicilan spaylater 500rb pakai BCA{enter}');
+    await waitFor(() => {
+      expect(screen.getByText(/Bayar Cicilan: SPayLater/i)).toBeInTheDocument();
+    });
+    confirmBtns = screen.getAllByRole('button', { name: /Konfirmasi & Jalankan/i });
+    await user.click(confirmBtns[confirmBtns.length - 1]);
+    await waitFor(() => {
+      const dbAfterDebt = loadLocalDB();
+      expect(dbAfterDebt.debts.find((d) => d.id === debt.id)?.outstanding_balance).toBe(2_560_000);
+      expect(dbAfterDebt.accounts.find((a) => a.id === bca.id)?.balance).toBe(9_250_000);
+    });
+
+    // 4. Contribute to Goal via Advisor action card
+    await user.type(chatBox, 'nabung 1jt ke target dana liburan pakai BCA{enter}');
+    await waitFor(() => {
+      expect(screen.getByText(/Setor Target: Dana Liburan/i)).toBeInTheDocument();
+    });
+    confirmBtns = screen.getAllByRole('button', { name: /Konfirmasi & Jalankan/i });
+    await user.click(confirmBtns[confirmBtns.length - 1]);
+    await waitFor(() => {
+      const dbAfterGoal = loadLocalDB();
+      expect(dbAfterGoal.goals.find((g) => g.id === 'goal-v3-liburan')?.current_amount).toBe(1_000_000);
+      expect(dbAfterGoal.accounts.find((a) => a.id === bca.id)?.balance).toBe(9_250_000);
+    });
+
+    // 5. Implicit rule learning + undo via delete_transaction
+    await user.type(chatBox, 'beli kopi 15rb pakai GoPay{enter}');
+    await waitFor(() => {
+      expect(screen.getByText(/Catat Pengeluaran: Kopi/i)).toBeInTheDocument();
+    });
+    confirmBtns = screen.getAllByRole('button', { name: /Konfirmasi & Jalankan/i });
+    await user.click(confirmBtns[confirmBtns.length - 1]);
+    await waitFor(() => {
+      const learned = loadAdvisorMemory().learnedRules.find((r) => r.keyword === 'kopi');
+      expect(learned?.accountId).toBe(gopay.id);
+    });
+
+    const learnedCmds = parseIndonesianFinancialCommands(
+      'beli kopi 20rb',
+      loadLocalDB().accounts,
+      loadLocalDB().categories,
+      { memory: loadAdvisorMemory() }
+    );
+    expect(learnedCmds[0].accountId).toBe(gopay.id);
+
+    await user.type(chatBox, 'hapus transaksi kopi terakhir{enter}');
+    await waitFor(() => {
+      expect(screen.getByText(/Hapus Transaksi: Kopi/i)).toBeInTheDocument();
+    });
+    confirmBtns = screen.getAllByRole('button', { name: /Konfirmasi & Jalankan/i });
+    await user.click(confirmBtns[confirmBtns.length - 1]);
+    await waitFor(() => {
+      expect(loadLocalDB().transactions.some((t) => /kopi/i.test(t.description || ''))).toBe(false);
+    });
+
+    // 6. V3 Tools & Chat Q&A
+    const wealthOv = getLocalWealthOverview(loadLocalDB());
+    expect(wealthOv.total_assets).toBe(20_000_000);
+    expect(wealthOv.monthly_subscription_cost).toBe(186_000);
+
+    const debtSim = simulateLocalDebtPayoff(loadLocalDB(), 'avalanche', 500_000);
+    expect(debtSim.months_to_payoff).toBeLessThanOrEqual(debtSim.months_baseline);
+    expect(debtSim.interest_saved).toBeGreaterThan(0);
+
+    const searchRes = searchLocalTransactions(loadLocalDB(), { keyword: 'SPayLater' });
+    expect(searchRes.count).toBeGreaterThanOrEqual(1);
+
+    const assetReply = await aiSettingsService.chat('Berapa kekayaan bersih dan aset saya?');
+    expect(assetReply.response).toMatch(/20\.000\.000/);
+
+    const subReply = await aiSettingsService.chat('Cek langganan aktif saya');
+    expect(subReply.response).toMatch(/Netflix/i);
+    expect(subReply.response).toMatch(/186\.000/);
+
+    // 7. Image attachment upload in Drawer
+    const fileInput = screen.getByLabelText('Pilih gambar struk AI') as HTMLInputElement;
+    const fakeReceipt = new File(['png-bytes'], 'receipt.png', { type: 'image/png' });
+    await user.upload(fileInput, fakeReceipt);
+    expect(await screen.findByText(/Lampiran struk: receipt\.png/i)).toBeInTheDocument();
+
+    clearAdvisorMemory();
   });
 
   // ---------------- TAHAP 4 ----------------

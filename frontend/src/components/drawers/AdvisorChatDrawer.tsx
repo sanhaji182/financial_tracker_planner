@@ -1,13 +1,38 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import { Bot, Send, Loader2, ChevronDown, MessageSquare, CheckCircle2, Sparkles, X, Radio, Pencil } from 'lucide-react';
-import { aiSettingsService, type AISettings, type AgenticAction, type AIChatTurn } from '../../services/aiSettings';
+import {
+  Bot,
+  Send,
+  Loader2,
+  ChevronDown,
+  MessageSquare,
+  CheckCircle2,
+  Sparkles,
+  X,
+  Radio,
+  Pencil,
+  ImagePlus,
+  AlertTriangle,
+} from 'lucide-react';
+import {
+  aiSettingsService,
+  type AISettings,
+  type AgenticAction,
+  type AIChatAttachment,
+  type AIChatTurn,
+} from '../../services/aiSettings';
 import { isAudioRecordingSupported, VoiceNoteRecorder } from '../../utils/voiceRecorder';
 import { transactionsService, type CreateTransactionRequest } from '../../services/transactions';
 import { transfersService, type TransferRequest } from '../../services/transfers';
 import { budgetsService } from '../../services/budgets';
 import goalsService, { type CreateGoalPayload } from '../../services/goals';
+import { billService, type PayBillRequest } from '../../services/bills';
+import { debtsService, type RecordPaymentRequest } from '../../services/debts';
+import { learnFromConfirmedAction, loadAdvisorMemory } from '../../utils/advisorMemory';
+import { runProactiveWatchdog, type WatchdogFinding } from '../../offline/proactiveWatchdog';
+import { loadLocalDB } from '../../offline/storage';
+import { getAppMode } from '../../utils/appMode';
 import { invalidateFinancialData } from '../../hooks/invalidateFinancialQueries';
 import { toast } from '../../stores/useToastStore';
 import { useAuthStore } from '../../stores/authStore';
@@ -19,6 +44,7 @@ interface ChatMessage {
   reason?: string;
   proposed_actions?: AgenticAction[];
   suggested_replies?: string[];
+  attachment_name?: string;
 }
 
 function renderInlineMarkdown(text: string): React.ReactNode[] {
@@ -117,7 +143,11 @@ export const AdvisorChatDrawer: React.FC = () => {
   const [editingActionId, setEditingActionId] = useState<string | null>(null);
   const [editAmountText, setEditAmountText] = useState('');
   const [editDescText, setEditDescText] = useState('');
+  const [pendingAttachment, setPendingAttachment] = useState<AIChatAttachment | null>(null);
+  const [proactiveAlerts, setProactiveAlerts] = useState<WatchdogFinding[]>([]);
+  const [alertsDismissed, setAlertsDismissed] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleStartEditAction = (act: AgenticAction) => {
     const p = act.payload as { amount?: number; target_amount?: number; description?: string; name?: string };
@@ -177,6 +207,33 @@ export const AdvisorChatDrawer: React.FC = () => {
   const voiceRecorderRef = useRef<VoiceNoteRecorder | null>(null);
   const voiceSupported = isAudioRecordingSupported();
 
+  const handleSelectImage = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.error('Lampiran chat hanya mendukung file gambar/struk');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error('Ukuran gambar maksimal 5MB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      const b64 = result.includes(',') ? result.split(',', 2)[1] : result;
+      if (b64) {
+        setPendingAttachment({
+          name: file.name || 'struk.jpg',
+          mime_type: file.type || 'image/jpeg',
+          data_base64: b64,
+        });
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
   useEffect(() => {
     try {
       if (typeof window !== 'undefined' && window.localStorage) {
@@ -235,6 +292,16 @@ export const AdvisorChatDrawer: React.FC = () => {
   }, [checkAdvisorEnabled]);
 
   useEffect(() => {
+    if (!isOpen || getAppMode() !== 'local' || alertsDismissed) return;
+    try {
+      const res = runProactiveWatchdog(loadLocalDB());
+      setProactiveAlerts(res.findings.slice(0, 2));
+    } catch {
+      setProactiveAlerts([]);
+    }
+  }, [isOpen, alertsDismissed, messages.length]);
+
+  useEffect(() => {
     if (messagesEndRef.current && typeof messagesEndRef.current.scrollIntoView === 'function') {
       messagesEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
@@ -247,9 +314,11 @@ export const AdvisorChatDrawer: React.FC = () => {
   }, [isOpen]);
 
   const handleSendMessage = async (text?: string) => {
+    const attachmentToSend = !text ? pendingAttachment : null;
     const messageText = text || inputText.trim();
-    if (!messageText || isLoading) return;
+    if ((!messageText && !attachmentToSend) || isLoading) return;
 
+    const effectivePrompt = messageText || `Analisa struk gambar ${attachmentToSend?.name || 'terlampir'}`;
     const historyTurns: AIChatTurn[] = messages
       .filter((m) => m.text.trim().length > 0)
       .slice(-10)
@@ -259,7 +328,8 @@ export const AdvisorChatDrawer: React.FC = () => {
     const userMessage: ChatMessage = {
       clientId: `usr-${Date.now()}`,
       role: 'user',
-      text: messageText,
+      text: effectivePrompt,
+      ...(attachmentToSend ? { attachment_name: attachmentToSend.name } : {}),
     };
     const updateAssistantTurn = (updater: (prevMsg: ChatMessage) => ChatMessage) => {
       setMessages((prev) =>
@@ -271,39 +341,52 @@ export const AdvisorChatDrawer: React.FC = () => {
       userMessage,
       { clientId: assistantId, role: 'assistant', text: '' },
     ]);
-    setInputText('');
+    if (!text) {
+      setInputText('');
+      setPendingAttachment(null);
+    }
     setIsLoading(true);
+
+    const extraOpts = {
+      ...(attachmentToSend ? { attachments: [attachmentToSend] } : {}),
+      preferences: loadAdvisorMemory() as unknown as Record<string, unknown>,
+    };
 
     try {
       if (typeof aiSettingsService.chatStream === 'function') {
-        await aiSettingsService.chatStream(messageText, historyTurns, {
-          onMeta: (meta) => {
-            updateAssistantTurn((prevMsg) => ({
-              ...prevMsg,
-              reason: meta.reason ?? prevMsg.reason,
-              proposed_actions: meta.proposed_actions ?? prevMsg.proposed_actions,
-              suggested_replies: meta.suggested_replies ?? prevMsg.suggested_replies,
-            }));
+        await aiSettingsService.chatStream(
+          effectivePrompt,
+          historyTurns,
+          {
+            onMeta: (meta) => {
+              updateAssistantTurn((prevMsg) => ({
+                ...prevMsg,
+                reason: meta.reason ?? prevMsg.reason,
+                proposed_actions: meta.proposed_actions ?? prevMsg.proposed_actions,
+                suggested_replies: meta.suggested_replies ?? prevMsg.suggested_replies,
+              }));
+            },
+            onDelta: (chunk) => {
+              updateAssistantTurn((prevMsg) => ({
+                ...prevMsg,
+                text: prevMsg.text + chunk,
+              }));
+            },
+            onDone: (finalRes) => {
+              updateAssistantTurn((prevMsg) => ({
+                clientId: assistantId,
+                role: 'assistant',
+                text: prevMsg.text || finalRes.response,
+                reason: finalRes.reason || prevMsg.reason,
+                proposed_actions: finalRes.proposed_actions ?? prevMsg.proposed_actions,
+                suggested_replies: finalRes.suggested_replies ?? prevMsg.suggested_replies,
+              }));
+            },
           },
-          onDelta: (chunk) => {
-            updateAssistantTurn((prevMsg) => ({
-              ...prevMsg,
-              text: prevMsg.text + chunk,
-            }));
-          },
-          onDone: (finalRes) => {
-            updateAssistantTurn((prevMsg) => ({
-              clientId: assistantId,
-              role: 'assistant',
-              text: prevMsg.text || finalRes.response,
-              reason: finalRes.reason || prevMsg.reason,
-              proposed_actions: finalRes.proposed_actions ?? prevMsg.proposed_actions,
-              suggested_replies: finalRes.suggested_replies ?? prevMsg.suggested_replies,
-            }));
-          },
-        });
+          extraOpts
+        );
       } else {
-        const result = await aiSettingsService.chat(messageText, historyTurns);
+        const result = await aiSettingsService.chat(effectivePrompt, historyTurns, extraOpts);
         updateAssistantTurn(() => ({
           clientId: assistantId,
           role: 'assistant',
@@ -377,9 +460,23 @@ export const AdvisorChatDrawer: React.FC = () => {
     setActionStates((prev) => ({ ...prev, [action.id]: 'running' }));
     try {
       if (action.type === 'create_transaction') {
-        await transactionsService.createTransaction(
-          action.payload as unknown as CreateTransactionRequest
-        );
+        const txReq = action.payload as unknown as CreateTransactionRequest;
+        await transactionsService.createTransaction(txReq);
+        try {
+          const localDb = getAppMode() === 'local' ? loadLocalDB() : null;
+          learnFromConfirmedAction(
+            String(txReq.description || action.title || ''),
+            {
+              account_id: txReq.account_id,
+              category_id: txReq.category_id,
+              type: txReq.type,
+            },
+            localDb?.accounts || [],
+            localDb?.categories || []
+          );
+        } catch {
+          // Non-fatal learning failure
+        }
       } else if (action.type === 'create_transfer') {
         await transfersService.createTransfer(action.payload as unknown as TransferRequest);
       } else if (action.type === 'set_budget') {
@@ -387,6 +484,53 @@ export const AdvisorChatDrawer: React.FC = () => {
         await budgetsService.setBudget(p.category_id, p.month, p.amount);
       } else if (action.type === 'create_goal') {
         await goalsService.createGoal(action.payload as unknown as CreateGoalPayload);
+      } else if (action.type === 'pay_bill') {
+        const p = action.payload as {
+          bill_id: string;
+          amount: number;
+          payment_date: string;
+          account_id: string;
+          notes?: string;
+        };
+        await billService.payBill(p.bill_id, {
+          amount: p.amount,
+          payment_date: p.payment_date,
+          account_id: p.account_id,
+          notes: p.notes ?? null,
+        } satisfies PayBillRequest);
+      } else if (action.type === 'pay_debt') {
+        const p = action.payload as {
+          debt_id: string;
+          amount: number;
+          payment_date: string;
+          account_id: string;
+          is_extra_payment?: boolean;
+          notes?: string;
+        };
+        await debtsService.recordPayment(p.debt_id, {
+          amount: p.amount,
+          payment_date: p.payment_date,
+          account_id: p.account_id,
+          is_extra_payment: Boolean(p.is_extra_payment),
+          notes: p.notes,
+        } satisfies RecordPaymentRequest);
+      } else if (action.type === 'contribute_goal') {
+        const p = action.payload as {
+          goal_id: string;
+          source_account_id: string;
+          amount: number;
+          date: string;
+          notes?: string;
+        };
+        await goalsService.contributeToGoal(p.goal_id, {
+          source_account_id: p.source_account_id,
+          amount: p.amount,
+          date: p.date,
+          notes: p.notes,
+        });
+      } else if (action.type === 'delete_transaction') {
+        const p = action.payload as { transaction_id: string };
+        await transactionsService.deleteTransaction(p.transaction_id);
       }
       invalidateFinancialData(queryClient);
       setActionStates((prev) => ({ ...prev, [action.id]: 'done' }));
@@ -499,6 +643,35 @@ export const AdvisorChatDrawer: React.FC = () => {
             </p>
           </div>
 
+          {!alertsDismissed && proactiveAlerts.length > 0 && (
+            <div className="px-3.5 py-2 bg-rose-50/90 dark:bg-rose-950/30 border-b border-rose-200/70 dark:border-rose-900/40 shrink-0 flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-600 dark:text-rose-400 shrink-0" />
+                <p className="text-[11px] font-medium text-rose-800 dark:text-rose-200 truncate">
+                  {proactiveAlerts[0].title}
+                </p>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  disabled={isLoading}
+                  onClick={() => void handleSendMessage(`Beri solusi cepat untuk: ${proactiveAlerts[0].title}`)}
+                  className="text-[10px] font-semibold px-2 py-0.5 rounded-md bg-rose-600 text-white hover:bg-rose-700"
+                >
+                  Tinjau Solusi
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAlertsDismissed(true)}
+                  aria-label="Tutup peringatan proaktif AI"
+                  className="p-0.5 text-rose-500 hover:text-rose-700"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+            </div>
+          )}
+
           <div className="flex-1 overflow-y-auto p-4 space-y-4 min-h-0">
             {messages.length === 0 ? (
               <div className="flex flex-col gap-4 h-full justify-center items-center text-center py-4">
@@ -510,7 +683,7 @@ export const AdvisorChatDrawer: React.FC = () => {
                     Tanya Asisten Keuangan
                   </p>
                   <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-xs">
-                    Advisor memahami ringkasan kas, utang, anggaran, dan dana darurat Anda.
+                    Advisor memahami kas, aset, tagihan, utang, langganan &amp; foto struk Anda.
                   </p>
                 </div>
                 <div className="w-full space-y-2 mt-1">
@@ -549,6 +722,12 @@ export const AdvisorChatDrawer: React.FC = () => {
                           : 'bg-slate-100 dark:bg-slate-800 text-slate-900 dark:text-slate-100 rounded-2xl rounded-tl-sm'
                       } px-3.5 py-2.5 space-y-1`}
                     >
+                      {msg.attachment_name && (
+                        <div className="inline-flex items-center gap-1 rounded-md bg-white/15 px-2 py-0.5 text-[10px] font-medium mb-1">
+                          <ImagePlus className="w-3 h-3" />
+                          <span>{msg.attachment_name}</span>
+                        </div>
+                      )}
                       {msg.role === 'assistant' && !msg.text && isLoading ? (
                         <p className="text-xs italic text-slate-500 dark:text-slate-400">
                           Menganalisis data keuangan Anda...
@@ -756,6 +935,21 @@ export const AdvisorChatDrawer: React.FC = () => {
           </div>
 
           <div className="p-3.5 border-t border-slate-200 dark:border-slate-800 shrink-0 bg-white dark:bg-slate-900 space-y-2">
+            {pendingAttachment && (
+              <div className="flex items-center justify-between gap-2 rounded-lg bg-indigo-50 dark:bg-indigo-950/30 border border-indigo-200/80 dark:border-indigo-900/50 px-3 py-1.5 text-[11px] text-indigo-800 dark:text-indigo-200">
+                <span className="font-medium truncate">
+                  Lampiran struk: {pendingAttachment.name}
+                </span>
+                <button
+                  type="button"
+                  aria-label="Hapus lampiran gambar chat"
+                  onClick={() => setPendingAttachment(null)}
+                  className="font-semibold text-rose-600 dark:text-rose-400 hover:underline shrink-0"
+                >
+                  Hapus
+                </button>
+              </div>
+            )}
             {(isRecordingVoice || isTranscribingVoice) && (
               <div className="flex items-center justify-between gap-2 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-900/50 px-3 py-1.5 text-[11px] text-amber-800 dark:text-amber-200">
                 <span className="font-medium">
@@ -775,17 +969,35 @@ export const AdvisorChatDrawer: React.FC = () => {
                 )}
               </div>
             )}
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              aria-label="Pilih gambar struk AI"
+              onChange={handleSelectImage}
+              className="hidden"
+            />
             <div className="flex gap-2 items-end">
               <textarea
                 ref={inputRef}
                 value={inputText}
                 onChange={(e) => setInputText(e.target.value)}
                 onKeyDown={handleKeyDown}
-                placeholder="Tulis pertanyaan Anda..."
+                placeholder="Tulis pertanyaan Anda atau lampirkan struk..."
                 disabled={isLoading}
                 rows={2}
                 className="flex-1 text-sm bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl px-3 py-2 focus:outline-none focus:border-indigo-500 resize-none text-slate-900 dark:text-white placeholder:text-slate-400 disabled:opacity-60"
               />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isLoading}
+                aria-label="Lampirkan gambar atau struk ke chat"
+                title="Lampirkan foto struk / mutasi"
+                className="p-2.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 transition-colors shrink-0 mb-0.5"
+              >
+                <ImagePlus className="w-5 h-5" />
+              </button>
               {voiceSupported && (
                 <button
                   type="button"
@@ -805,7 +1017,7 @@ export const AdvisorChatDrawer: React.FC = () => {
               <button
                 type="button"
                 onClick={() => void handleSendMessage()}
-                disabled={!inputText.trim() || isLoading}
+                disabled={(!inputText.trim() && !pendingAttachment) || isLoading}
                 className="p-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white disabled:opacity-40 disabled:cursor-not-allowed transition-colors shrink-0 mb-0.5"
               >
                 {isLoading ? (

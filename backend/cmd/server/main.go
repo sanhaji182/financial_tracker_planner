@@ -151,7 +151,8 @@ func main() {
 	privacyHandler := handler.NewPrivacyHandler(privacyService)
 	aiSettingsHandler := handler.NewAISettingsHandler(aiSettingsService, dashboardService, efService, budgetService, auditService).
 		WithCatalogServices(accountService, categoryService).
-		WithPlannerContextServices(txService, debtService, goalService)
+		WithPlannerContextServices(txService, debtService, goalService).
+		WithExtendedWealthServices(billService, assetService, subService)
 	governanceHandler := handler.NewGovernanceHandler()
 	syncStore := handler.NewPgSyncStore(dbPool)
 	syncHandler := handler.NewSyncHandler(syncStore)

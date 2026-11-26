@@ -1,13 +1,48 @@
 import type { Account } from '../services/accounts';
 import type { Category } from '../services/categories';
 
+import type { AdvisorMemoryState } from './advisorMemory';
+
 export type FinancialCommandIntent =
   | 'create_transaction'
   | 'create_transfer'
   | 'set_budget'
   | 'create_goal'
+  | 'pay_bill'
+  | 'pay_debt'
+  | 'contribute_goal'
+  | 'delete_transaction'
   | 'what_if'
   | 'query';
+
+export interface ParserExtendedContext {
+  bills?: Array<{ id: string; name: string; amount: number; status?: string; account_id?: string | null }>;
+  debts?: Array<{
+    id: string;
+    name: string;
+    outstanding_balance: number;
+    minimum_payment?: number;
+    status?: string;
+    account_id?: string;
+  }>;
+  goals?: Array<{
+    id: string;
+    name: string;
+    target_amount: number;
+    current_amount: number;
+    status?: string;
+    linked_account_id?: string;
+  }>;
+  recentTransactions?: Array<{
+    id: string;
+    description?: string;
+    amount: number;
+    date: string;
+    type: string;
+    category_name?: string;
+  }>;
+  memory?: AdvisorMemoryState;
+}
 
 export interface ParsedFinancialCommand {
   intent: FinancialCommandIntent;
@@ -19,6 +54,9 @@ export interface ParsedFinancialCommand {
   targetAccountName?: string;
   categoryId?: string;
   categoryName?: string;
+  entityId?: string;
+  entityName?: string;
+  isExtraPayment?: boolean;
   txDate?: string;
   description: string;
   confidence: number;
@@ -552,14 +590,194 @@ export function mergeIndonesianFollowUp(
  * Parses Indonesian voice or natural-language financial commands into one or more structured actions
  * (supporting multi-item messages like "beli kopi 10rb, susu 6rb dan warteg 5rb").
  */
+function findBestEntityMatch<T extends { name: string }>(
+  textLower: string,
+  items: T[]
+): T | undefined {
+  let best: T | undefined;
+  let bestLen = 0;
+  for (const item of items) {
+    const rawName = String(item.name || '').toLowerCase().trim();
+    if (!rawName) continue;
+    if (textLower.includes(rawName) && rawName.length > bestLen) {
+      best = item;
+      bestLen = rawName.length;
+      continue;
+    }
+    const tokens = rawName
+      .split(/\s+/)
+      .filter((t) => t.length >= 3 && !/^(dan|pt|cv|bank|tagihan|dana|target)$/.test(t));
+    for (const tok of tokens) {
+      const escaped = tok.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`\\b${escaped}\\b`, 'i').test(textLower) && tok.length > bestLen) {
+        best = item;
+        bestLen = tok.length;
+      }
+    }
+  }
+  return best;
+}
+
+function resolveLearnedRuleForClause(clauseLower: string, memory?: AdvisorMemoryState) {
+  if (!memory?.learnedRules?.length) return undefined;
+  for (const rule of memory.learnedRules) {
+    const escaped = rule.keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp(`\\b${escaped}\\b`, 'i').test(clauseLower)) {
+      return rule;
+    }
+  }
+  return undefined;
+}
+
 export function parseIndonesianFinancialCommands(
   rawText: string,
   accounts: Account[],
-  categories: Category[]
+  categories: Category[],
+  extended?: ParserExtendedContext
 ): ParsedFinancialCommand[] {
   const text = String(rawText || '').trim();
+  const low = text.toLowerCase();
   const amount = parseIndonesianSpokenAmount(text);
   const txDate = extractRelativeIndonesianDate(text);
+
+  // V3: Delete / undo mistaken transaction ("hapus transaksi kopi terakhir")
+  if (
+    extended?.recentTransactions?.length &&
+    /\b(hapus|batalkan|cancel|urungkan)\b/i.test(low) &&
+    /\b(transaksi|catatan|barusan|terakhir)\b/i.test(low) &&
+    !/\?/.test(text)
+  ) {
+    const cleanedHint = low
+      .replace(/\b(tolong|coba|hapus|batalkan|cancel|urungkan|transaksi|catatan|yang|barusan|terakhir|ini)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const candidates = [...extended.recentTransactions].sort((a, b) =>
+      String(b.date || '').localeCompare(String(a.date || ''))
+    );
+    const matchedTx = cleanedHint
+      ? candidates.find((tx) =>
+          `${tx.description || ''} ${tx.category_name || ''}`.toLowerCase().includes(cleanedHint)
+        ) || candidates[0]
+      : candidates[0];
+    if (matchedTx) {
+      return [
+        {
+          intent: 'delete_transaction',
+          type: 'expense',
+          amount: matchedTx.amount,
+          entityId: matchedTx.id,
+          entityName: matchedTx.description || 'Transaksi',
+          txDate: matchedTx.date,
+          description: matchedTx.description || matchedTx.category_name || 'Transaksi',
+          confidence: 0.9,
+        },
+      ];
+    }
+  }
+
+  // V3: Pay Bill intent ("bayar tagihan listrik pakai BCA")
+  if (
+    extended?.bills?.length &&
+    /\b(bayar|lunasi|lunasin|tagihan)\b/i.test(low) &&
+    !/\?/.test(text)
+  ) {
+    const unpaidBills = extended.bills.filter((b) => b.status !== 'paid' && b.status !== 'cancelled');
+    const matchedBill = findBestEntityMatch(low, unpaidBills);
+    if (matchedBill) {
+      const explicitAcc = matchAccountByText(text, accounts);
+      const linkedAcc = matchedBill.account_id
+        ? accounts.find((a) => a.id === matchedBill.account_id)
+        : undefined;
+      const useAcc = explicitAcc || linkedAcc || accounts[0];
+      const billAmt = amount || matchedBill.amount;
+      if (useAcc && billAmt > 0) {
+        return [
+          {
+            intent: 'pay_bill',
+            type: 'expense',
+            amount: billAmt,
+            accountId: useAcc.id,
+            accountName: useAcc.name,
+            entityId: matchedBill.id,
+            entityName: matchedBill.name,
+            ...(txDate ? { txDate } : {}),
+            description: matchedBill.name,
+            confidence: 0.93,
+          },
+        ];
+      }
+    }
+  }
+
+  // V3: Pay Debt / Installment intent ("bayar cicilan SPayLater 500rb pakai BCA")
+  if (
+    extended?.debts?.length &&
+    /\b(bayar|cicil|cicilan|lunasi|lunasin|angsur|angsuran|utang|hutang)\b/i.test(low) &&
+    !/\?/.test(text)
+  ) {
+    const activeDebts = extended.debts.filter((d) => !d.status || d.status === 'active');
+    const matchedDebt = findBestEntityMatch(low, activeDebts);
+    if (matchedDebt) {
+      const explicitAcc = matchAccountByText(text, accounts);
+      const linkedAcc = matchedDebt.account_id
+        ? accounts.find((a) => a.id === matchedDebt.account_id)
+        : undefined;
+      const useAcc = explicitAcc || linkedAcc || accounts[0];
+      const payAmt = amount || matchedDebt.minimum_payment || matchedDebt.outstanding_balance;
+      if (useAcc && payAmt > 0) {
+        return [
+          {
+            intent: 'pay_debt',
+            type: 'expense',
+            amount: payAmt,
+            accountId: useAcc.id,
+            accountName: useAcc.name,
+            entityId: matchedDebt.id,
+            entityName: matchedDebt.name,
+            isExtraPayment: /\b(ekstra|extra|tambahan|percepat)\b/i.test(low),
+            ...(txDate ? { txDate } : {}),
+            description: matchedDebt.name,
+            confidence: 0.93,
+          },
+        ];
+      }
+    }
+  }
+
+  // V3: Contribute to existing Goal intent ("nabung 1jt ke target dana liburan dari BCA")
+  if (
+    extended?.goals?.length &&
+    amount &&
+    /\b(setor|isi|masukkan|top\s?up|nabung)\b/i.test(low) &&
+    !/\b(buat|bikin|mulai)\s+(?:target|goal)\b/i.test(low) &&
+    !/\?/.test(text)
+  ) {
+    const activeGoals = extended.goals.filter((g) => !g.status || g.status === 'active');
+    const matchedGoal = findBestEntityMatch(low, activeGoals);
+    if (matchedGoal) {
+      const explicitAcc = matchAccountByText(text, accounts);
+      const linkedAcc = matchedGoal.linked_account_id
+        ? accounts.find((a) => a.id === matchedGoal.linked_account_id)
+        : undefined;
+      const useAcc = explicitAcc || linkedAcc || accounts[0];
+      if (useAcc) {
+        return [
+          {
+            intent: 'contribute_goal',
+            type: 'expense',
+            amount,
+            accountId: useAcc.id,
+            accountName: useAcc.name,
+            entityId: matchedGoal.id,
+            entityName: matchedGoal.name,
+            ...(txDate ? { txDate } : {}),
+            description: matchedGoal.name,
+            confidence: 0.92,
+          },
+        ];
+      }
+    }
+  }
 
   // What-If Simulation intent
   if (
@@ -674,7 +892,8 @@ export function parseIndonesianFinancialCommands(
   const incomeRegex = /\b(gaji|salary|bonus|thr|terima|trima|diterima|dapat|pemasukan|masuk|dividen|freelance|honor|komisi|refund|hasil\s+jual)\b/i;
   const expenseCueRegex = /\b(beli|bayar|keluar|pengeluaran|jajan|makan|minum|kopi|susu|warteg|bensin|parkir|belanja|listrik|air|pdam|wifi|kos|kontrakan|cicil|cicilan|kredit|tagihan|pulsa|paket|obat|sedekah|zakat|infaq|patungan)\b/i;
   const globalIsIncome = incomeRegex.test(text);
-  const sharedAccount = matchAccountByText(text, accounts) || accounts[0];
+  const explicitGlobalAccount = matchAccountByText(text, accounts);
+  const sharedAccount = explicitGlobalAccount || accounts[0];
   const clauses = splitTransactionClauses(text);
 
   if (clauses.length >= 2) {
@@ -686,8 +905,14 @@ export function parseIndonesianFinancialCommands(
       const clauseHasExpense = expenseCueRegex.test(clause);
       const clauseTxType: 'expense' | 'income' = clauseHasIncome && !clauseHasExpense ? 'income' : 'expense';
       const explicitClauseAcc = matchAccountByText(clause, accounts);
-      const clauseAccount = explicitClauseAcc || sharedAccount;
-      const clauseCategory = matchCategoryByText(clause, clauseTxType, categories);
+      const learned = resolveLearnedRuleForClause(clause.toLowerCase(), extended?.memory);
+      const learnedAcc =
+        learned?.accountId ? accounts.find((a) => a.id === learned.accountId) : undefined;
+      const learnedCat =
+        learned?.categoryId ? categories.find((c) => c.id === learned.categoryId) : undefined;
+      const clauseAccount =
+        explicitClauseAcc || (!explicitGlobalAccount ? learnedAcc : undefined) || sharedAccount;
+      const clauseCategory = learnedCat || matchCategoryByText(clause, clauseTxType, categories);
       const clauseDesc = cleanTransactionDescription(clause, clauseAccount);
       let clauseConf = 0.84;
       if (clauseAccount) clauseConf += 0.07;
@@ -711,8 +936,13 @@ export function parseIndonesianFinancialCommands(
   }
 
   const txType: 'expense' | 'income' = globalIsIncome ? 'income' : 'expense';
-  const matchedAccount = sharedAccount;
-  const matchedCategory = matchCategoryByText(text, txType, categories);
+  const learnedSingle = resolveLearnedRuleForClause(low, extended?.memory);
+  const learnedSingleAcc =
+    learnedSingle?.accountId ? accounts.find((a) => a.id === learnedSingle.accountId) : undefined;
+  const learnedSingleCat =
+    learnedSingle?.categoryId ? categories.find((c) => c.id === learnedSingle.categoryId) : undefined;
+  const matchedAccount = explicitGlobalAccount || learnedSingleAcc || sharedAccount;
+  const matchedCategory = learnedSingleCat || matchCategoryByText(text, txType, categories);
   const description = cleanTransactionDescription(text, matchedAccount);
 
   let confidence = 0.45;
@@ -742,7 +972,8 @@ export function parseIndonesianFinancialCommands(
 export function parseIndonesianFinancialCommand(
   rawText: string,
   accounts: Account[],
-  categories: Category[]
+  categories: Category[],
+  extended?: ParserExtendedContext
 ): ParsedFinancialCommand {
-  return parseIndonesianFinancialCommands(rawText, accounts, categories)[0];
+  return parseIndonesianFinancialCommands(rawText, accounts, categories, extended)[0];
 }
