@@ -12,7 +12,7 @@ import { loadLocalDB } from '../../offline/storage';
 import { runProactiveWatchdog } from '../../offline/proactiveWatchdog';
 import { approvalsService } from '../../services/approvals';
 import { legacyCheckinService } from '../../services/legacyCheckin';
-import { sendProactiveNotification } from '../../utils/pwa';
+import { scheduleDailyBriefingNotification, sendProactiveNotification } from '../../utils/pwa';
 import { toast } from '../../stores/useToastStore';
 import {
   hideNativeSplash,
@@ -86,6 +86,9 @@ export const MobileRuntimeBridge: React.FC = () => {
     const navigateIfValid = (route?: string | null) => {
       if (active && route && route.startsWith('/')) {
         navigate(route);
+        if (route.includes('openAdvisor=1')) {
+          window.dispatchEvent(new CustomEvent('kb:open-advisor'));
+        }
       }
     };
 
@@ -230,6 +233,7 @@ export const MobileRuntimeBridge: React.FC = () => {
             '/?openAdvisor=1',
             notifId
           );
+          await scheduleDailyBriefingNotification(briefing.title, briefing.summary, 7, 30);
         }
       } catch {
         // Silent best-effort notification check

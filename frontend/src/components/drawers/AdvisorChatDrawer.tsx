@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import {
   Bot,
   Send,
@@ -126,9 +127,17 @@ function loadSavedChatHistory(): ChatMessage[] {
 
 export const AdvisorChatDrawer: React.FC = () => {
   const queryClient = useQueryClient();
+  const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const user = useAuthStore((s) => s.user);
   const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get('openAdvisor') === '1') {
+      setIsOpen(true);
+    }
+  }, [location.search]);
   const [messages, setMessages] = useState<ChatMessage[]>(() => loadSavedChatHistory());
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);

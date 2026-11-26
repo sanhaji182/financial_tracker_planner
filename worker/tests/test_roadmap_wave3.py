@@ -560,3 +560,38 @@ def test_v4_indonesia_wealth_calculators_in_tools_and_chat():
 
     ret_chat = asyncio.run(chat_advisor("Simulasikan dana pensiun usia 30 pensiun usia 55", ctx, "local", "default", None))
     assert "Dana Pensiun" in ret_chat["response"]
+
+
+def test_v4_stream_routes_wealth_queries_through_tool_engine(monkeypatch):
+    import app.services.ai_service as ai_svc
+
+    called = {"tool_llm": False}
+
+    async def _fake_openai_tools(**kwargs):
+        called["tool_llm"] = True
+        assert any(t.get("name") == "simulate_indonesia_wealth" for t in ai_svc._ADVISOR_TOOL_DECLARATIONS)
+        return (
+            "🤖 Saran AI — bukan nasihat keuangan profesional\n"
+            "Estimasi PPh 21 Anda dengan PTKP K/1 telah dihitung.\n\n"
+            "Alasan: Mengacu tarif progresif UU HPP."
+        )
+
+    monkeypatch.setattr(ai_svc, "_call_openai_with_tools", _fake_openai_tools)
+
+    async def _collect():
+        frames = []
+        async for frame in ai_svc.stream_chat_advisor(
+            message="Hitung PPh 21 gaji 15jt K/1",
+            context_data={"dashboard": {}, "accounts": [], "categories": []},
+            provider="openai",
+            model_name="gpt-4o-mini",
+            api_key="sk-v4-stream-test",
+        ):
+            frames.append(json.loads(frame[len("data: ") :].strip()))
+        return frames
+
+    frames = asyncio.run(_collect())
+    assert called["tool_llm"] is True
+    delta_text = "".join(f["content"] for f in frames if f["type"] == "delta")
+    assert "PPh 21" in delta_text
+    assert frames[-1]["type"] == "done"

@@ -128,7 +128,35 @@ export const aiSettingsService = {
       if (getAppMode() === 'local') {
         const { runHybridAdvisorChat } = await import('../offline/hybridAdvisor');
         const hybridRes = await runHybridAdvisorChat(message, history, handlers, options);
-        if (hybridRes) return hybridRes;
+        if (hybridRes) {
+          try {
+            const { loadLocalDB, saveLocalDB, uid } = await import('../offline/storage');
+            const { loadAdvisorMemory } = await import('../utils/advisorMemory');
+            const db = loadLocalDB();
+            const ts = new Date().toISOString();
+            const nextHistory = [...(db.advisor_chat_history || [])];
+            if (message.trim()) {
+              nextHistory.push({ id: uid('chat'), sender: 'user', text: message.trim(), timestamp: ts });
+            }
+            if (hybridRes.response) {
+              nextHistory.push({
+                id: uid('chat'),
+                sender: 'ai',
+                text: hybridRes.response,
+                actions: hybridRes.proposed_actions,
+                suggestedReplies: hybridRes.suggested_replies,
+                timestamp: ts,
+              });
+            }
+            db.advisor_chat_history = nextHistory.slice(-60);
+            const mem = loadAdvisorMemory();
+            db.advisor_memory = { ...mem, customNotes: mem.notes, updatedAt: ts };
+            saveLocalDB(db);
+          } catch {
+            // Non-blocking history snapshot
+          }
+          return hybridRes;
+        }
       }
       const res = await aiSettingsService.chat(message, history, options);
       handlers.onMeta?.({

@@ -1284,6 +1284,21 @@ public class LocalOcrPlugin extends Plugin {
     }
 
     @PluginMethod
+    public void scheduleDailyBriefingReminder(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", true));
+        String title = call.getString("title", "Ringkasan Pagi AI Advisor");
+        String body = call.getString("body", "Ketuk untuk meninjau kondisi kas dan saran harian AI Advisor.");
+        int hour = call.getInt("hour", 7);
+        int minute = call.getInt("minute", 30);
+
+        AdvisorBriefingReceiver.scheduleDailyBriefing(getContext(), enabled, title, body, hour, minute);
+
+        JSObject ret = new JSObject();
+        ret.put("scheduled", enabled);
+        call.resolve(ret);
+    }
+
+    @PluginMethod
     public void checkAudioPermission(PluginCall call) {
         boolean granted = getPermissionState("audio") == PermissionState.GRANTED
                 || ContextCompat.checkSelfPermission(getContext(), Manifest.permission.RECORD_AUDIO)

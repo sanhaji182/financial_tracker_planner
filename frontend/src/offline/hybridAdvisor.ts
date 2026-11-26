@@ -453,7 +453,7 @@ export async function runHybridAdvisorChat(
   const cleanHistory = history.slice(-10).map((t) => ({ role: t.role, content: t.content.slice(0, 1200) }));
   const needsToolLoop =
     attachments.length > 0 ||
-    /\b(simulasi|avalanche|snowball|ekstra|cari\s+transaksi|kekayaan|net\s+worth|aset|langganan|berapa\s+total)\b/i.test(
+    /\b(simulasi|avalanche|snowball|ekstra|cari\s+transaksi|kekayaan|net\s+worth|aset|langganan|berapa\s+total|pph(?:\s*21)?|ptkp|pajak|zakat|nishab|nisab|dana\s+pensiun|dana\s+pendidikan|biaya\s+kuliah|uang\s+pangkal|pendidikan\s+anak)\b/i.test(
       message
     );
 
@@ -651,7 +651,7 @@ export async function runHybridAdvisorChat(
       const model =
         settings.ai_model && settings.ai_model !== 'default'
           ? settings.ai_model
-          : 'claude-3-5-sonnet-20241022';
+          : 'claude-sonnet-5-5';
       const userContent: unknown =
         attachments.length > 0
           ? [

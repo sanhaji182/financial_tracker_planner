@@ -119,3 +119,22 @@ export async function sendProactiveNotification(
     return false;
   }
 }
+
+export async function scheduleDailyBriefingNotification(
+  title: string,
+  body: string,
+  hour = 7,
+  minute = 30
+): Promise<boolean> {
+  if (!isNativeMobile()) {
+    return false;
+  }
+  const res = await localOcrBridge.scheduleDailyBriefingReminder({
+    enabled: true,
+    title,
+    body,
+    hour,
+    minute,
+  });
+  return Boolean(res.scheduled);
+}

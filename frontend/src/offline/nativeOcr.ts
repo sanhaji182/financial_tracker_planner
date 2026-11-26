@@ -94,6 +94,13 @@ export interface LocalOcrPlugin {
     reminderHour: number;
     lastCheckinDay: string;
   }): Promise<{ scheduled: boolean }>;
+  scheduleDailyBriefingReminder?(options: {
+    enabled: boolean;
+    title: string;
+    body: string;
+    hour: number;
+    minute: number;
+  }): Promise<{ scheduled: boolean }>;
   showLocalNotification?(options: {
     title: string;
     body: string;
@@ -334,6 +341,22 @@ export const localOcrBridge = {
     }
     try {
       return await LocalOcr.scheduleLegacyCheckInReminder(options);
+    } catch {
+      return { scheduled: false };
+    }
+  },
+  scheduleDailyBriefingReminder: async (options: {
+    enabled: boolean;
+    title: string;
+    body: string;
+    hour: number;
+    minute: number;
+  }): Promise<{ scheduled: boolean }> => {
+    if (!hasNativeLocalOcrPlugin() || !LocalOcr.scheduleDailyBriefingReminder) {
+      return { scheduled: false };
+    }
+    try {
+      return await LocalOcr.scheduleDailyBriefingReminder(options);
     } catch {
       return { scheduled: false };
     }
@@ -2274,7 +2297,7 @@ export async function tryDirectVisionJson(
       const model =
         settings.ai_model && settings.ai_model !== 'default'
           ? settings.ai_model
-          : 'claude-3-5-haiku-latest';
+          : 'claude-haiku-5-5';
       const contentParts: Array<Record<string, unknown>> = [];
       if (isImg && base64) {
         contentParts.push({

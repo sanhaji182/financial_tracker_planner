@@ -315,7 +315,7 @@ async def _call_vision_json(
             llm_model = (
                 model_name
                 if model_name and model_name != "default"
-                else "claude-3-5-sonnet-20241022"
+                else "claude-sonnet-5-5"
             )
             user_content = []
             if image_base64:

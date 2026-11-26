@@ -207,7 +207,7 @@ async def enhance_ocr_llm(
                 "anthropic-version": "2023-06-01",
                 "Content-Type": "application/json"
             }
-            llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
+            llm_model = model_name if model_name != "default" else "claude-sonnet-5-5"
             payload = {
                 "model": llm_model,
                 "max_tokens": 1200,
@@ -392,7 +392,7 @@ async def categorize_transaction(
             return json.loads(content.strip())
         elif provider == "anthropic":
             headers["anthropic-version"] = "2023-06-01"
-            llm_model = model_name if model_name != "default" else "claude-3-haiku-20240307"
+            llm_model = model_name if model_name != "default" else "claude-haiku-5-5"
             payload = {
                 "model": llm_model,
                 "max_tokens": 500,
@@ -2185,7 +2185,7 @@ async def chat_advisor(
             )
             return parse_advisor_response(content, fallback_actions=fallback_actions, context_data=working_ctx)
         elif provider == "anthropic":
-            llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
+            llm_model = model_name if model_name != "default" else "claude-sonnet-5-5"
             content = await _call_anthropic_with_tools(
                 api_key=api_key,
                 model=llm_model,
@@ -2303,7 +2303,7 @@ async def _stream_raw_llm_tokens(
         return
 
     if provider == "anthropic":
-        llm_model = model_name if model_name != "default" else "claude-3-5-sonnet-20241022"
+        llm_model = model_name if model_name != "default" else "claude-sonnet-5-5"
         headers = {
             "x-api-key": api_key,
             "anthropic-version": "2023-06-01",
@@ -2557,7 +2557,10 @@ async def stream_chat_advisor(
         preferences=prefs,
     )
     needs_tools_or_vision = bool(clean_atts) or bool(
-        re.search(r"\b(simulasi|avalanche|snowball|ekstra|cari\s+transaksi|kekayaan|net\s+worth|aset|langganan)\b", (message or "").lower())
+        re.search(
+            r"\b(simulasi|avalanche|snowball|ekstra|cari\s+transaksi|kekayaan|net\s+worth|aset|langganan|pph(?:\s*21)?|ptkp|pajak|zakat|nishab|nisab|dana\s+pensiun|dana\s+pendidikan|biaya\s+kuliah|uang\s+pangkal|pendidikan\s+anak)\b",
+            (message or "").lower(),
+        )
     )
 
     if not api_key or provider == "local" or deterministic_actions or needs_tools_or_vision:

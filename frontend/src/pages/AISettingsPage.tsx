@@ -247,7 +247,7 @@ export const AISettingsPage: React.FC = () => {
                         setAiProvider(val);
                         if (val === 'local') setAiModel('default');
                         else if (val === 'openai') setAiModel('gpt-4o-mini');
-                        else if (val === 'anthropic') setAiModel('claude-3-5-sonnet-20241022');
+                        else if (val === 'anthropic') setAiModel('claude-sonnet-5-5');
                         else if (val === 'gemini') setAiModel('gemini-2.5-flash');
                       }}
                       className="w-full h-10 text-sm bg-white dark:bg-slate-800 text-slate-900 dark:text-white border border-slate-200 dark:border-slate-700 rounded-xl px-3 focus:outline-none focus:border-indigo-500"
@@ -274,7 +274,7 @@ export const AISettingsPage: React.FC = () => {
                       value={aiModel}
                       disabled={!isOwner || aiProvider === 'local'}
                       onChange={(e) => setAiModel(e.target.value)}
-                      placeholder="Contoh: gpt-4o-mini, claude-3-5-sonnet"
+                      placeholder="Contoh: gpt-4o-mini, claude-sonnet-5-5, gemini-2.5-flash"
                     />
                   </div>
                 </div>

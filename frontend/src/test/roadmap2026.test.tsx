@@ -983,5 +983,52 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
     const briefingBtn = await screen.findByRole('button', { name: /Briefing Harian/i });
     await user.click(briefingBtn);
     expect(await screen.findByText(/Safe-to-Spend 7 hari ke depan/i)).toBeInTheDocument();
+
+    // 5. BYOK Hybrid chatStream persists history into LocalDatabase for E2EE sync & morning alarm schedules natively
+    await saveHybridAISettings({
+      ai_enabled: true,
+      ai_provider: 'openai',
+      ai_model: 'gpt-4o-mini',
+      api_key: 'sk-byok-v4-sync-test',
+      has_api_key: true,
+    });
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        choices: [
+          {
+            message: {
+              content:
+                '🤖 Saran AI — bukan nasihat keuangan profesional\nDana darurat aman.\n\nAlasan: Rasio kas kuat.',
+            },
+          },
+        ],
+      }),
+    } as Response);
+
+    const byokRes = await aiSettingsService.chatStream('Hitung PPh 21 gaji 15jt K/1 via BYOK', [], {});
+    expect(byokRes.response).toMatch(/Dana darurat aman/i);
+    const dbAfterByok = loadLocalDB();
+    expect(dbAfterByok.advisor_chat_history?.some((m) => m.text === 'Hitung PPh 21 gaji 15jt K/1 via BYOK')).toBe(true);
+    fetchSpy.mockRestore();
+
+    const { scheduleDailyBriefingNotification } = await import('../utils/pwa');
+    const { localOcrBridge } = await import('../offline/nativeOcr');
+    const { Capacitor } = await import('@capacitor/core');
+    const capSpy = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValueOnce(true);
+    const schedSpy = vi
+      .spyOn(localOcrBridge, 'scheduleDailyBriefingReminder')
+      .mockResolvedValueOnce({ scheduled: true });
+    const scheduled = await scheduleDailyBriefingNotification('Ringkasan Pagi', 'Kas aman', 7, 30);
+    expect(scheduled).toBe(true);
+    expect(schedSpy).toHaveBeenCalledWith({
+      enabled: true,
+      title: 'Ringkasan Pagi',
+      body: 'Kas aman',
+      hour: 7,
+      minute: 30,
+    });
+    schedSpy.mockRestore();
+    capSpy.mockRestore();
   });
 });
