@@ -131,6 +131,46 @@ export interface LocalDatabase {
   currencies: CurrencyResponse[];
   backups: LocalStoredBackup[];
   ai_settings: LocalAISettings;
+  advisor_chat_history?: StoredAdvisorMessage[];
+  advisor_memory?: StoredAdvisorMemory;
+}
+
+export interface StoredAdvisorMessage {
+  id: string;
+  sender: 'user' | 'ai';
+  text: string;
+  timestamp: string;
+  actions?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    summary: string;
+    payload: Record<string, unknown>;
+  }>;
+  suggestedReplies?: string[];
+  imagePreview?: string;
+}
+
+export interface StoredAdvisorMemory {
+  learnedRules: Array<{
+    id?: string;
+    keyword: string;
+    accountId?: string;
+    accountName?: string;
+    categoryId?: string;
+    categoryName?: string;
+    txType?: 'expense' | 'income';
+    type?: 'expense' | 'income';
+    hits?: number;
+    useCount?: number;
+    updatedAt: string;
+  }>;
+  notes?: string[];
+  customNotes?: string[];
+  paydayDay?: number;
+  debtStrategy?: 'avalanche' | 'snowball';
+  preferredPaymentAccount?: string;
+  updatedAt?: string;
 }
 
 let uidCounter = 0;

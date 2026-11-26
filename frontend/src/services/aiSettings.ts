@@ -279,4 +279,84 @@ export const aiSettingsService = {
       alerts_created: Array.isArray(data?.alerts_created) ? data.alerts_created : [],
     };
   },
+
+  getHistory: async (): Promise<AIChatHistorySyncResponse> => {
+    const response = await api.get<{ data: AIChatHistorySyncResponse }>('/ai/history');
+    return response.data.data;
+  },
+
+  clearHistory: async (): Promise<void> => {
+    await api.delete('/ai/history');
+  },
+
+  getMemory: async (): Promise<SyncedAdvisorMemoryDTO> => {
+    const response = await api.get<{ data: SyncedAdvisorMemoryDTO }>('/ai/memory');
+    return response.data.data;
+  },
+
+  saveMemory: async (memory: SyncedAdvisorMemoryDTO): Promise<SyncedAdvisorMemoryDTO> => {
+    const response = await api.put<{ data: SyncedAdvisorMemoryDTO }>('/ai/memory', memory);
+    return response.data.data;
+  },
+
+  clearMemory: async (): Promise<void> => {
+    await api.delete('/ai/memory');
+  },
+
+  getDailyBriefing: async (): Promise<AIDailyBriefing> => {
+    const response = await api.get<{ data: AIDailyBriefing }>('/ai/briefing');
+    return response.data.data;
+  },
+
+  runDailyBriefing: async (): Promise<AIDailyBriefing> => {
+    const response = await api.post<{ data: AIDailyBriefing }>('/ai/briefing/run', {});
+    return response.data.data;
+  },
 };
+
+export interface AIChatHistoryRecord {
+  id: string;
+  client_message_id?: string;
+  role: 'user' | 'assistant' | 'system';
+  content: string;
+  actions?: AgenticAction[];
+  suggested_replies?: string[];
+  image_preview?: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface SyncedLearnedRuleDTO {
+  id: string;
+  keyword: string;
+  category_name?: string;
+  account_name?: string;
+  type?: string;
+  use_count: number;
+  updated_at: string;
+}
+
+export interface SyncedAdvisorMemoryDTO {
+  learned_rules: SyncedLearnedRuleDTO[];
+  custom_notes: string[];
+  preferred_payment_account?: string;
+  updated_at?: string;
+}
+
+export interface AIChatHistorySyncResponse {
+  messages: AIChatHistoryRecord[];
+  memory: SyncedAdvisorMemoryDTO;
+}
+
+export interface AIDailyBriefing {
+  id?: string;
+  owner_id?: string;
+  briefing_date: string;
+  severity: 'info' | 'warning' | 'danger';
+  title: string;
+  summary: string;
+  highlights: string[];
+  notified_email?: boolean;
+  notified_telegram?: boolean;
+  created_at?: string;
+}

@@ -514,3 +514,49 @@ def test_advisor_v3_tool_engine_actions_and_multimodal():
         )
     )
     assert "response" in att_res
+
+
+def test_v4_indonesia_wealth_calculators_in_tools_and_chat():
+    from app.services.ai_service import _execute_advisor_tool, chat_advisor
+
+    ctx = {
+        "dashboard": {"income_this_month": 15_000_000, "expense_this_month": 6_000_000},
+        "accounts": [{"id": "acc-1", "name": "BCA", "balance": 120_000_000}],
+        "assets": [{"id": "as-1", "name": "SBN Ritel", "current_value": 100_000_000}],
+        "debts": [{"id": "d-1", "name": "Cicilan", "outstanding_balance": 10_000_000}],
+        "upcoming_bills": [],
+        "subscriptions": [],
+        "categories": [],
+        "recent_transactions": [],
+    }
+
+    pph = _execute_advisor_tool("simulate_indonesia_wealth", {"mode": "pph21", "ptkp_status": "K/1", "income_monthly": 15_000_000}, ctx)
+    assert pph["ptkp_status"] == "K/1"
+    assert pph["ptkp_amount"] == 63_000_000
+    assert pph["annual_gross"] == 180_000_000
+    assert pph["annual_tax"] > 0
+
+    zakat = _execute_advisor_tool("simulate_indonesia_wealth", {"mode": "zakat", "gold_price_per_gram": 1_500_000}, ctx)
+    assert zakat["nishab_maal_annual"] == 127_500_000
+    assert zakat["maal_wajib"] is True
+    assert zakat["zakat_maal_annual"] == round((120_000_000 + 100_000_000 - 10_000_000) * 0.025)
+
+    edu = _execute_advisor_tool("simulate_indonesia_wealth", {"mode": "education", "years_until_entry": 10, "current_cost": 100_000_000}, ctx)
+    assert edu["future_total_cost"] > 250_000_000
+    assert edu["required_monthly_saving"] > 1_000_000
+
+    ret = _execute_advisor_tool("simulate_indonesia_wealth", {"mode": "retirement", "current_age": 30, "retirement_age": 55}, ctx)
+    assert ret["years_to_retire"] == 25
+    assert ret["target_corpus"] > 0
+
+    pph_chat = asyncio.run(chat_advisor("Tolong hitung PPh 21 gaji 15jt K/1", ctx, "local", "default", None))
+    assert "PPh 21" in pph_chat["response"] and "63.000.000" in pph_chat["response"]
+
+    zakat_chat = asyncio.run(chat_advisor("Hitung zakat maal dan zakat profesi saya", ctx, "local", "default", None))
+    assert "Zakat Maal" in zakat_chat["response"] and "Wajib" in zakat_chat["response"]
+
+    edu_chat = asyncio.run(chat_advisor("Simulasi dana pendidikan kuliah anak 10 tahun biaya 100jt", ctx, "local", "default", None))
+    assert "Dana Pendidikan" in edu_chat["response"]
+
+    ret_chat = asyncio.run(chat_advisor("Simulasikan dana pensiun usia 30 pensiun usia 55", ctx, "local", "default", None))
+    assert "Dana Pensiun" in ret_chat["response"]

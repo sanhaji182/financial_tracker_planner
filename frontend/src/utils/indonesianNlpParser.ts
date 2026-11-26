@@ -637,6 +637,21 @@ export function parseIndonesianFinancialCommands(
 ): ParsedFinancialCommand[] {
   const text = String(rawText || '').trim();
   const low = text.toLowerCase();
+  // Indonesia wealth calculator questions (PPh 21, Zakat, Pensiun, Dana Pendidikan) must stay in query intent
+  if (
+    /\b(pph(?:\s*21)?|ptkp|pajak\s+penghasilan|zakat|nishab|nisab|dana\s+pensiun|dana\s+pendidikan|biaya\s+kuliah|uang\s+pangkal|pendidikan\s+anak)\b/i.test(low) &&
+    !/\b(catat|catatkan|masukkan|bayar\s+zakat|beli)\b/i.test(low)
+  ) {
+    return [
+      {
+        intent: 'query',
+        type: 'expense',
+        amount: null,
+        description: text,
+        confidence: 0.9,
+      },
+    ];
+  }
   const amount = parseIndonesianSpokenAmount(text);
   const txDate = extractRelativeIndonesianDate(text);
 

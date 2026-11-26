@@ -158,7 +158,9 @@ func main() {
 	syncHandler := handler.NewSyncHandler(syncStore)
 	accountHandler.WithHouseholdResolver(syncStore.ResolveHouseholdOwner)
 	txHandler.WithHouseholdAccess(accountService, syncStore.ResolveHouseholdOwner)
-	aiSettingsHandler.WithHouseholdResolver(syncStore.ResolveHouseholdOwner)
+	aiStateStore := handler.NewPgAIAdvisorStateStore(dbPool)
+	aiSettingsHandler.WithHouseholdResolver(syncStore.ResolveHouseholdOwner).
+		WithStateAndNotifyServices(aiStateStore, emailService, telegramService)
 
 	inboundTxCreator := func(
 		ctx context.Context,
@@ -531,6 +533,27 @@ func main() {
 			select {
 			case <-ticker.C:
 				runEval()
+			}
+		}
+	}()
+
+	// Start background cron job for proactive daily AI Advisor briefings (every 1 hour, idempotent per day)
+	go func() {
+		runBriefing := func() {
+			idem := time.Now().UTC().Format("2006-01-02")
+			if _, err := jobRunner.Run(context.Background(), "ai_daily_briefing", idem, func(ctx context.Context) error {
+				return aiSettingsHandler.EvaluateDueDailyBriefings(ctx)
+			}); err != nil {
+				log.Error().Err(err).Msg("Failed to run daily AI advisor briefings")
+			}
+		}
+		runBriefing()
+		ticker := time.NewTicker(1 * time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ticker.C:
+				runBriefing()
 			}
 		}
 	}()

@@ -21,7 +21,7 @@ import {
   saveLocalDB,
 } from '../offline/storage';
 import { clearInMemoryVaultCache, hydrateSecureVault, setSecureSecret } from '../offline/secureVault';
-import { runProactiveWatchdog } from '../offline/proactiveWatchdog';
+import { generateDailyAdvisorBriefing, runProactiveWatchdog } from '../offline/proactiveWatchdog';
 import {
   decryptDatabaseEnvelope,
   encryptDatabaseEnvelope,
@@ -34,9 +34,11 @@ import {
   loadAdvisorMemory,
 } from '../utils/advisorMemory';
 import {
+  executeLocalAdvisorTool,
   getLocalWealthOverview,
   searchLocalTransactions,
   simulateLocalDebtPayoff,
+  simulateLocalIndonesiaWealth,
 } from '../offline/advisorTools';
 import {
   mergeIndonesianFollowUp,
@@ -851,5 +853,135 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
 
     await user.click(screen.getByRole('button', { name: /Dana Pendidikan/i }));
     expect(await screen.findByText(/Proyektor Dana Pendidikan Anak/i)).toBeInTheDocument();
+  });
+
+  it('Tahap 8: AI Advisor V4 syncs history & memory across devices, computes Indonesia wealth math & emits daily briefing', async () => {
+    const bca = await accountsService.createAccount({
+      name: 'BCA Utama',
+      type: 'bank',
+      bank_provider: 'BCA',
+      initial_balance: 15_000_000,
+    });
+    const today = new Date().toISOString().slice(0, 10);
+    await billsService.createBill({
+      name: 'Cicilan KPR',
+      amount: 16_000_000,
+      frequency: 'monthly',
+      due_day: new Date().getDate(),
+      account_id: bca.id,
+      category_id: 'cat-exp-tagihan',
+      auto_remind: true,
+      reminder_days_before: 3,
+    });
+
+    // 1. Indonesia wealth simulator tool (PPh 21, Zakat, Pendidikan, Pensiun)
+    const dbNow = loadLocalDB();
+    const pphTool = simulateLocalIndonesiaWealth(dbNow, {
+      mode: 'pph21',
+      ptkp_status: 'K/1',
+      income_monthly: 15_000_000,
+    });
+    expect(pphTool.ptkp_amount).toBe(63_000_000);
+    expect(Number(pphTool.annual_tax)).toBeGreaterThan(0);
+
+    const zakatTool = executeLocalAdvisorTool(dbNow, 'simulate_indonesia_wealth', {
+      mode: 'zakat',
+      gold_price_per_gram: 1_500_000,
+    }) as Record<string, unknown>;
+    expect(zakatTool.nisab_maal_idr).toBe(127_500_000);
+
+    // 2. Chat prompts for PPh 21 & Pensiun auto-persist into /ai/history and db.advisor_chat_history
+    const pphChat = await aiSettingsService.chat('Hitung PPh 21 gaji 15jt K/1', []);
+    expect(pphChat.response).toMatch(/PPh 21/i);
+    expect(pphChat.response).toMatch(/63\.000\.000/);
+
+    const pensChat = await aiSettingsService.chat('Simulasi dana pensiun usia 30 pensiun usia 55', []);
+    expect(pensChat.response).toMatch(/Dana Pensiun/i);
+
+    const hist = await aiSettingsService.getHistory();
+    expect(hist.messages.length).toBeGreaterThanOrEqual(4);
+
+    // 3. Cross-device memory PUT / GET / E2EE mergeLocalDatabases
+    await aiSettingsService.saveMemory({
+      learned_rules: [
+        {
+          id: 'rule:kopi',
+          keyword: 'kopi',
+          category_name: 'Makan & Minuman',
+          account_name: 'BCA Utama',
+          type: 'expense',
+          use_count: 3,
+          updated_at: `${today}T08:00:00.000Z`,
+        },
+      ],
+      custom_notes: ['Gaji tgl 25'],
+      preferred_payment_account: 'BCA Utama',
+    });
+    const memLoaded = await aiSettingsService.getMemory();
+    expect(memLoaded.learned_rules.some((r) => r.keyword === 'kopi')).toBe(true);
+    expect(memLoaded.custom_notes).toContain('Gaji tgl 25');
+
+    const deviceA = loadLocalDB();
+    const deviceB = {
+      ...loadLocalDB(),
+      advisor_chat_history: [
+        ...(deviceA.advisor_chat_history || []),
+        {
+          id: 'msg-device-b-1',
+          sender: 'user' as const,
+          text: 'Dari perangkat pasangan',
+          timestamp: `${today}T12:00:00.000Z`,
+        },
+      ],
+      advisor_memory: {
+        learnedRules: [
+          {
+            keyword: 'warteg',
+            accountName: 'BCA Utama',
+            categoryName: 'Makan & Minuman',
+            hits: 2,
+            updatedAt: `${today}T12:00:00.000Z`,
+          },
+        ],
+        customNotes: ['Sisihkan dana darurat dulu'],
+        updatedAt: `${today}T12:00:00.000Z`,
+      },
+    };
+    const mergedE2ee = mergeLocalDatabases(deviceA, deviceB);
+    expect(mergedE2ee.merged.advisor_chat_history?.some((m) => m.id === 'msg-device-b-1')).toBe(true);
+    expect(mergedE2ee.merged.advisor_memory?.learnedRules.some((r) => r.keyword === 'warteg')).toBe(true);
+
+    // 4. Proactive daily AI briefing generator + deep link ?openAdvisor=1 + Briefing Harian UI button
+    const briefing = generateDailyAdvisorBriefing(loadLocalDB(), 'BCA Utama');
+    expect(['info', 'warning', 'danger']).toContain(briefing.severity);
+    expect(briefing.highlights.length).toBeGreaterThanOrEqual(1);
+
+    await aiSettingsService.updateSettings({
+      ai_enabled: true,
+      ai_provider: 'local',
+      ai_model: 'mlkit-offline',
+      ocr_escalation_enabled: false,
+      auto_categorization_enabled: true,
+      advisor_enabled: true,
+      anomaly_detection_enabled: true,
+    });
+    await aiSettingsService.clearHistory();
+    const clearedHist = await aiSettingsService.getHistory();
+    expect(clearedHist.messages.length).toBe(0);
+
+    window.history.replaceState({}, '', '/?openAdvisor=1');
+    const qc = makeQueryClient();
+    const user = userEvent.setup();
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <AdvisorChatDrawer />
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    const briefingBtn = await screen.findByRole('button', { name: /Briefing Harian/i });
+    await user.click(briefingBtn);
+    expect(await screen.findByText(/Safe-to-Spend 7 hari ke depan/i)).toBeInTheDocument();
   });
 });

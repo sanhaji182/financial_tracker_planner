@@ -31,6 +31,9 @@ type AISettingsHandler struct {
 	assetService      service.AssetService
 	subService        service.SubscriptionService
 	householdResolver HouseholdOwnerResolver
+	stateStore        AIAdvisorStateStore
+	emailService      service.EmailService
+	telegramService   service.TelegramService
 }
 
 func NewAISettingsHandler(
@@ -89,6 +92,18 @@ func (h *AISettingsHandler) WithHouseholdResolver(resolver HouseholdOwnerResolve
 	return h
 }
 
+// WithStateAndNotifyServices wires cross-device chat/memory storage and proactive email/Telegram delivery.
+func (h *AISettingsHandler) WithStateAndNotifyServices(
+	stateStore AIAdvisorStateStore,
+	emailService service.EmailService,
+	telegramService service.TelegramService,
+) *AISettingsHandler {
+	h.stateStore = stateStore
+	h.emailService = emailService
+	h.telegramService = telegramService
+	return h
+}
+
 func (h *AISettingsHandler) resolveHouseholdOwner(c *gin.Context) (string, bool, bool) {
 	userID := c.GetString("user_id")
 	role := c.GetString("role")
@@ -129,6 +144,14 @@ func (h *AISettingsHandler) RegisterRoutes(rg *gin.RouterGroup) {
 		chatGroup.POST("/voice-note", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.VoiceNote)
 		// Only owner can trigger manual anomaly detection
 		chatGroup.POST("/detect-anomaly", middleware.RoleMiddleware("owner"), h.DetectAnomaly)
+		// Cross-device chat history, learned memory & proactive daily briefings
+		chatGroup.GET("/history", middleware.RoleMiddleware("owner", "spouse_viewer", "spouse_co_owner"), h.GetChatHistory)
+		chatGroup.DELETE("/history", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.ClearChatHistory)
+		chatGroup.GET("/memory", middleware.RoleMiddleware("owner", "spouse_viewer", "spouse_co_owner"), h.GetAdvisorMemory)
+		chatGroup.PUT("/memory", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.UpdateAdvisorMemory)
+		chatGroup.DELETE("/memory", middleware.RoleMiddleware("owner", "spouse_co_owner"), h.ClearAdvisorMemory)
+		chatGroup.GET("/briefing", middleware.RoleMiddleware("owner", "spouse_viewer", "spouse_co_owner"), h.GetDailyBriefing)
+		chatGroup.POST("/briefing/run", middleware.RoleMiddleware("owner"), h.RunDailyBriefing)
 	}
 }
 
@@ -655,6 +678,8 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 		return
 	}
 
+	h.hydrateRequestWithServerState(ctx, ownerID, &req, workerContext)
+
 	workerPayload, errStatus, errMsg := validateAndPrepareChatPayload(req, workerContext)
 	if errStatus != 0 {
 		c.JSON(errStatus, gin.H{
@@ -677,6 +702,8 @@ func (h *AISettingsHandler) Chat(c *gin.Context) {
 		})
 		return
 	}
+
+	h.recordChatExchange(ctx, ownerID, req, workerResp)
 
 	c.JSON(http.StatusOK, gin.H{
 		"data": workerResp,
@@ -706,6 +733,8 @@ func (h *AISettingsHandler) ChatStream(c *gin.Context) {
 		return
 	}
 
+	h.hydrateRequestWithServerState(ctx, ownerID, &req, workerContext)
+
 	workerPayload, errStatus, errMsg := validateAndPrepareChatPayload(req, workerContext)
 	if errStatus != 0 {
 		c.JSON(errStatus, gin.H{
@@ -719,10 +748,17 @@ func (h *AISettingsHandler) ChatStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	if err := h.aiService.StreamWorkerAI(ctx, ownerID, "/ai/chat/stream", workerPayload, c.Writer); err != nil {
+	capture := &sseCaptureWriter{ResponseWriter: c.Writer}
+	if err := h.aiService.StreamWorkerAI(ctx, ownerID, "/ai/chat/stream", workerPayload, capture); err != nil {
 		errPayload, _ := json.Marshal(map[string]string{"type": "error", "message": err.Error()})
 		_, _ = c.Writer.Write([]byte("data: " + string(errPayload) + "\n\n"))
 		c.Writer.Flush()
+	} else if capture.assistantText.Len() > 0 || len(capture.actions) > 0 {
+		h.recordChatExchange(ctx, ownerID, req, dto.AIChatResponse{
+			Response:         strings.TrimSpace(capture.assistantText.String()),
+			ProposedActions:  capture.actions,
+			SuggestedReplies: capture.suggestedReplies,
+		})
 	}
 }
 

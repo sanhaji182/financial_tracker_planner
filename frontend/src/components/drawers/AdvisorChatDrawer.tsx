@@ -292,6 +292,53 @@ export const AdvisorChatDrawer: React.FC = () => {
   }, [checkAdvisorEnabled]);
 
   useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const checkOpenTrigger = () => {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('openAdvisor') === '1') {
+        setIsOpen(true);
+      }
+    };
+    checkOpenTrigger();
+    const onOpenEvent = () => setIsOpen(true);
+    window.addEventListener('kb:open-advisor', onOpenEvent);
+    return () => window.removeEventListener('kb:open-advisor', onOpenEvent);
+  }, []);
+
+  useEffect(() => {
+    if (!isOpen || !isAuthenticated) return;
+    let cancelled = false;
+    void aiSettingsService
+      .getHistory()
+      .then((res) => {
+        if (cancelled) return;
+        if (Array.isArray(res?.messages) && res.messages.length > 0 && messages.length === 0) {
+          const hydrated: ChatMessage[] = res.messages.map((m) => ({
+            clientId: m.client_message_id || m.id,
+            role: m.role === 'user' ? 'user' : 'assistant',
+            text: m.content,
+            proposed_actions: m.actions,
+            suggested_replies: m.suggested_replies,
+          }));
+          setMessages(hydrated.slice(-20));
+        }
+        if (res?.memory && (res.memory.learned_rules?.length || res.memory.custom_notes?.length)) {
+          void import('../../utils/advisorMemory').then(({ mergeSyncedMemoryState }) => {
+            if (typeof mergeSyncedMemoryState === 'function') {
+              mergeSyncedMemoryState(res.memory);
+            }
+          });
+        }
+      })
+      .catch(() => {
+        // Offline / local fallback already handled by localStorage
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, isAuthenticated, messages.length]);
+
+  useEffect(() => {
     if (!isOpen || getAppMode() !== 'local' || alertsDismissed) return;
     try {
       const res = runProactiveWatchdog(loadLocalDB());
@@ -569,6 +616,36 @@ export const AdvisorChatDrawer: React.FC = () => {
     } catch {
       // Ignore
     }
+    void aiSettingsService.clearHistory().catch(() => {
+      // Best-effort clear on server/local DB
+    });
+  };
+
+  const handleShowBriefing = async () => {
+    if (isLoading) return;
+    setIsLoading(true);
+    try {
+      const briefing = await aiSettingsService.getDailyBriefing();
+      const bulletText =
+        briefing.highlights && briefing.highlights.length > 0
+          ? `\n\n• ${briefing.highlights.join('\n• ')}`
+          : '';
+      const briefingMsg: ChatMessage = {
+        clientId: `brf-${Date.now()}`,
+        role: 'assistant',
+        text: `**${briefing.title}**\n\n${briefing.summary}${bulletText}`,
+        suggested_replies: [
+          'Simulasikan dana pensiun saya',
+          'Hitung estimasi PPh 21 tahunan',
+          'Cek kuota jajan harian bulan ini',
+        ],
+      };
+      setMessages((prev) => [...prev, briefingMsg]);
+    } catch {
+      toast.error('Gagal memuat briefing harian');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
@@ -617,6 +694,15 @@ export const AdvisorChatDrawer: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-1">
+              <button
+                type="button"
+                disabled={isLoading}
+                onClick={() => void handleShowBriefing()}
+                className="text-indigo-100 hover:text-white px-2 py-1 rounded-lg hover:bg-white/10 transition-colors text-xs font-medium"
+                title="Tampilkan briefing keuangan hari ini"
+              >
+                Briefing Harian
+              </button>
               {messages.length > 0 && (
                 <button
                   type="button"

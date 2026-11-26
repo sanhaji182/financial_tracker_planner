@@ -202,3 +202,72 @@ export function runProactiveWatchdog(db: LocalDatabase): {
     findings,
   };
 }
+
+export interface DailyAdvisorBriefing {
+  briefing_date: string;
+  severity: 'info' | 'warning' | 'danger';
+  title: string;
+  summary: string;
+  highlights: string[];
+  safe_to_spend: number;
+}
+
+/**
+ * Generates an actionable once-per-day proactive AI briefing for local notifications & drawer summary.
+ */
+export function generateDailyAdvisorBriefing(
+  db: LocalDatabase,
+  preferredAccountName?: string
+): DailyAdvisorBriefing {
+  const today = nowIso().slice(0, 10);
+  const watchdog = runProactiveWatchdog(db);
+  const liquidCash = (db.accounts || [])
+    .filter((a) => a.is_active && ['bank', 'e_wallet', 'cash'].includes(a.type))
+    .reduce((s, a) => s + a.balance, 0);
+  const h7Limit = addDaysIso(today, 7);
+  const due7Bills = (db.bills || []).filter((b) => {
+    const due = b.due_date || b.next_due_date;
+    return b.status !== 'paid' && Boolean(due) && due >= today && due <= h7Limit;
+  });
+  const due7Total = due7Bills.reduce((s, b) => {
+    const paid = (b.payments || []).reduce((pSum, p) => pSum + p.amount, 0);
+    return s + Math.max(0, b.amount - paid);
+  }, 0);
+  const safeToSpend = Math.max(0, Math.round(liquidCash - due7Total));
+
+  const highlights: string[] = [];
+  for (const f of watchdog.findings.slice(0, 3)) {
+    highlights.push(`${f.title}: ${f.message}`);
+  }
+  highlights.push(
+    `Safe-to-Spend 7 hari ke depan: ${formatRupiah(safeToSpend)} (kas ${formatRupiah(liquidCash)}, tagihan dekat ${formatRupiah(due7Total)}).`
+  );
+  if (preferredAccountName) {
+    highlights.push(`Rekening utama tercatat: ${preferredAccountName}.`);
+  }
+
+  const hasDanger = watchdog.findings.some((f) => f.severity === 'danger');
+  const hasWarn = watchdog.findings.some((f) => f.severity === 'warning');
+  const severity: 'info' | 'warning' | 'danger' = hasDanger ? 'danger' : hasWarn ? 'warning' : 'info';
+
+  const title =
+    severity === 'danger'
+      ? 'Peringatan Harian AI Advisor: Periksa Kas & Tagihan'
+      : severity === 'warning'
+        ? 'Ringkasan Harian AI Advisor: Ada Pos Perlu Perhatian'
+        : 'Ringkasan Pagi AI Advisor: Keuangan Terkendali';
+
+  const summary =
+    watchdog.findings.length > 0
+      ? `${watchdog.findings[0].title} — ${watchdog.findings[0].message} (Safe-to-Spend ${formatRupiah(safeToSpend)})`
+      : `Kondisi kas terkendali. Safe-to-Spend 7 hari ke depan ${formatRupiah(safeToSpend)}.`;
+
+  return {
+    briefing_date: today,
+    severity,
+    title,
+    summary,
+    highlights,
+    safe_to_spend: safeToSpend,
+  };
+}

@@ -11,18 +11,21 @@ import {
 } from '../../utils/indonesianNlpParser';
 import {
   captureExplicitMemoryInstruction,
+  clearAdvisorMemory,
   loadAdvisorMemory,
+  saveAdvisorMemory,
 } from '../../utils/advisorMemory';
 import {
   getLocalWealthOverview,
   searchLocalTransactions,
   simulateLocalDebtPayoff,
+  simulateLocalIndonesiaWealth,
 } from '../advisorTools';
-import { runProactiveWatchdog } from '../proactiveWatchdog';
+import { generateDailyAdvisorBriefing, runProactiveWatchdog } from '../proactiveWatchdog';
 import { formatRupiah, monthKeyOf, saveLocalDB, uid } from '../storage';
 import type { LocalHandlerContext, LocalHandlerHelpers } from './types';
 
-export function handleAiAgentRoutes(
+function dispatchAiAgentRoute(
   ctx: LocalHandlerContext,
   helpers: LocalHandlerHelpers
 ): AxiosResponse | null {
@@ -84,6 +87,118 @@ export function handleAiAgentRoutes(
         proposed_actions: [],
       },
     });
+  }
+
+  if (path === '/ai/history' && method === 'GET') {
+    const mem = loadAdvisorMemory();
+    const syncedMem = {
+      learned_rules: (mem.learnedRules || []).map((r) => ({
+        id: `rule:${r.keyword}`,
+        keyword: r.keyword,
+        category_name: r.categoryName,
+        account_name: r.accountName,
+        type: r.txType,
+        use_count: r.hits || 1,
+        updated_at: r.updatedAt,
+      })),
+      custom_notes: [...(mem.notes || [])],
+      preferred_payment_account: mem.learnedRules?.[0]?.accountName,
+    };
+    const storedHistory = (db.advisor_chat_history || []).map((m) => ({
+      id: m.id,
+      client_message_id: m.id,
+      role: m.sender === 'user' ? 'user' : 'assistant',
+      content: m.text,
+      actions: m.actions,
+      suggested_replies: m.suggestedReplies,
+      image_preview: m.imagePreview,
+      created_at: m.timestamp,
+    }));
+    return makeOk(config, {
+      data: {
+        messages: storedHistory,
+        memory: syncedMem,
+      },
+    });
+  }
+
+  if (path === '/ai/history' && method === 'DELETE') {
+    db.advisor_chat_history = [];
+    saveLocalDB(db);
+    return makeOk(config, { data: { cleared: true } });
+  }
+
+  if (path === '/ai/memory' && method === 'GET') {
+    const mem = loadAdvisorMemory();
+    return makeOk(config, {
+      data: {
+        learned_rules: (mem.learnedRules || []).map((r) => ({
+          id: `rule:${r.keyword}`,
+          keyword: r.keyword,
+          category_name: r.categoryName,
+          account_name: r.accountName,
+          type: r.txType,
+          use_count: r.hits || 1,
+          updated_at: r.updatedAt,
+        })),
+        custom_notes: [...(mem.notes || [])],
+        preferred_payment_account: mem.learnedRules?.[0]?.accountName,
+      },
+    });
+  }
+
+  if (path === '/ai/memory' && method === 'PUT') {
+    const body = parseJsonBody<{
+      learned_rules?: Array<{
+        keyword: string;
+        category_name?: string;
+        account_name?: string;
+        type?: string;
+        use_count?: number;
+        updated_at?: string;
+      }>;
+      custom_notes?: string[];
+      preferred_payment_account?: string;
+    }>(config.data);
+    const nextState = {
+      notes: Array.isArray(body.custom_notes) ? body.custom_notes.slice(0, 16) : [],
+      learnedRules: Array.isArray(body.learned_rules)
+        ? body.learned_rules.map((r) => ({
+            keyword: String(r.keyword || '').toLowerCase().trim(),
+            categoryName: r.category_name,
+            accountName: r.account_name,
+            txType: (r.type === 'income' ? 'income' : r.type === 'expense' ? 'expense' : undefined) as
+              | 'expense'
+              | 'income'
+              | undefined,
+            hits: r.use_count || 1,
+            updatedAt: r.updated_at || new Date().toISOString(),
+          }))
+        : [],
+    };
+    saveAdvisorMemory(nextState);
+    db.advisor_memory = {
+      ...nextState,
+      customNotes: nextState.notes,
+      preferredPaymentAccount: body.preferred_payment_account,
+      updatedAt: new Date().toISOString(),
+    };
+    saveLocalDB(db);
+    return makeOk(config, { data: body });
+  }
+
+  if (path === '/ai/memory' && method === 'DELETE') {
+    clearAdvisorMemory();
+    db.advisor_memory = { learnedRules: [], notes: [], customNotes: [], updatedAt: new Date().toISOString() };
+    saveLocalDB(db);
+    return makeOk(config, { data: { cleared: true } });
+  }
+
+  if ((path === '/ai/briefing' && method === 'GET') || (path === '/ai/briefing/run' && method === 'POST')) {
+    const mem = loadAdvisorMemory();
+    const briefing = generateDailyAdvisorBriefing(db, mem.learnedRules?.[0]?.accountName);
+    saveLocalDB(db);
+    return makeOk(config, { data: briefing });
   }
 
   if (path === '/ai/chat' && method === 'POST') {
@@ -748,6 +863,107 @@ export function handleAiAgentRoutes(
       });
     }
 
+    // 12b. Indonesia Wealth Calculators: PPh 21, Zakat, Dana Pendidikan & Dana Pensiun
+    if (/(?:\bpph\b|pph\s*21|pajak\s*penghasilan|\bptkp\b|\bzakat\b|nishab|nisab|\bmaal\b|dana\s*pendidikan|biaya\s*kuliah|uang\s*pangkal|pendidikan\s*anak|\bpensiun\b|hari\s*tua)/i.test(message)) {
+      const numMatch = message.match(/(\d+(?:[.,]\d+)?)\s*(jt|juta|rb|ribu|m|miliar)?/i);
+      let parsedNum = 0;
+      if (numMatch) {
+        const rawVal = Number(numMatch[1].replace(',', '.'));
+        const unit = (numMatch[2] || '').toLowerCase();
+        if (unit === 'm' || unit === 'miliar') parsedNum = rawVal * 1_000_000_000;
+        else if (unit === 'jt' || unit === 'juta') parsedNum = rawVal * 1_000_000;
+        else if (unit === 'rb' || unit === 'ribu') parsedNum = rawVal * 1_000;
+        else parsedNum = rawVal;
+      }
+
+      if (/(?:\bpph\b|pph\s*21|pajak\s*penghasilan|\bptkp\b)/i.test(message)) {
+        const ptkpMatch = message.match(/\b(tk\/[0-3]|k\/[0-3])\b/i);
+        const isAnnual = /setahun|tahunan|per\s*tahun|\/tahun/i.test(message);
+        const sim = simulateLocalIndonesiaWealth(db, {
+          mode: 'pph21',
+          ptkp_status: ptkpMatch ? ptkpMatch[1].toUpperCase() : 'TK/0',
+          income_monthly: !isAnnual && parsedNum >= 500_000 ? parsedNum : undefined,
+          annual_gross: isAnnual && parsedNum >= 500_000 ? parsedNum : undefined,
+        });
+        return makeOk(config, {
+          data: {
+            response: [
+              `Estimasi Pajak Penghasilan (**PPh 21 — PTKP ${String(sim.ptkp_status)}**):`,
+              `• **Penghasilan Bruto**: ${formatRupiah(Number(sim.monthly_gross))}/bln (${formatRupiah(Number(sim.annual_gross))}/thn)`,
+              `• **Biaya Jabatan & PTKP**: ${formatRupiah(Number(sim.biaya_jabatan))} & ${formatRupiah(Number(sim.ptkp_amount))}`,
+              `• **PKP**: **${formatRupiah(Number(sim.pkp))}**`,
+              `• **Estimasi PPh 21**: **${formatRupiah(Number(sim.annual_tax))}/tahun** (~**${formatRupiah(Number(sim.monthly_tax))}/bulan**, tarif efektif **${String(sim.effective_rate_pct)}%**)`,
+            ].join('\n'),
+            reason: 'local-pph21-calculator',
+            suggested_replies: ['Hitung kewajiban zakat penghasilan & maal', 'Simulasikan dana pensiun saya'],
+          },
+        });
+      }
+
+      if (/(?:\bzakat\b|nishab|nisab|\bmaal\b)/i.test(message)) {
+        const sim = simulateLocalIndonesiaWealth(db, { mode: 'zakat' });
+        const maalStatus = sim.is_wajib_zakat_maal
+          ? `Wajib (${formatRupiah(Number(sim.zakat_maal_due))}/tahun)`
+          : 'Belum mencapai nishab';
+        const profStatus = sim.is_wajib_zakat_penghasilan
+          ? `Wajib (${formatRupiah(Number(sim.zakat_penghasilan_monthly))}/bulan)`
+          : 'Belum mencapai nishab bulanan';
+        return makeOk(config, {
+          data: {
+            response: [
+              `Simulasi **Zakat Maal & Penghasilan (2,5%)** (acuan nishab 85 gr emas: ${formatRupiah(Number(sim.nisab_maal_idr))}):`,
+              `• **Zakat Maal**: Harta bersih ${formatRupiah(Number(sim.net_zakatable_wealth))} → **${maalStatus}**`,
+              `• **Zakat Profesi**: Penghasilan ${formatRupiah(Number(sim.monthly_income))}/bln → **${profStatus}**`,
+            ].join('\n'),
+            reason: 'local-zakat-calculator',
+            suggested_replies: ['Hitung estimasi PPh 21 tahunan', 'Ringkas kondisi keuangan bulan ini'],
+          },
+        });
+      }
+
+      if (/(?:dana\s*pendidikan|biaya\s*kuliah|uang\s*pangkal|pendidikan\s*anak)/i.test(message)) {
+        const yrsMatch = message.match(/(\d{1,2})\s*tahun/i);
+        const sim = simulateLocalIndonesiaWealth(db, {
+          mode: 'education',
+          years_until_entry: yrsMatch ? Number(yrsMatch[1]) : 10,
+          current_cost: parsedNum >= 1_000_000 ? parsedNum : 50_000_000,
+        });
+        return makeOk(config, {
+          data: {
+            response: [
+              `Proyeksi **Dana Pendidikan** (**${String(sim.years_until_entry)} tahun** lagi):`,
+              `• **Biaya Saat Ini**: ${formatRupiah(Number(sim.current_cost))}`,
+              `• **Estimasi Biaya Masa Depan** (inflasi 10%/thn): **${formatRupiah(Number(sim.future_total_cost))}**`,
+              `• **Investasi Bulanan Disarankan** (return 7%/thn): **${formatRupiah(Number(sim.required_monthly_saving))}/bulan**`,
+            ].join('\n'),
+            reason: 'local-education-calculator',
+            suggested_replies: ['Simulasikan dana pensiun saya', 'Buat target tabungan dana pendidikan'],
+          },
+        });
+      }
+
+      const ageMatch = message.match(/(?:usia|umur)\s*(\d{2})/i);
+      const retMatch = message.match(/pensiun\s*(?:di\s*)?(?:usia|umur)?\s*(\d{2})/i);
+      const sim = simulateLocalIndonesiaWealth(db, {
+        mode: 'retirement',
+        current_age: ageMatch ? Number(ageMatch[1]) : undefined,
+        retirement_age: retMatch ? Number(retMatch[1]) : undefined,
+      });
+      return makeOk(config, {
+        data: {
+          response: [
+            `Simulasi **Dana Pensiun** (usia ${String(sim.current_age)} → ${String(sim.retirement_age)} thn):`,
+            `• **Pengeluaran Saat Pensiun**: **${formatRupiah(Number(sim.projected_monthly_expense))}/bulan**`,
+            `• **Target Korpus Pensiun (25 Thn)**: **${formatRupiah(Number(sim.target_corpus))}**`,
+            `• **Proyeksi Aset & Kas Saat Ini**: **${formatRupiah(Number(sim.projected_existing_savings))}** (Gap: **${formatRupiah(Number(sim.funding_gap))}**)`,
+            `• **Setoran Bulanan Disarankan**: **${formatRupiah(Number(sim.required_monthly_saving))}/bulan**`,
+          ].join('\n'),
+          reason: 'local-retirement-calculator',
+          suggested_replies: ['Hitung estimasi PPh 21 tahunan', 'Hitung kewajiban zakat penghasilan & maal'],
+        },
+      });
+    }
+
     // 13. Analytical query, keyword spending lookup, budgets & proactive anomaly inspection
     if (/anomali|boros|hemat|pengeluaran|anggaran|budget|habis|berapa|cek/i.test(message)) {
       const watchdog = runProactiveWatchdog(db);
@@ -853,4 +1069,47 @@ export function handleAiAgentRoutes(
   }
 
   return null;
+}
+
+export function handleAiAgentRoutes(
+  ctx: LocalHandlerContext,
+  helpers: LocalHandlerHelpers
+): AxiosResponse | null {
+  const res = dispatchAiAgentRoute(ctx, helpers);
+  if (res && ctx.path === '/ai/chat' && ctx.method === 'POST') {
+    const body = helpers.parseJsonBody<{ message?: string }>(ctx.config.data);
+    const data = (res.data as { data?: { response?: string; proposed_actions?: AgenticAction[]; suggested_replies?: string[] } })?.data;
+    const msgText = String(body.message || '').trim();
+    if (msgText || data?.response) {
+      const ts = new Date().toISOString();
+      const history = [...(ctx.db.advisor_chat_history || [])];
+      if (msgText) {
+        history.push({
+          id: uid('chat'),
+          sender: 'user',
+          text: msgText,
+          timestamp: ts,
+        });
+      }
+      if (data?.response) {
+        history.push({
+          id: uid('chat'),
+          sender: 'ai',
+          text: data.response,
+          actions: data.proposed_actions,
+          suggestedReplies: data.suggested_replies,
+          timestamp: ts,
+        });
+      }
+      ctx.db.advisor_chat_history = history.slice(-60);
+      const mem = loadAdvisorMemory();
+      ctx.db.advisor_memory = {
+        ...mem,
+        customNotes: mem.notes,
+        updatedAt: ts,
+      };
+      saveLocalDB(ctx.db);
+    }
+  }
+  return res;
 }

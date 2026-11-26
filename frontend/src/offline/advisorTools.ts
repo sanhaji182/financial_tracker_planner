@@ -1,5 +1,10 @@
 import type { LocalDatabase } from './storage';
 import { computeDashboard } from './localApiAdapter';
+import {
+  calculateAnnualPph21,
+  calculateEducationPlan,
+  calculateIndonesiaZakat,
+} from '../utils/indonesiaWealth';
 
 export interface LocalSearchTransactionsResult {
   count: number;
@@ -252,7 +257,183 @@ export const LOCAL_ADVISOR_TOOL_DECLARATIONS = [
       'Mengambil ringkasan kekayaan bersih (kas + aset - utang), total aset, tagihan jatuh tempo, biaya langganan bulanan, dan tren arus kas 6 bulan.',
     parameters: { type: 'object', properties: {} },
   },
+  {
+    name: 'simulate_indonesia_wealth',
+    description:
+      'Kalkulator finansial Indonesia akurat: estimasi PPh 21 (UU HPP/PTKP), Zakat Maal & Profesi (2.5% vs nishab 85gr emas), Dana Pensiun, atau Dana Pendidikan anak.',
+    parameters: {
+      type: 'object',
+      properties: {
+        mode: { type: 'string', enum: ['pph21', 'zakat', 'retirement', 'education'] },
+        ptkp_status: { type: 'string', description: 'Status PTKP seperti TK/0, K/0, K/1, K/2, K/3' },
+        income_monthly: { type: 'number', description: 'Penghasilan bruto per bulan dalam Rupiah' },
+        gold_price_per_gram: { type: 'number', description: 'Harga emas per gram untuk nishab zakat' },
+        current_age: { type: 'integer', description: 'Usia saat ini untuk simulasi pensiun' },
+        retirement_age: { type: 'integer', description: 'Target usia pensiun' },
+        years_until_entry: { type: 'integer', description: 'Sisa tahun hingga masuk sekolah/kuliah' },
+        current_cost: { type: 'number', description: 'Biaya pendidikan saat ini dalam Rupiah' },
+      },
+      required: ['mode'],
+    },
+  },
 ];
+
+export function simulateLocalIndonesiaWealth(
+  db: LocalDatabase,
+  args: {
+    mode?: string;
+    ptkp_status?: string;
+    income_monthly?: number;
+    annual_gross?: number;
+    gold_price_per_gram?: number;
+    current_age?: number;
+    retirement_age?: number;
+    monthly_expense?: number;
+    years_until_entry?: number;
+    current_cost?: number;
+  } = {}
+): Record<string, unknown> {
+  const overview = getLocalWealthOverview(db);
+  const currentMonth = new Date().toISOString().slice(0, 7);
+  const inferredMonthlyIncome = (db.transactions || [])
+    .filter((t) => t.type === 'income' && (t.date || '').slice(0, 7) === currentMonth)
+    .reduce((s, t) => s + t.amount, 0);
+  const inferredMonthlyExpense = (db.transactions || [])
+    .filter((t) => t.type === 'expense' && (t.date || '').slice(0, 7) === currentMonth)
+    .reduce((s, t) => s + t.amount, 0);
+
+  const incomeMonthly =
+    typeof args.income_monthly === 'number' && args.income_monthly > 0
+      ? args.income_monthly
+      : inferredMonthlyIncome > 0
+        ? inferredMonthlyIncome
+        : 10_000_000;
+  const mode = (args.mode || 'pph21').toLowerCase();
+
+  if (mode === 'pph21') {
+    const grossYear =
+      typeof args.annual_gross === 'number' && args.annual_gross > 0
+        ? args.annual_gross
+        : incomeMonthly * 12;
+    const rawPtkp = (args.ptkp_status || 'TK/0').toUpperCase();
+    const ptkpKey = (['TK/0', 'K/0', 'K/1', 'K/2', 'K/3'].includes(rawPtkp)
+      ? rawPtkp
+      : 'TK/0') as 'TK/0' | 'K/0' | 'K/1' | 'K/2' | 'K/3';
+    const tax = calculateAnnualPph21(grossYear, ptkpKey);
+    return {
+      mode: 'pph21',
+      ptkp_status: ptkpKey,
+      monthly_gross: Math.round(grossYear / 12),
+      annual_gross: tax.annualGross,
+      biaya_jabatan: tax.biayaJabatan,
+      ptkp_amount: tax.ptkp,
+      pkp: tax.pkp,
+      annual_tax: tax.annualTax,
+      monthly_tax: Math.round(tax.annualTax / 12),
+      effective_rate_pct: tax.effectiveRatePct,
+    };
+  }
+
+  if (mode === 'zakat') {
+    const goldPrice =
+      typeof args.gold_price_per_gram === 'number' && args.gold_price_per_gram > 0
+        ? args.gold_price_per_gram
+        : 1_650_000;
+    const zakat = calculateIndonesiaZakat({
+      goldPricePerGram: goldPrice,
+      liquidCashAndDeposits: overview.total_liquid_cash,
+      goldAndInvestmentsValue: overview.total_assets,
+      dueShortTermDebts: overview.total_debts,
+      monthlyNetIncome: incomeMonthly,
+    });
+    return {
+      mode: 'zakat',
+      gold_price_per_gram: goldPrice,
+      nisab_maal_idr: zakat.nisabMaalIdr,
+      monthly_nisab_idr: zakat.monthlyNisabIdr,
+      net_zakatable_wealth: zakat.netZakatableWealth,
+      is_wajib_zakat_maal: zakat.isWajibZakatMaal,
+      zakat_maal_due: zakat.zakatMaalDue,
+      monthly_income: incomeMonthly,
+      is_wajib_zakat_penghasilan: zakat.isWajibZakatPenghasilan,
+      zakat_penghasilan_monthly: zakat.zakatPenghasilanMonthly,
+    };
+  }
+
+  if (mode === 'education') {
+    const years = Math.max(1, Math.round(args.years_until_entry || 10));
+    const currentCost =
+      typeof args.current_cost === 'number' && args.current_cost > 0
+        ? args.current_cost
+        : 50_000_000;
+    const plan = calculateEducationPlan({
+      yearsUntilEntry: years,
+      currentCostIdr: currentCost,
+      annualInflationRate: 0.1,
+      expectedAnnualReturnRate: 0.07,
+    });
+    return {
+      mode: 'education',
+      years_until_entry: plan.yearsUntilEntry,
+      current_cost: currentCost,
+      future_total_cost: plan.futureTotalCost,
+      required_monthly_saving: plan.requiredMonthlySaving,
+      annual_inflation_pct: 10,
+      expected_return_pct: 7,
+    };
+  }
+
+  // Retirement simulation
+  const profile = db.retirement_profile;
+  const currentAge = Math.max(
+    18,
+    Math.round(args.current_age || profile?.current_age || 30)
+  );
+  const retirementAge = Math.max(
+    currentAge + 1,
+    Math.round(args.retirement_age || profile?.retirement_age || 55)
+  );
+  const yearsToRetire = retirementAge - currentAge;
+  const baseExpense =
+    typeof args.monthly_expense === 'number' && args.monthly_expense > 0
+      ? args.monthly_expense
+      : inferredMonthlyExpense > 0
+        ? inferredMonthlyExpense
+        : Math.max(3_500_000, Math.round(incomeMonthly * 0.6));
+  const infRate = profile?.inflation_rate ?? 0.045;
+  const retRate = profile?.nominal_return_rate ?? 0.08;
+  const yearsInRet = 25;
+  const futureMonthlyExpense = Math.round(baseExpense * Math.pow(1 + infRate, yearsToRetire));
+  const realAnnual = (1 + retRate) / (1 + infRate) - 1;
+  const realMonthly = realAnnual / 12;
+  const nRet = yearsInRet * 12;
+  const pvFactor =
+    realMonthly > 0 ? (1 - Math.pow(1 + realMonthly, -nRet)) / realMonthly : nRet;
+  const targetCorpus = Math.round(futureMonthlyExpense * pvFactor);
+  const existingSavings = Math.max(0, overview.total_liquid_cash + overview.total_assets);
+  const projectedSavings = Math.round(existingSavings * Math.pow(1 + retRate, yearsToRetire));
+  const fundingGap = Math.max(0, targetCorpus - projectedSavings);
+  const rMonth = retRate / 12;
+  const nAcc = yearsToRetire * 12;
+  const accFactor = rMonth > 0 ? (Math.pow(1 + rMonth, nAcc) - 1) / rMonth : nAcc;
+  const requiredMonthlySaving =
+    fundingGap > 0 && accFactor > 0 ? Math.round(fundingGap / accFactor) : 0;
+
+  return {
+    mode: 'retirement',
+    current_age: currentAge,
+    retirement_age: retirementAge,
+    years_to_retire: yearsToRetire,
+    monthly_expense_today: baseExpense,
+    projected_monthly_expense: futureMonthlyExpense,
+    target_corpus: targetCorpus,
+    projected_existing_savings: projectedSavings,
+    funding_gap: fundingGap,
+    required_monthly_saving: requiredMonthlySaving,
+    annual_inflation_pct: Math.round(infRate * 1000) / 10,
+    expected_return_pct: Math.round(retRate * 1000) / 10,
+  };
+}
 
 export function executeLocalAdvisorTool(
   db: LocalDatabase,
@@ -274,6 +455,18 @@ export function executeLocalAdvisorTool(
   }
   if (name === 'get_wealth_overview') {
     return getLocalWealthOverview(db);
+  }
+  if (name === 'simulate_indonesia_wealth') {
+    return simulateLocalIndonesiaWealth(db, {
+      mode: typeof args.mode === 'string' ? args.mode : 'pph21',
+      ptkp_status: typeof args.ptkp_status === 'string' ? args.ptkp_status : undefined,
+      income_monthly: typeof args.income_monthly === 'number' ? args.income_monthly : undefined,
+      gold_price_per_gram: typeof args.gold_price_per_gram === 'number' ? args.gold_price_per_gram : undefined,
+      current_age: typeof args.current_age === 'number' ? args.current_age : undefined,
+      retirement_age: typeof args.retirement_age === 'number' ? args.retirement_age : undefined,
+      years_until_entry: typeof args.years_until_entry === 'number' ? args.years_until_entry : undefined,
+      current_cost: typeof args.current_cost === 'number' ? args.current_cost : undefined,
+    });
   }
   return { error: `Unknown tool: ${name}` };
 }

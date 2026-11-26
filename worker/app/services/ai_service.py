@@ -646,6 +646,181 @@ def _tool_get_wealth_overview(context_data: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+_INDONESIA_PTKP_AMOUNTS = {
+    "TK/0": 54_000_000,
+    "TK/1": 58_500_000,
+    "TK/2": 63_000_000,
+    "TK/3": 67_500_000,
+    "K/0": 58_500_000,
+    "K/1": 63_000_000,
+    "K/2": 67_500_000,
+    "K/3": 72_000_000,
+}
+
+
+def _tool_simulate_indonesia_wealth(
+    context_data: Dict[str, Any],
+    mode: str = "pph21",
+    ptkp_status: str = "TK/0",
+    income_monthly: float = 0.0,
+    annual_gross: float = 0.0,
+    gold_price_per_gram: float = 1_650_000.0,
+    eligible_assets: float = -1.0,
+    current_age: int = 30,
+    retirement_age: int = 55,
+    monthly_expense: float = 0.0,
+    years_until_entry: int = 10,
+    current_cost: float = 50_000_000.0,
+    annual_inflation_pct: float = -1.0,
+    expected_return_pct: float = -1.0,
+) -> Dict[str, Any]:
+    overview = _tool_get_wealth_overview(context_data)
+    dashboard = context_data.get("dashboard") or {}
+    recent_txs = context_data.get("recent_transactions") or []
+
+    inferred_monthly_income = float(dashboard.get("income_this_month") or 0)
+    if inferred_monthly_income <= 0 and isinstance(recent_txs, list):
+        inferred_monthly_income = sum(
+            float(t.get("amount") or 0)
+            for t in recent_txs
+            if isinstance(t, dict) and str(t.get("type") or "").lower() == "income"
+        )
+    if income_monthly <= 0:
+        income_monthly = inferred_monthly_income if inferred_monthly_income > 0 else 10_000_000.0
+
+    clean_mode = (mode or "pph21").strip().lower()
+    if clean_mode == "pph21":
+        gross_year = annual_gross if annual_gross > 0 else income_monthly * 12.0
+        ptkp_key = (ptkp_status or "TK/0").strip().upper()
+        if ptkp_key not in _INDONESIA_PTKP_AMOUNTS:
+            ptkp_key = "TK/0"
+        ptkp_amt = _INDONESIA_PTKP_AMOUNTS[ptkp_key]
+        biaya_jabatan = min(round(gross_year * 0.05), 6_000_000)
+        netto = max(0.0, gross_year - biaya_jabatan)
+        pkp = max(0, (int(netto - ptkp_amt) // 1000) * 1000)
+        brackets = [
+            (60_000_000, 0.05, "5%"),
+            (190_000_000, 0.15, "15%"),
+            (250_000_000, 0.25, "25%"),
+            (4_500_000_000, 0.30, "30%"),
+            (float("inf"), 0.35, "35%"),
+        ]
+        rem = float(pkp)
+        tax_total = 0.0
+        breakdown = []
+        for cap, rate, label in brackets:
+            if rem <= 0:
+                break
+            chunk = rem if cap == float("inf") else min(rem, cap)
+            t = chunk * rate
+            tax_total += t
+            breakdown.append({"rate": label, "taxable": round(chunk), "tax": round(t)})
+            rem -= chunk
+        annual_tax = round(tax_total)
+        eff_rate = round((annual_tax / gross_year) * 100.0, 2) if gross_year > 0 else 0.0
+        return {
+            "mode": "pph21",
+            "ptkp_status": ptkp_key,
+            "ptkp_amount": ptkp_amt,
+            "monthly_gross": round(gross_year / 12.0),
+            "annual_gross": round(gross_year),
+            "biaya_jabatan": biaya_jabatan,
+            "pkp": pkp,
+            "annual_tax": annual_tax,
+            "monthly_tax": round(annual_tax / 12.0),
+            "effective_rate_pct": eff_rate,
+            "breakdown": breakdown,
+        }
+
+    if clean_mode == "zakat":
+        gold = gold_price_per_gram if gold_price_per_gram > 0 else 1_650_000.0
+        nishab_maal = round(85.0 * gold)
+        nishab_profesi_monthly = round(nishab_maal / 12.0)
+        maal_base = (
+            max(0.0, eligible_assets)
+            if eligible_assets >= 0
+            else max(0.0, float(overview["estimated_net_worth"]))
+        )
+        maal_wajib = maal_base >= nishab_maal
+        zakat_maal_annual = round(maal_base * 0.025) if maal_wajib else 0
+        profesi_wajib = income_monthly >= nishab_profesi_monthly
+        zakat_profesi_monthly = round(income_monthly * 0.025) if profesi_wajib else 0
+        return {
+            "mode": "zakat",
+            "gold_price_per_gram": round(gold),
+            "nishab_maal_annual": nishab_maal,
+            "nishab_profesi_monthly": nishab_profesi_monthly,
+            "eligible_maal_assets": round(maal_base),
+            "maal_wajib": maal_wajib,
+            "zakat_maal_annual": zakat_maal_annual,
+            "monthly_income": round(income_monthly),
+            "profesi_wajib": profesi_wajib,
+            "zakat_profesi_monthly": zakat_profesi_monthly,
+            "zakat_profesi_annual": zakat_profesi_monthly * 12,
+        }
+
+    if clean_mode == "education":
+        years = max(1, int(years_until_entry or 10))
+        cur_cost = current_cost if current_cost > 0 else 50_000_000.0
+        inf_rate = (annual_inflation_pct / 100.0) if annual_inflation_pct >= 0 else 0.10
+        ret_rate = (expected_return_pct / 100.0) if expected_return_pct >= 0 else 0.07
+        future_cost = round(cur_cost * ((1.0 + inf_rate) ** years))
+        months = years * 12
+        r_m = ret_rate / 12.0
+        factor = (((1.0 + r_m) ** months) - 1.0) / r_m if r_m > 0 else float(months)
+        req_monthly = round(future_cost / factor) if factor > 0 else future_cost
+        return {
+            "mode": "education",
+            "years_until_entry": years,
+            "current_cost": round(cur_cost),
+            "annual_inflation_pct": round(inf_rate * 100.0, 1),
+            "expected_return_pct": round(ret_rate * 100.0, 1),
+            "future_total_cost": future_cost,
+            "required_monthly_saving": req_monthly,
+        }
+
+    # Default / retirement simulation
+    age_now = max(18, int(current_age or 30))
+    age_ret = max(age_now + 1, int(retirement_age or 55))
+    years_to_ret = age_ret - age_now
+    base_exp = monthly_expense if monthly_expense > 0 else float(dashboard.get("expense_this_month") or 0)
+    if base_exp <= 0:
+        base_exp = max(3_500_000.0, income_monthly * 0.6)
+    inf_rate = (annual_inflation_pct / 100.0) if annual_inflation_pct >= 0 else 0.045
+    ret_rate = (expected_return_pct / 100.0) if expected_return_pct >= 0 else 0.08
+    years_in_ret = 25
+    future_monthly_exp = base_exp * ((1.0 + inf_rate) ** years_to_ret)
+    real_annual = ((1.0 + ret_rate) / (1.0 + inf_rate)) - 1.0
+    real_m = real_annual / 12.0
+    n_ret_m = years_in_ret * 12
+    if real_m > 0:
+        pv_factor = (1.0 - ((1.0 + real_m) ** (-n_ret_m))) / real_m
+    else:
+        pv_factor = float(n_ret_m)
+    target_corpus = round(future_monthly_exp * pv_factor)
+    cur_savings = max(0.0, float(overview["total_liquid_cash"]) + float(overview["total_assets"]))
+    fv_savings = round(cur_savings * ((1.0 + ret_rate) ** years_to_ret))
+    funding_gap = max(0, target_corpus - fv_savings)
+    r_m = ret_rate / 12.0
+    n_acc_m = years_to_ret * 12
+    acc_factor = (((1.0 + r_m) ** n_acc_m) - 1.0) / r_m if r_m > 0 else float(n_acc_m)
+    req_monthly = round(funding_gap / acc_factor) if funding_gap > 0 and acc_factor > 0 else 0
+    return {
+        "mode": "retirement",
+        "current_age": age_now,
+        "retirement_age": age_ret,
+        "years_to_retire": years_to_ret,
+        "monthly_expense_today": round(base_exp),
+        "projected_monthly_expense": round(future_monthly_exp),
+        "target_corpus": target_corpus,
+        "projected_existing_savings": fv_savings,
+        "funding_gap": funding_gap,
+        "required_monthly_saving": req_monthly,
+        "annual_inflation_pct": round(inf_rate * 100.0, 1),
+        "expected_return_pct": round(ret_rate * 100.0, 1),
+    }
+
+
 _ADVISOR_TOOL_DECLARATIONS = [
     {
         "name": "search_transactions",
@@ -676,6 +851,24 @@ _ADVISOR_TOOL_DECLARATIONS = [
         "description": "Mengambil ringkasan kekayaan bersih (kas + aset - utang), total aset, tagihan jatuh tempo, biaya langganan bulanan, dan tren arus kas 6 bulan.",
         "parameters": {"type": "object", "properties": {}},
     },
+    {
+        "name": "simulate_indonesia_wealth",
+        "description": "Kalkulator finansial Indonesia akurat: estimasi PPh 21 (UU HPP/PTKP), Zakat Maal & Profesi (2.5% vs nishab 85gr emas), Dana Pensiun, atau Dana Pendidikan anak.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "mode": {"type": "string", "enum": ["pph21", "zakat", "retirement", "education"]},
+                "ptkp_status": {"type": "string", "description": "Status PTKP seperti TK/0, K/0, K/1, K/2, K/3"},
+                "income_monthly": {"type": "number", "description": "Penghasilan bruto per bulan dalam Rupiah"},
+                "gold_price_per_gram": {"type": "number", "description": "Harga emas per gram dalam Rupiah untuk nishab zakat"},
+                "current_age": {"type": "integer", "description": "Usia saat ini untuk simulasi pensiun"},
+                "retirement_age": {"type": "integer", "description": "Target usia pensiun"},
+                "years_until_entry": {"type": "integer", "description": "Sisa tahun hingga masuk sekolah/kuliah"},
+                "current_cost": {"type": "number", "description": "Biaya pendidikan saat ini dalam Rupiah"},
+            },
+            "required": ["mode"],
+        },
+    },
 ]
 
 
@@ -697,6 +890,23 @@ def _execute_advisor_tool(name: str, args: Any, context_data: Dict[str, Any]) ->
         )
     if name == "get_wealth_overview":
         return _tool_get_wealth_overview(context_data)
+    if name == "simulate_indonesia_wealth":
+        return _tool_simulate_indonesia_wealth(
+            context_data,
+            mode=str(safe_args.get("mode") or "pph21"),
+            ptkp_status=str(safe_args.get("ptkp_status") or "TK/0"),
+            income_monthly=float(safe_args.get("income_monthly") or 0.0),
+            annual_gross=float(safe_args.get("annual_gross") or 0.0),
+            gold_price_per_gram=float(safe_args.get("gold_price_per_gram") or 1_650_000.0),
+            eligible_assets=float(safe_args.get("eligible_assets") if safe_args.get("eligible_assets") is not None else -1.0),
+            current_age=int(safe_args.get("current_age") or 30),
+            retirement_age=int(safe_args.get("retirement_age") or 55),
+            monthly_expense=float(safe_args.get("monthly_expense") or 0.0),
+            years_until_entry=int(safe_args.get("years_until_entry") or 10),
+            current_cost=float(safe_args.get("current_cost") or 50_000_000.0),
+            annual_inflation_pct=float(safe_args.get("annual_inflation_pct") if safe_args.get("annual_inflation_pct") is not None else -1.0),
+            expected_return_pct=float(safe_args.get("expected_return_pct") if safe_args.get("expected_return_pct") is not None else -1.0),
+        )
     return {"error": f"Unknown tool: {name}"}
 
 
@@ -1220,6 +1430,12 @@ def parse_indonesian_action_commands(
     if not clean:
         return []
     low = clean.lower()
+    # Indonesia wealth calculator questions (PPh 21, Zakat, Pensiun, Dana Pendidikan) must not create transactions
+    if re.search(
+        r"\b(pph(?:\s*21)?|ptkp|pajak\s+penghasilan|zakat|nishab|nisab|dana\s+pensiun|dana\s+pendidikan|biaya\s+kuliah|uang\s+pangkal|pendidikan\s+anak)\b",
+        low,
+    ) and not re.search(r"\b(catat|catatkan|masukkan|bayar\s+zakat|beli)\b", low):
+        return []
     accounts = accounts or []
     categories = categories or []
     bills = bills or []
@@ -2270,7 +2486,7 @@ def _build_advisor_system_prompt(context_data: Dict[str, Any]) -> str:
     )
     return (
         "Anda adalah asisten perencana keuangan pribadi profesional (AI Advisor) untuk keluarga Indonesia. "
-        "Gunakan tools (`search_transactions`, `simulate_debt_payoff`, `get_wealth_overview`) bila butuh data historis mendalam atau simulasi cicilan akurat. "
+        "Gunakan tools (`search_transactions`, `simulate_debt_payoff`, `get_wealth_overview`, `simulate_indonesia_wealth`) bila butuh data historis mendalam, simulasi cicilan, PPh 21, zakat, dana pensiun, atau dana pendidikan anak akurat. "
         "Jawab dalam Bahasa Indonesia yang ringkas, akurat, solutif, dan berbasis angka nyata.\n\n"
         f"Konteks Finansial User:\n{ctx_str}\n\n"
         "PENTING:\n"
@@ -2805,6 +3021,69 @@ def generate_mock_chat_response(
             response = "Tidak ada langganan rutin aktif tercatat."
         reason = "Dihitung dari daftar langganan berulang yang masih aktif."
         suggested_replies = ["Cek pengeluaran terbesar bulan ini", "Cek kuota jajan harian bulan ini"]
+    elif any(k in msg_lower for k in ("pph", "pajak penghasilan", "ptkp", "hitung pajak")):
+        ptkp_match = re.search(r"\b(tk/[0-3]|k/[0-3])\b", msg_lower)
+        ptkp_st = ptkp_match.group(1).upper() if ptkp_match else "TK/0"
+        parsed_inc = parse_indonesian_amount(message)
+        is_annual = any(k in msg_lower for k in ("setahun", "tahunan", "per tahun", "/tahun"))
+        sim = _tool_simulate_indonesia_wealth(
+            context_data,
+            mode="pph21",
+            ptkp_status=ptkp_st,
+            income_monthly=0.0 if is_annual else (parsed_inc if parsed_inc >= 500_000 else 0.0),
+            annual_gross=(parsed_inc if parsed_inc >= 500_000 else 0.0) if is_annual else 0.0,
+        )
+        response = (
+            f"Estimasi Pajak Penghasilan (**PPh 21 — Status PTKP {sim['ptkp_status']}**):\n"
+            f"- **Penghasilan Bruto**: {_format_rp(sim['monthly_gross'])}/bulan ({_format_rp(sim['annual_gross'])}/tahun)\n"
+            f"- **Biaya Jabatan & PTKP**: {_format_rp(sim['biaya_jabatan'])} & {_format_rp(sim['ptkp_amount'])}\n"
+            f"- **PKP (Penghasilan Kena Pajak)**: **{_format_rp(sim['pkp'])}**\n"
+            f"- **Estimasi PPh 21 Setahun**: **{_format_rp(sim['annual_tax'])}** (~**{_format_rp(sim['monthly_tax'])}/bulan**, tarif efektif **{sim['effective_rate_pct']}%**)."
+        )
+        reason = "Dihitung memakai lapisan tarif progresif UU HPP dan PTKP resmi."
+        suggested_replies = ["Hitung kewajiban zakat penghasilan & maal", "Simulasikan kebutuhan dana pensiun saya"]
+    elif any(k in msg_lower for k in ("zakat", "nishab", "nisab", "maal")):
+        sim = _tool_simulate_indonesia_wealth(context_data, mode="zakat")
+        maal_status = f"Wajib ({_format_rp(sim['zakat_maal_annual'])}/tahun)" if sim["maal_wajib"] else "Belum mencapai nishab"
+        prof_status = f"Wajib ({_format_rp(sim['zakat_profesi_monthly'])}/bulan)" if sim["profesi_wajib"] else "Belum mencapai nishab bulanan"
+        response = (
+            f"Simulasi **Zakat Maal & Zakat Profesi (2,5%)** dengan acuan nishab 85 gr emas ({_format_rp(sim['nishab_maal_annual'])}/tahun):\n"
+            f"- **Zakat Maal**: Harta bersih {_format_rp(sim['eligible_maal_assets'])} → **{maal_status}**\n"
+            f"- **Zakat Profesi**: Penghasilan {_format_rp(sim['monthly_income'])}/bln vs nishab {_format_rp(sim['nishab_profesi_monthly'])}/bln → **{prof_status}**."
+        )
+        reason = "Mengacu pada ketentuan nishab 85 gram emas dan tarif zakat 2,5%."
+        suggested_replies = ["Simulasi PPh 21 dari penghasilan saya", "Ringkas net worth & alokasi aset"]
+    elif any(k in msg_lower for k in ("dana pendidikan", "biaya kuliah", "uang pangkal", "pendidikan anak", "sekolah anak")):
+        yrs_match = re.search(r"(\d{1,2})\s*tahun", msg_lower)
+        yrs = int(yrs_match.group(1)) if yrs_match else 10
+        parsed_cost = parse_indonesian_amount(message)
+        cur_cost = parsed_cost if parsed_cost >= 1_000_000 else 50_000_000.0
+        sim = _tool_simulate_indonesia_wealth(context_data, mode="education", years_until_entry=yrs, current_cost=cur_cost)
+        response = (
+            f"Proyeksi **Dana Pendidikan** dalam **{sim['years_until_entry']} tahun**:\n"
+            f"- **Biaya Saat Ini**: {_format_rp(sim['current_cost'])}\n"
+            f"- **Estimasi Biaya Masa Depan** (inflasi pendidikan {sim['annual_inflation_pct']}%/thn): **{_format_rp(sim['future_total_cost'])}**\n"
+            f"- **Rekomendasi Nabung/Investasi Rutin** (asumsi imbal hasil {sim['expected_return_pct']}%/thn): **{_format_rp(sim['required_monthly_saving'])}/bulan**."
+        )
+        reason = "Memperhitungkan inflasi biaya pendidikan Indonesia ~10%/tahun dan compounding bulanan."
+        suggested_replies = ["Simulasikan dana pensiun saya", "Buat target tabungan dana pendidikan"]
+    elif any(k in msg_lower for k in ("pensiun", "retirement", "hari tua")):
+        age_match = re.search(r"(?:usia|umur)\s*(\d{2})", msg_lower)
+        ret_match = re.search(r"pensiun\s*(?:di\s*)?(?:usia|umur)?\s*(\d{2})", msg_lower)
+        c_age = int(age_match.group(1)) if age_match else 30
+        r_age = int(ret_match.group(1)) if ret_match else 55
+        if r_age <= c_age:
+            r_age = c_age + 20
+        sim = _tool_simulate_indonesia_wealth(context_data, mode="retirement", current_age=c_age, retirement_age=r_age)
+        response = (
+            f"Simulasi **Dana Pensiun** (usia {sim['current_age']} → {sim['retirement_age']} tahun, horizon {sim['years_to_retire']} tahun):\n"
+            f"- **Kebutuhan Bulanan Saat Pensiun** (inflasi {sim['annual_inflation_pct']}%/thn): **{_format_rp(sim['projected_monthly_expense'])}/bulan**\n"
+            f"- **Target Dana Pensiun (Korpus 25 Tahun)**: **{_format_rp(sim['target_corpus'])}**\n"
+            f"- **Proyeksi Nilai Aset & Kas Saat Ini**: **{_format_rp(sim['projected_existing_savings'])}** (Gap: **{_format_rp(sim['funding_gap'])}**)\n"
+            f"- **Setoran Bulanan Ideal**: **{_format_rp(sim['required_monthly_saving'])}/bulan** (asumsi return {sim['expected_return_pct']}%/thn)."
+        )
+        reason = "Dihitung berdasarkan pengeluaran bulanan, saldo kas/aset saat ini, dan asumsi inflasi serta return historis."
+        suggested_replies = ["Cek total kekayaan bersih saat ini", "Hitung estimasi PPh 21 tahunan"]
     elif any(k in msg_lower for k in ("tagihan", "bill", "jatuh tempo")):
         if upcoming_bills:
             total_b = sum(float(b.get("amount") or 0) for b in upcoming_bills)

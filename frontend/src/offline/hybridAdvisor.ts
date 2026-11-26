@@ -304,7 +304,7 @@ function buildLocalFinancialContextText(db: LocalDatabase, today: string): strin
 function buildAdvisorSystemPrompt(contextText: string, today: string): string {
   return (
     'Anda adalah asisten perencana keuangan pribadi profesional (AI Advisor) untuk keluarga Indonesia. ' +
-    'Gunakan tools (`search_transactions`, `simulate_debt_payoff`, `get_wealth_overview`) bila butuh data historis mendalam atau simulasi cicilan akurat. ' +
+    'Gunakan tools (`search_transactions`, `simulate_debt_payoff`, `get_wealth_overview`, `simulate_indonesia_wealth`) bila butuh data historis mendalam, simulasi cicilan, PPh 21, zakat, dana pensiun, atau dana pendidikan akurat. ' +
     'Jawab singkat, jelas, praktis, dan berbasis angka dari data di bawah ini.\n\n' +
     `Konteks Finansial User:\n${contextText}\n\n` +
     'ATURAN:\n' +

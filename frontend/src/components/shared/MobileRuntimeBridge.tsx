@@ -204,12 +204,32 @@ export const MobileRuntimeBridge: React.FC = () => {
           return;
         }
 
-        const watchdog = runProactiveWatchdog(loadLocalDB());
+        const dbSnapshot = loadLocalDB();
+        const watchdog = runProactiveWatchdog(dbSnapshot);
         const topFinding =
           watchdog.findings.find((f) => f.severity === 'danger') ||
           watchdog.findings.find((f) => f.severity === 'warning');
         if (topFinding) {
           await sendProactiveNotification(topFinding.title, topFinding.message, topFinding.action_url);
+        }
+
+        // Daily AI Advisor Briefing notification (once per calendar day)
+        const dailyKey = 'kb_daily_ai_briefing_day_v1';
+        const todayStr = new Date().toISOString().slice(0, 10);
+        if (window.localStorage.getItem(dailyKey) !== todayStr) {
+          const { generateDailyAdvisorBriefing } = await import('../../offline/proactiveWatchdog');
+          const { loadAdvisorMemory } = await import('../../utils/advisorMemory');
+          const mem = loadAdvisorMemory();
+          const preferredAcc = mem.learnedRules?.[0]?.accountName;
+          const briefing = generateDailyAdvisorBriefing(dbSnapshot, preferredAcc);
+          window.localStorage.setItem(dailyKey, todayStr);
+          const notifId = Number(todayStr.replace(/-/g, '')) || undefined;
+          await sendProactiveNotification(
+            briefing.title,
+            briefing.summary,
+            '/?openAdvisor=1',
+            notifId
+          );
         }
       } catch {
         // Silent best-effort notification check

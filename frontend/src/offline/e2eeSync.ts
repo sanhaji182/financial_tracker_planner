@@ -199,6 +199,60 @@ export function mergeLocalDatabases(
     formatted_balance: formatRupiah(a.balance),
   }));
 
+  const mergedHistory = (() => {
+    const byId = new Map<string, NonNullable<LocalDatabase['advisor_chat_history']>[number]>();
+    for (const item of remoteDb.advisor_chat_history || []) {
+      if (item && item.id) byId.set(item.id, item);
+    }
+    for (const item of localDb.advisor_chat_history || []) {
+      if (item && item.id) {
+        const prev = byId.get(item.id);
+        if (!prev || (item.timestamp || '').localeCompare(prev.timestamp || '') >= 0) {
+          byId.set(item.id, item);
+        }
+      }
+    }
+    return Array.from(byId.values())
+      .sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''))
+      .slice(-60);
+  })();
+
+  const mergedMemory = (() => {
+    const lMem = localDb.advisor_memory;
+    const rMem = remoteDb.advisor_memory;
+    if (!lMem && !rMem) return undefined;
+    const ruleMap = new Map<string, NonNullable<NonNullable<LocalDatabase['advisor_memory']>['learnedRules']>[number]>();
+    for (const r of [...(rMem?.learnedRules || []), ...(lMem?.learnedRules || [])]) {
+      const k = (r.keyword || '').toLowerCase().trim();
+      if (!k) continue;
+      const prev = ruleMap.get(k);
+      if (!prev || (r.updatedAt || '').localeCompare(prev.updatedAt || '') >= 0) {
+        ruleMap.set(k, {
+          ...prev,
+          ...r,
+          keyword: k,
+          useCount: Math.max(prev?.useCount || 0, r.useCount || 0),
+        });
+      }
+    }
+    const notesMap = new Map<string, string>();
+    for (const n of [...(rMem?.customNotes || []), ...(lMem?.customNotes || [])]) {
+      const t = (n || '').trim();
+      if (t) notesMap.set(t.toLowerCase(), t);
+    }
+    const lTime = lMem?.updatedAt || '';
+    const rTime = rMem?.updatedAt || '';
+    const preferLocal = lTime.localeCompare(rTime) >= 0;
+    return {
+      learnedRules: Array.from(ruleMap.values()).slice(-40),
+      customNotes: Array.from(notesMap.values()).slice(-25),
+      preferredPaymentAccount: preferLocal
+        ? lMem?.preferredPaymentAccount || rMem?.preferredPaymentAccount
+        : rMem?.preferredPaymentAccount || lMem?.preferredPaymentAccount,
+      updatedAt: preferLocal ? lTime || rTime : rTime || lTime,
+    };
+  })();
+
   const merged: LocalDatabase = {
     ...localDb,
     accounts: mergedAccounts,
@@ -212,6 +266,8 @@ export function mergeLocalDatabases(
     categories: cat.merged,
     backups: localDb.backups,
     ai_settings: localDb.ai_settings,
+    advisor_chat_history: mergedHistory,
+    advisor_memory: mergedMemory,
   };
 
   return { merged, conflictsResolved };

@@ -253,3 +253,79 @@ export function captureExplicitMemoryInstruction(message: string): {
         : `Siap, saya sudah mengingat preferensi Anda: **"${sanitizedNote}"**. Saran dan pencatatan berikutnya akan menyesuaikan aturan ini.`,
   };
 }
+
+export interface SyncedMemoryPayload {
+  learned_rules: Array<{
+    id: string;
+    keyword: string;
+    category_name?: string;
+    account_name?: string;
+    type?: string;
+    use_count: number;
+    updated_at: string;
+  }>;
+  custom_notes: string[];
+  preferred_payment_account?: string;
+  updated_at?: string;
+}
+
+export function toSyncedAdvisorMemory(state?: AdvisorMemoryState): SyncedMemoryPayload {
+  const mem = state || loadAdvisorMemory();
+  return {
+    learned_rules: (mem.learnedRules || []).map((r) => ({
+      id: `rule:${r.keyword}`,
+      keyword: r.keyword,
+      category_name: r.categoryName,
+      account_name: r.accountName,
+      type: r.txType,
+      use_count: r.hits || 1,
+      updated_at: r.updatedAt,
+    })),
+    custom_notes: [...(mem.notes || [])],
+    preferred_payment_account: mem.learnedRules?.[0]?.accountName || undefined,
+    updated_at: new Date().toISOString(),
+  };
+}
+
+export function mergeSyncedMemoryState(remote: SyncedMemoryPayload): AdvisorMemoryState {
+  const local = loadAdvisorMemory();
+  const byKw = new Map<string, LearnedMerchantRule>();
+  for (const r of local.learnedRules || []) {
+    byKw.set(r.keyword.toLowerCase(), r);
+  }
+  for (const rr of remote.learned_rules || []) {
+    const kw = (rr.keyword || '').toLowerCase().trim();
+    if (!kw) continue;
+    const prev = byKw.get(kw);
+    if (!prev || (rr.updated_at || '').localeCompare(prev.updatedAt || '') >= 0) {
+      byKw.set(kw, {
+        keyword: kw,
+        accountId: prev?.accountId,
+        accountName: rr.account_name || prev?.accountName,
+        categoryId: prev?.categoryId,
+        categoryName: rr.category_name || prev?.categoryName,
+        txType: rr.type === 'income' ? 'income' : rr.type === 'expense' ? 'expense' : prev?.txType,
+        hits: Math.max(prev?.hits || 1, rr.use_count || 1),
+        updatedAt: rr.updated_at || prev?.updatedAt || new Date().toISOString(),
+      });
+    }
+  }
+  const notesSeen = new Set<string>();
+  const notes: string[] = [];
+  for (const n of [...(local.notes || []), ...(remote.custom_notes || [])]) {
+    const t = (n || '').trim();
+    if (t && !notesSeen.has(t.toLowerCase())) {
+      notesSeen.add(t.toLowerCase());
+      notes.push(t);
+    }
+  }
+  const merged: AdvisorMemoryState = {
+    ...local,
+    notes: notes.slice(0, 16),
+    learnedRules: Array.from(byKw.values())
+      .sort((a, b) => (b.hits || 1) - (a.hits || 1))
+      .slice(0, 30),
+  };
+  saveAdvisorMemory(merged);
+  return merged;
+}
