@@ -558,8 +558,8 @@ def test_v4_indonesia_wealth_calculators_in_tools_and_chat():
     edu_chat = asyncio.run(chat_advisor("Simulasi dana pendidikan kuliah anak 10 tahun biaya 100jt", ctx, "local", "default", None))
     assert "Dana Pendidikan" in edu_chat["response"]
 
-    ret_chat = asyncio.run(chat_advisor("Simulasikan dana pensiun usia 30 pensiun usia 55", ctx, "local", "default", None))
-    assert "Dana Pensiun" in ret_chat["response"]
+    ret_chat = asyncio.run(chat_advisor("Simulasi dana pensiun usia 30 pensiun 55", ctx, "local", "default", None))
+    assert "Dana Pensiun" in ret_chat["response"] and "30 → 55" in ret_chat["response"]
 
 
 def test_v4_stream_routes_wealth_queries_through_tool_engine(monkeypatch):

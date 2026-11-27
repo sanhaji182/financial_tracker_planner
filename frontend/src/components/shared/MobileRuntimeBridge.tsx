@@ -233,10 +233,22 @@ export const MobileRuntimeBridge: React.FC = () => {
             '/?openAdvisor=1',
             notifId
           );
-          await scheduleDailyBriefingNotification(briefing.title, briefing.summary, 7, 30);
         }
       } catch {
         // Silent best-effort notification check
+      }
+    };
+
+    const ensureMorningBriefingAlarm = async () => {
+      try {
+        const dbSnapshot = loadLocalDB();
+        const { generateDailyAdvisorBriefing } = await import('../../offline/proactiveWatchdog');
+        const { loadAdvisorMemory } = await import('../../utils/advisorMemory');
+        const mem = loadAdvisorMemory();
+        const briefing = generateDailyAdvisorBriefing(dbSnapshot, mem.learnedRules?.[0]?.accountName);
+        await scheduleDailyBriefingNotification(briefing.title, briefing.summary, 7, 30);
+      } catch {
+        // Ignore alarm scheduling error
       }
     };
 
@@ -247,10 +259,12 @@ export const MobileRuntimeBridge: React.FC = () => {
       if (typeof document === 'undefined' || document.visibilityState === 'visible') {
         void triggerAutoE2eePullIfEnabled();
         void checkProactiveNotifications();
+        void ensureMorningBriefingAlarm();
       }
     };
 
     void checkProactiveNotifications();
+    void ensureMorningBriefingAlarm();
     window.addEventListener('kb:local-db-saved', onLocalDbSaved);
     window.addEventListener('online', onOnlineOrVisible);
     document.addEventListener('visibilitychange', onOnlineOrVisible);

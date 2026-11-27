@@ -245,13 +245,17 @@ function dispatchAiAgentRoute(
     const today = getTodayLocalDate();
     const month = getCurrentLocalMonth();
     const memory = loadAdvisorMemory();
-    const parsedCommands = parseIndonesianFinancialCommands(message, db.accounts, db.categories, {
-      bills: db.bills,
-      debts: db.debts,
-      goals: db.goals,
-      recentTransactions: db.transactions,
-      memory,
-    });
+    const isGenericAttachmentPrompt =
+      attachments.length > 0 && /^analisa struk gambar\b/i.test(message);
+    const parsedCommands = isGenericAttachmentPrompt
+      ? []
+      : parseIndonesianFinancialCommands(message, db.accounts, db.categories, {
+          bills: db.bills,
+          debts: db.debts,
+          goals: db.goals,
+          recentTransactions: db.transactions,
+          memory,
+        });
     const parsed = parsedCommands[0] || {
       intent: 'query',
       type: 'expense',
@@ -265,7 +269,7 @@ function dispatchAiAgentRoute(
       return makeOk(config, {
         data: {
           response:
-            `Lampiran **${attNames}** diterima. Untuk analisis foto struk atau screenshot mutasi secara visual otomatis di mode offline, aktifkan **AI Provider + API Key** (OpenAI/Gemini) di Pengaturan AI, atau ketik nominal itemnya bersama gambar (contoh: \`kopi 18rb pakai GoPay\`).`,
+            `Lampiran **${attNames}** diterima, tetapi nominal transaksi tidak terbaca otomatis dari gambar. Pastikan foto struk jelas atau ketik nominalnya bersama gambar (contoh: \`kopi 18rb pakai GoPay\`), atau aktifkan **AI Provider + API Key** (OpenAI/Gemini) di Pengaturan AI.`,
           reason: 'local-attachment-notice',
           suggested_replies: ['Catat kopi 18rb pakai BCA', 'Cek pengeluaran terbesar bulan ini'],
         },
@@ -950,12 +954,21 @@ function dispatchAiAgentRoute(
         });
       }
 
-      const ageMatch = message.match(/(?:usia|umur)\s*(\d{2})/i);
-      const retMatch = message.match(/pensiun\s*(?:di\s*)?(?:usia|umur)?\s*(\d{2})/i);
+      const cleanRetMsg = message.replace(/\bdana\s+pensiun\b/gi, ' ');
+      const ageMatch = cleanRetMsg.match(/(?:usia|umur)\s*(?:saat\s+ini\s*)?(\d{2})/i);
+      const retMatch = cleanRetMsg.match(/pensiun\s*(?:di\s*)?(?:usia|umur)?\s*(\d{2})/i);
+      const parsedCurAge = ageMatch ? Number(ageMatch[1]) : undefined;
+      let parsedRetAge = retMatch ? Number(retMatch[1]) : undefined;
+      if (parsedRetAge && parsedCurAge && parsedRetAge <= parsedCurAge) {
+        const altMatch = cleanRetMsg.match(/(?:ke|sampai|umur|usia|pensiun)\s*(\d{2})(?!.*\b\1\b)/i);
+        if (altMatch && Number(altMatch[1]) > parsedCurAge) {
+          parsedRetAge = Number(altMatch[1]);
+        }
+      }
       const sim = simulateLocalIndonesiaWealth(db, {
         mode: 'retirement',
-        current_age: ageMatch ? Number(ageMatch[1]) : undefined,
-        retirement_age: retMatch ? Number(retMatch[1]) : undefined,
+        current_age: parsedCurAge,
+        retirement_age: parsedRetAge,
       });
       return makeOk(config, {
         data: {

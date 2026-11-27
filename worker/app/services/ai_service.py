@@ -784,7 +784,7 @@ def _tool_simulate_indonesia_wealth(
     age_ret = max(age_now + 1, int(retirement_age or 55))
     years_to_ret = age_ret - age_now
     base_exp = monthly_expense if monthly_expense > 0 else float(dashboard.get("expense_this_month") or 0)
-    if base_exp <= 0:
+    if base_exp < 500_000:
         base_exp = max(3_500_000.0, income_monthly * 0.6)
     inf_rate = (annual_inflation_pct / 100.0) if annual_inflation_pct >= 0 else 0.045
     ret_rate = (expected_return_pct / 100.0) if expected_return_pct >= 0 else 0.08
@@ -3073,10 +3073,15 @@ def generate_mock_chat_response(
         reason = "Memperhitungkan inflasi biaya pendidikan Indonesia ~10%/tahun dan compounding bulanan."
         suggested_replies = ["Simulasikan dana pensiun saya", "Buat target tabungan dana pendidikan"]
     elif any(k in msg_lower for k in ("pensiun", "retirement", "hari tua")):
-        age_match = re.search(r"(?:usia|umur)\s*(\d{2})", msg_lower)
-        ret_match = re.search(r"pensiun\s*(?:di\s*)?(?:usia|umur)?\s*(\d{2})", msg_lower)
+        clean_ret = re.sub(r"\bdana\s+pensiun\b", " ", message, flags=re.IGNORECASE)
+        age_match = re.search(r"(?:usia|umur)\s*(?:saat\s+ini\s*)?(\d{2})", clean_ret, flags=re.IGNORECASE)
+        ret_match = re.search(r"pensiun\s*(?:di\s*)?(?:usia|umur)?\s*(\d{2})", clean_ret, flags=re.IGNORECASE)
         c_age = int(age_match.group(1)) if age_match else 30
         r_age = int(ret_match.group(1)) if ret_match else 55
+        if r_age <= c_age:
+            alt_m = re.search(r"(?:ke|sampai|umur|usia|pensiun)\s*(\d{2})(?!.*\b\1\b)", clean_ret, flags=re.IGNORECASE)
+            if alt_m and int(alt_m.group(1)) > c_age:
+                r_age = int(alt_m.group(1))
         if r_age <= c_age:
             r_age = c_age + 20
         sim = _tool_simulate_indonesia_wealth(context_data, mode="retirement", current_age=c_age, retirement_age=r_age)

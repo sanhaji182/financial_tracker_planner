@@ -896,8 +896,9 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
     expect(pphChat.response).toMatch(/15\.000\.000/);
     expect(pphChat.response).toMatch(/63\.000\.000/);
 
-    const pensChat = await aiSettingsService.chat('Simulasi dana pensiun usia 30 pensiun usia 55', []);
+    const pensChat = await aiSettingsService.chat('Simulasi dana pensiun usia 30 pensiun 55', []);
     expect(pensChat.response).toMatch(/Dana Pensiun/i);
+    expect(pensChat.response).toMatch(/30 → 55 thn/);
 
     const hist = await aiSettingsService.getHistory();
     expect(hist.messages.length).toBeGreaterThanOrEqual(4);
@@ -1031,5 +1032,68 @@ describe('Roadmap 2026 Upgrade (Tahap 1 - Tahap 4)', () => {
     });
     schedSpy.mockRestore();
     capSpy.mockRestore();
+
+    // 6. V4.3: On-device ML Kit OCR fallback in local AI Advisor chat + numeric picker filename safety
+    await saveHybridAISettings({
+      ai_enabled: false,
+      ai_provider: 'local',
+      ai_model: 'local',
+      api_key: '',
+      has_api_key: false,
+    });
+
+    const unreadableImgRes = await aiSettingsService.chatStream(
+      'Analisa struk gambar 1000000024.png',
+      [],
+      {},
+      {
+        attachments: [
+          {
+            name: '1000000024.png',
+            mime_type: 'image/png',
+            data_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          },
+        ],
+      }
+    );
+    expect(unreadableImgRes.reason).toBe('local-attachment-notice');
+
+    const capNativeSpy = vi.spyOn(Capacitor, 'isNativePlatform').mockReturnValue(true);
+    const ocrRecognizeSpy = vi.spyOn(localOcrBridge, 'recognizeImage').mockResolvedValueOnce({
+      text: [
+        'myBCA',
+        'Pembayaran QRIS Berhasil',
+        'Nominal',
+        'Rp 45.000',
+        'Merchant',
+        'KOPI KENANGAN - SUDIRMAN',
+        'Total Bayar : Rp 45.000',
+      ].join('\n'),
+      pageCount: 1,
+      engine: 'mlkit',
+    });
+
+    const ocrChatRes = await aiSettingsService.chatStream(
+      'Analisa struk gambar 1000000024.png',
+      [],
+      {},
+      {
+        attachments: [
+          {
+            name: '1000000024.png',
+            mime_type: 'image/png',
+            data_base64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+          },
+        ],
+      }
+    );
+    expect(ocrChatRes.reason).toBe('local-on-device-receipt-ocr');
+    expect(ocrChatRes.response).toMatch(/KOPI KENANGAN/i);
+    expect(ocrChatRes.response).toMatch(/45\.000/);
+    expect(ocrChatRes.proposed_actions?.[0]?.type).toBe('create_transaction');
+    expect(ocrChatRes.proposed_actions?.[0]?.payload?.amount).toBe(45_000);
+
+    ocrRecognizeSpy.mockRestore();
+    capNativeSpy.mockRestore();
   });
 });

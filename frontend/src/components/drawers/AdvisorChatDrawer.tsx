@@ -536,7 +536,10 @@ export const AdvisorChatDrawer: React.FC = () => {
     }
   };
 
-  const handleExecuteAction = async (action: AgenticAction): Promise<boolean> => {
+  const handleExecuteAction = async (
+    action: AgenticAction,
+    opts?: { silentToast?: boolean }
+  ): Promise<boolean> => {
     setActionStates((prev) => ({ ...prev, [action.id]: 'running' }));
     try {
       if (action.type === 'create_transaction') {
@@ -614,7 +617,9 @@ export const AdvisorChatDrawer: React.FC = () => {
       }
       invalidateFinancialData(queryClient);
       setActionStates((prev) => ({ ...prev, [action.id]: 'done' }));
-      toast.success('Aksi AI berhasil dijalankan', action.title);
+      if (!opts?.silentToast) {
+        toast.success('Aksi AI berhasil dijalankan', action.title);
+      }
       return true;
     } catch {
       setActionStates((prev) => ({ ...prev, [action.id]: 'idle' }));
@@ -626,8 +631,9 @@ export const AdvisorChatDrawer: React.FC = () => {
   const handleConfirmAllActions = async (actions: AgenticAction[]) => {
     const pending = actions.filter((act) => (actionStates[act.id] || 'idle') === 'idle');
     let okCount = 0;
+    const useSilent = pending.length > 1;
     for (const act of pending) {
-      const ok = await handleExecuteAction(act);
+      const ok = await handleExecuteAction(act, { silentToast: useSilent });
       if (ok) okCount += 1;
     }
     if (okCount > 1) {
@@ -889,23 +895,6 @@ export const AdvisorChatDrawer: React.FC = () => {
                           );
                           return (
                             <div className="pt-2 space-y-2">
-                              {pendingActions.length > 1 && (
-                                <button
-                                  type="button"
-                                  disabled={isAnyRunning}
-                                  onClick={() =>
-                                    void handleConfirmAllActions(msg.proposed_actions || [])
-                                  }
-                                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-semibold shadow-sm disabled:opacity-50"
-                                >
-                                  <CheckCircle2 className="w-3.5 h-3.5" />
-                                  {`Konfirmasi Semua (${pendingActions.length} Aksi${
-                                    pendingTotal > 0
-                                      ? ` · Rp ${pendingTotal.toLocaleString('id-ID')}`
-                                      : ''
-                                  })`}
-                                </button>
-                              )}
                                {msg.proposed_actions.map((act) => {
                                 const status = actionStates[act.id] || 'idle';
                                 if (status === 'dismissed') return null;
@@ -1013,6 +1002,23 @@ export const AdvisorChatDrawer: React.FC = () => {
                                   </div>
                                 );
                               })}
+                              {pendingActions.length > 1 && (
+                                <button
+                                  type="button"
+                                  disabled={isAnyRunning}
+                                  onClick={() =>
+                                    void handleConfirmAllActions(msg.proposed_actions || [])
+                                  }
+                                  className="w-full inline-flex items-center justify-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white px-3 py-2 text-xs font-semibold shadow-sm disabled:opacity-50"
+                                >
+                                  <CheckCircle2 className="w-3.5 h-3.5" />
+                                  {`Konfirmasi Semua (${pendingActions.length} Aksi${
+                                    pendingTotal > 0
+                                      ? ` · Rp ${pendingTotal.toLocaleString('id-ID')}`
+                                      : ''
+                                  })`}
+                                </button>
+                              )}
                             </div>
                           );
                         })()}
@@ -1049,7 +1055,8 @@ export const AdvisorChatDrawer: React.FC = () => {
                                 'local-retirement-calculator': 'Dihitung dari estimasi pengeluaran pensiun, aset saat ini, dan imbal hasil.',
                                 'local-watchdog-analysis': 'Dihitung dari analisis pengeluaran bulan berjalan & sistem pemantau proaktif.',
                                 'local-offline-analysis': 'Dihitung langsung dari kas likuid, utang, dan cakupan dana darurat Anda.',
-                                'local-attachment-notice': 'Lampiran dideteksi di perangkat; aktifkan provider Vision AI untuk membaca gambar otomatis.',
+                                'local-on-device-receipt-ocr': 'Dibaca langsung di perangkat memakai ML Kit OCR tanpa mengirim foto ke server.',
+                                'local-attachment-notice': 'Lampiran dideteksi di perangkat; foto tidak terbaca otomatis atau butuh Vision AI.',
                                 'local-advisor-memory': 'Preferensi disimpan aman ke memori AI Advisor.',
                               } as Record<string, string>
                             )[msg.reason] || msg.reason}

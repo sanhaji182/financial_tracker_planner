@@ -25,6 +25,7 @@ import {
   type LocalDatabase,
 } from './storage';
 import { computeDashboard, computeEmergencyFundSummary } from './localApiAdapter';
+import { analyzeSharedReceiptFile, sharedPayloadToFile } from './nativeOcr';
 
 const DISCLAIMER = '🤖 Saran AI — bukan nasihat keuangan profesional';
 
@@ -410,9 +411,18 @@ function parseHybridAdvisorResponse(
   };
 }
 
-export async function runHybridAdvisorChat(
-  message: string,
-  history: AIChatTurn[] = [],
+type HybridStreamHandlers = {
+  onMeta?: (meta: {
+    reason?: string;
+    proposed_actions?: AgenticAction[];
+    suggested_replies?: string[];
+  }) => void;
+  onDelta?: (chunk: string) => void;
+  onDone?: (finalResult: AIChatMessage) => void;
+};
+
+async function runLocalOnDeviceReceiptOcr(
+  attachments: AIChatAttachment[],
   streamHandlers?: {
     onMeta?: (meta: {
       reason?: string;
@@ -421,7 +431,135 @@ export async function runHybridAdvisorChat(
     }) => void;
     onDelta?: (chunk: string) => void;
     onDone?: (finalResult: AIChatMessage) => void;
-  },
+  }
+): Promise<AIChatMessage | null> {
+  if (attachments.length === 0) return null;
+  const db = loadLocalDB();
+  const activeAccounts = db.accounts.filter((a) => a.is_active !== false);
+  const actions: AgenticAction[] = [];
+  const blocks: string[] = [];
+  let parsedCount = 0;
+
+  for (const att of attachments.slice(0, 3)) {
+    try {
+      const file = sharedPayloadToFile({
+        fileName: att.name || 'struk.png',
+        mimeType: att.mime_type || 'image/png',
+        base64: att.data_base64 || '',
+      });
+      const analysis = await analyzeSharedReceiptFile(file, {
+        accounts: activeAccounts,
+        categories: db.categories,
+        debts: db.debts,
+      });
+      if (!analysis || analysis.amount <= 0) continue;
+
+      parsedCount += 1;
+      const targetAcc =
+        activeAccounts.find((a) => a.id === analysis.matchedAccountId) || activeAccounts[0];
+      const merchantLabel = analysis.merchantName || 'Transaksi Struk';
+      const desc = analysis.productName
+        ? `${merchantLabel} - ${analysis.productName}`
+        : merchantLabel;
+      const itemSummary =
+        analysis.items.length > 0
+          ? `\n• Item terdeteksi: ${analysis.items
+              .slice(0, 3)
+              .map((it) => `${it.name} (${formatRupiah(it.total || it.price)})`)
+              .join(', ')}`
+          : '';
+      const methodNote = [
+        analysis.paymentMethod,
+        analysis.providerHint ? `via ${analysis.providerHint}` : '',
+      ]
+        .filter(Boolean)
+        .join(' ');
+
+      blocks.push(
+        [
+          `Hasil OCR struk **${merchantLabel}** (${att.name || 'gambar'}):`,
+          `• Total: **${formatRupiah(analysis.amount)}**`,
+          `• Tanggal: **${analysis.date}**`,
+          ...(methodNote ? [`• Pembayaran: **${methodNote}**`] : []),
+          ...(analysis.suggestedCategoryName
+            ? [`• Kategori: **${analysis.suggestedCategoryName}**`]
+            : []),
+          ...(targetAcc ? [`• Rekening: **${targetAcc.name}**`] : []),
+        ].join('\n') + itemSummary
+      );
+
+      if (targetAcc) {
+        if (analysis.suggestedMode === 'debt_payment' && analysis.matchedDebtId) {
+          actions.push({
+            id: uid('act'),
+            type: 'pay_debt',
+            title: `Bayar Utang: ${analysis.matchedDebtName || merchantLabel}`,
+            summary: `${formatRupiah(analysis.amount)} • ${targetAcc.name} • ${analysis.date}`,
+            payload: {
+              debt_id: analysis.matchedDebtId,
+              amount: analysis.amount,
+              payment_date: analysis.date,
+              account_id: targetAcc.id,
+              notes: analysis.notes || `Dibayar via OCR Struk AI Advisor (${merchantLabel})`,
+            },
+          });
+        } else {
+          actions.push({
+            id: uid('act'),
+            type: 'create_transaction',
+            title: `Catat Pengeluaran: ${merchantLabel}`,
+            summary: `${formatRupiah(analysis.amount)} • ${targetAcc.name} • ${analysis.date}`,
+            payload: {
+              type: 'expense',
+              amount: analysis.amount,
+              description: desc,
+              transaction_date: analysis.date,
+              account_id: targetAcc.id,
+              ...(analysis.suggestedCategoryId
+                ? { category_id: analysis.suggestedCategoryId }
+                : {}),
+              notes: analysis.notes || 'Dicatat otomatis via OCR Struk on-device',
+            },
+          });
+        }
+      }
+    } catch {
+      // Ignore single attachment OCR error and fall back gracefully
+    }
+  }
+
+  if (parsedCount === 0) return null;
+
+  const footer =
+    actions.length > 0
+      ? 'Silakan periksa detail di bawah lalu tekan **Konfirmasi** untuk menyimpan ke catatan keuangan Anda.'
+      : 'Belum ada rekening aktif di perangkat — tambahkan rekening terlebih dahulu di menu **Akun** agar hasil scan struk bisa langsung dicatat 1-klik.';
+  const response = `${blocks.join('\n\n')}\n\n${footer}`;
+  const suggestedReplies =
+    actions.length > 0
+      ? ['Cek pengeluaran terbesar bulan ini', 'Cek kuota jajan harian bulan ini']
+      : ['Cek kondisi keuangan saya bulan ini', 'Simulasi anggaran 50/30/20'];
+  const result: AIChatMessage = {
+    response,
+    reason: 'local-on-device-receipt-ocr',
+    ...(actions.length > 0 ? { proposed_actions: actions } : {}),
+    suggested_replies: suggestedReplies,
+  };
+
+  streamHandlers?.onMeta?.({
+    reason: result.reason,
+    proposed_actions: result.proposed_actions,
+    suggested_replies: result.suggested_replies,
+  });
+  streamHandlers?.onDelta?.(result.response);
+  streamHandlers?.onDone?.(result);
+  return result;
+}
+
+export async function runHybridAdvisorChat(
+  message: string,
+  history: AIChatTurn[] = [],
+  streamHandlers?: HybridStreamHandlers,
   extraOptions?: AIChatExtraOptions
 ): Promise<AIChatMessage | null> {
   const memResult = message ? captureExplicitMemoryInstruction(message) : { matched: false };
@@ -429,19 +567,26 @@ export async function runHybridAdvisorChat(
     return null;
   }
 
+  const attachments = (extraOptions?.attachments || []).slice(0, 3);
   const settings = getHybridAISettings();
   const provider = (settings.ai_provider || 'local').toLowerCase();
   const apiKey = (settings.api_key || '').trim();
-  if (!settings.ai_enabled || provider === 'local' || !apiKey || typeof fetch !== 'function') {
-    return null;
-  }
-  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+  const canUseCloudLlm =
+    Boolean(settings.ai_enabled) &&
+    provider !== 'local' &&
+    Boolean(apiKey) &&
+    typeof fetch === 'function' &&
+    !(typeof navigator !== 'undefined' && navigator.onLine === false);
+
+  if (!canUseCloudLlm) {
+    if (attachments.length > 0) {
+      return await runLocalOnDeviceReceiptOcr(attachments, streamHandlers);
+    }
     return null;
   }
 
   const db = loadLocalDB();
   const today = getTodayLocalDate();
-  const attachments = (extraOptions?.attachments || []).slice(0, 3);
   const fallbackActions = buildDeterministicActionsFromLocal(message, db, today);
 
   // Fast deterministic path for direct commands without images

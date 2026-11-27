@@ -397,7 +397,7 @@ export function simulateLocalIndonesiaWealth(
   const baseExpense =
     typeof args.monthly_expense === 'number' && args.monthly_expense > 0
       ? args.monthly_expense
-      : inferredMonthlyExpense > 0
+      : inferredMonthlyExpense >= 500_000
         ? inferredMonthlyExpense
         : Math.max(3_500_000, Math.round(incomeMonthly * 0.6));
   const infRate = profile?.inflation_rate ?? 0.045;
